@@ -38,7 +38,7 @@ func digestTree(_ root: URL) throws -> [String: String] {
 
 do {
     let fm = FileManager.default
-    let base = fm.temporaryDirectory.appendingPathComponent("ProjectTemplates-checks-" + UUID().uuidString)
+    let base = fm.temporaryDirectory.appendingPathComponent("ContentTemplate-checks-" + UUID().uuidString)
     try fm.createDirectory(at: base, withIntermediateDirectories: false)
     // Keep this run's disposable fixtures for inspection; no user folder is ever removed.
     print("FIXTURES \(base.path)")
@@ -163,6 +163,8 @@ do {
     try rejects("source mutation invalidates preview") { _ = try CreationEngine.create(plan: largePlan, destination: destination, name: "Stale plan") }
     try catalogueChecks(base: base)
     try browserChecks(base: base)
+    try setChecks(base: base)
+    try previewChecks(base: base)
     let args = ProcessInfo.processInfo.arguments
     if let index = args.firstIndex(of: "--master"), args.indices.contains(index + 1) {
         let master = URL(fileURLWithPath: args[index + 1]).resolvingSymlinksInPath()

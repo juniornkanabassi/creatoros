@@ -5,11 +5,9 @@ let package = Package(
     name: "ProjectTemplates",
     platforms: [.macOS(.v14)],
     products: [.executable(name: "ProjectTemplates", targets: ["ProjectTemplates"]),
-               .executable(name: "CoreChecks", targets: ["CoreChecks"]),
-               .executable(name: "LibraryAdmin", targets: ["LibraryAdmin"])],
+               .executable(name: "CoreChecks", targets: ["CoreChecks"])],
     targets: [.target(name: "TemplateCore"),
-              .executableTarget(name: "ProjectTemplates", dependencies: ["TemplateCore"], linkerSettings: [.linkedFramework("AVKit")]),
-              .executableTarget(name: "CoreChecks", dependencies: ["TemplateCore"]),
-              .executableTarget(name: "LibraryAdmin", dependencies: ["TemplateCore"])],
+              .executableTarget(name: "ProjectTemplates", dependencies: ["TemplateCore"]),
+              .executableTarget(name: "CoreChecks", dependencies: ["TemplateCore"])],
     swiftLanguageModes: [.v5]
 )

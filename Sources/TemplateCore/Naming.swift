@@ -6,7 +6,19 @@ public struct AppFailure: LocalizedError {
     public var errorDescription: String? { message }
 }
 
+/// The outcome of naming with whatever the user has typed so far.
+public struct PreviewName: Sendable {
+    public let name: String
+    public let missing: [String]
+    public let issues: [String]
+    public let tokens: [String: String]
+    public var isComplete: Bool { missing.isEmpty && issues.isEmpty }
+}
+
 public struct ProjectFields: Sendable {
+    public static let numberPlaceholder = "[Project Number]"
+    public static let titlePlaceholder = "[Project Name]"
+    public static let formatPlaceholder = "[Content Format]"
     public var number: String
     public var format: String
     public var campaign: String
@@ -30,6 +42,22 @@ public struct ProjectFields: Sendable {
         ["Project Number": number, "Content Format": format, "Conent Form": format,
          "Campaign": campaign, "Project Name": title]
     }
+    /// Never throws. Missing required values become visible placeholders; invalid values become issues.
+    public func previewName() -> PreviewName {
+        var missing: [String] = []; var issues: [String] = []
+        func part(_ label: String, _ value: String, placeholder: String) -> String {
+            if value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { missing.append(label); return placeholder }
+            do { try Naming.validate(value) } catch { issues.append("\(label): \(error.localizedDescription)") }
+            return value
+        }
+        let number = part("Project Number", self.number, placeholder: Self.numberPlaceholder)
+        let format = part("Content Format", self.format, placeholder: Self.formatPlaceholder)
+        let title = part("Project Name", self.title, placeholder: Self.titlePlaceholder)
+        if !campaign.isEmpty { do { try Naming.validate(campaign) } catch { issues.append("Campaign: \(error.localizedDescription)") } }
+        let name = [number, format, campaign, title].filter { !$0.isEmpty }.joined(separator: " — ")
+        let tokens = ["Project Number": number, "Content Format": format, "Conent Form": format, "Campaign": campaign, "Project Name": title]
+        return PreviewName(name: name, missing: missing, issues: issues, tokens: tokens)
+    }
 }
 
 public enum Naming {
@@ -52,25 +80,31 @@ public enum Naming {
         path.precomposedStringWithCanonicalMapping.folding(options: [.caseInsensitive], locale: Locale(identifier: "en_US_POSIX"))
     }
 
-    public static func render(_ name: String, fields: ProjectFields) throws -> String {
-        let final = try fields.finalName()
-        // Scan only the source string. User-entered brackets are never interpreted again.
+    /// The one substitution rule shared by the preview and the copy plan.
+    /// Bracket tokens are replaced in a single pass over the source name; user values are never re-expanded.
+    /// A leading `Template` (any case, whole name or followed by `.` or a space) takes the full name.
+    public static func substitute(_ name: String, tokens: [String: String], final: String) throws -> String {
         let regex = try NSRegularExpression(pattern: #"\[([^\]]+)\]"#)
         let ns = name as NSString
         let matches = regex.matches(in: name, range: NSRange(location: 0, length: ns.length))
         var result = name
         for match in matches.reversed() {
             let token = ns.substring(with: match.range(at: 1))
-            guard let value = token.lowercased() == "template" ? final : fields.tokens[token] else {
+            guard let value = token.lowercased() == "template" ? final : tokens[token] else {
                 throw AppFailure("Unknown token [\(token)] in ‘\(name)’. Supported tokens are [template] and the four named fields.")
             }
             if let range = Range(match.range, in: result) { result.replaceSubrange(range, with: value) }
         }
-        // Start-only, case-insensitive with a boundary. Never replace the word inside prose.
         let lower = name.lowercased()
         if lower == "template" || lower.hasPrefix("template.") || lower.hasPrefix("template ") {
             result = final + String(result.dropFirst("Template".count))
         }
+        return result
+    }
+
+    public static func render(_ name: String, fields: ProjectFields) throws -> String {
+        let final = try fields.finalName()
+        let result = try substitute(name, tokens: fields.tokens, final: final)
         try validate(result)
         return result
     }

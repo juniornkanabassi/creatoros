@@ -23,9 +23,16 @@ public struct Entry: Identifiable, Sendable {
     public let source: String
     public let output: String
     public let directory: Bool
+    /// Finder icon support file. Copied as metadata, never renamed, hidden in browsers.
     public let metadata: Bool
+    /// Inside a document package. Copied byte for byte, never renamed.
+    public let opaque: Bool
     public let bytes: Int64
     public let modified: Date?
+    public init(source: String, output: String, directory: Bool, metadata: Bool, opaque: Bool = false, bytes: Int64, modified: Date?) {
+        self.source = source; self.output = output; self.directory = directory; self.metadata = metadata
+        self.opaque = opaque; self.bytes = bytes; self.modified = modified
+    }
 }
 
 public struct CopyPlan: Sendable {
@@ -72,17 +79,40 @@ public enum TemplateReader {
                     excluded.append(rel + (package ? " (package)" : " (file)")); continue
                 }
                 guard directory || values.isRegularFile == true else { throw AppFailure("Unsupported special file: \(rel)") }
-                let renamed = try (icon || opaque || fields == nil) ? name : Naming.render(name, fields: fields!)
-                if !icon && !opaque && fields != nil { try Naming.validate(renamed) }
+                let renamed = try rename(name, metadata: icon, opaque: opaque, fields: fields)
                 let out = output.isEmpty ? renamed : output + "/" + renamed
                 guard names.insert(Naming.key(out)).inserted else { throw AppFailure("Case or Unicode name collision: \(out)") }
-                entries.append(Entry(source: rel, output: out, directory: directory, metadata: icon,
+                entries.append(Entry(source: rel, output: out, directory: directory, metadata: icon, opaque: opaque,
                                      bytes: directory ? 0 : Int64(values.fileSize ?? 0), modified: values.contentModificationDate))
                 if directory { try walk(child, relative: rel, output: out, opaque: opaque || package) }
             }
         }
         try walk(canonical, relative: "", output: "", opaque: false)
         return CopyPlan(root: canonical, entries: entries, excluded: excluded)
+    }
+
+    /// The single rename step. Metadata and package internals keep their names; everything else follows Naming.render.
+    public static func rename(_ name: String, metadata: Bool, opaque: Bool, fields: ProjectFields?) throws -> String {
+        guard let fields, !metadata, !opaque else { return name }
+        return try Naming.render(name, fields: fields)
+    }
+
+    /// Derives the executable plan from a structural scan (fields nil) without touching the disk again.
+    /// Produces exactly what scan(root, fields:) would, entry for entry, so a cached structure can be reused per keystroke.
+    public static func plan(from structure: CopyPlan, fields: ProjectFields) throws -> CopyPlan {
+        var entries: [Entry] = []; var names = Set<String>(); var outputs: [String: String] = [:]
+        for entry in structure.entries {
+            let name = (entry.source as NSString).lastPathComponent
+            let parent = (entry.source as NSString).deletingLastPathComponent
+            let parentOutput = parent.isEmpty ? "" : (outputs[parent] ?? parent)
+            let renamed = try rename(name, metadata: entry.metadata, opaque: entry.opaque, fields: fields)
+            let out = parentOutput.isEmpty ? renamed : parentOutput + "/" + renamed
+            guard names.insert(Naming.key(out)).inserted else { throw AppFailure("Case or Unicode name collision: \(out)") }
+            if entry.directory { outputs[entry.source] = out }
+            entries.append(Entry(source: entry.source, output: out, directory: entry.directory, metadata: entry.metadata,
+                                 opaque: entry.opaque, bytes: entry.bytes, modified: entry.modified))
+        }
+        return CopyPlan(root: structure.root, entries: entries, excluded: structure.excluded)
     }
 }
 

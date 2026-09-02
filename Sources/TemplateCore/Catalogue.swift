@@ -171,6 +171,23 @@ public enum Catalogue {
         // Keep the pinned final even if currently absent, so it can be recovered later.
         return updated
     }
+    /// Availability only. Resolves the bookmark and checks the folder and drive identity without indexing or saving.
+    public static func availability(_ record: ProjectRecord) -> ProjectInspection {
+        do {
+            let url = try record.resolve()
+            let v = try url.resourceValues(forKeys: [.isDirectoryKey, .volumeUUIDStringKey])
+            guard v.isDirectory == true else { throw AppFailure("Stored location is no longer a folder.") }
+            if let expected = record.volumeID, let actual = v.volumeUUIDString, expected != actual {
+                return ProjectInspection(record: record, available: false, status: "A different drive is mounted here. Use Locate Folder.", root: nil)
+            }
+            return ProjectInspection(record: record, available: true, status: "Available", root: url)
+        } catch {
+            let drive = record.volumePath ?? ""
+            let offline = drive.hasPrefix("/Volumes/") && !FileManager.default.fileExists(atPath: drive)
+            return ProjectInspection(record: record, available: false,
+                status: offline ? "Drive unavailable · \(record.volumeName ?? drive). Reconnect it to browse this project." : "Folder unavailable or access needs attention. Use Locate Folder. \(error.localizedDescription)", root: nil)
+        }
+    }
     public static func inspect(_ record: ProjectRecord, cancellation: Cancellation = Cancellation()) -> ProjectInspection {
         do {
             try cancellation.check()

@@ -1,6 +1,6 @@
 import Foundation
 
-public struct TemplateRecord: Codable, Identifiable, Sendable {
+public struct TemplateRecord: Codable, Identifiable, Sendable, Hashable {
     public var id: UUID
     public var name: String
     public var imported: Date
@@ -18,6 +18,8 @@ public struct ProjectRecord: Codable, Identifiable, Sendable {
     public var bookmark: Data?
     public var created = Date()
     public var previousPaths: [String]?
+    // Export fields are retained for compatibility with 0.2.0 and 0.3.0 libraries.
+    // The 0.1.0 interface does not use them; see Deferred features.md.
     public var exports: [ExportRecord]?
     public var exportFolders: [String]?
     public var finalExportPath: String?
@@ -43,10 +45,9 @@ public struct ProjectRecord: Codable, Identifiable, Sendable {
         if path != url.path { previousPaths = Array(Set((previousPaths ?? []) + [path])).sorted() }
         path = replacement.path; bookmark = replacement.bookmark; name = replacement.name
         volumeName = replacement.volumeName; volumeID = replacement.volumeID; volumePath = replacement.volumePath
-        // Export paths are relative to the project root, so moving a project does not break them.
     }
     public var searchableText: String {
-        ([name, format, path, volumeName ?? ""] + (previousPaths ?? []) + (exports ?? []).map(\.relativePath)).joined(separator: " ")
+        ([name, format, path, volumeName ?? ""] + (previousPaths ?? [])).joined(separator: " ")
     }
     public func resolve() throws -> URL {
         guard let bookmark else { return URL(fileURLWithPath: path) }
@@ -65,13 +66,18 @@ public struct Preset: Codable, Identifiable, Sendable {
     public var iconSource: String?
     public var iconLocked: Bool?
     public init(_ format: String) { self.format = format }
+    /// The visible label. The stored key stays Livestream because saved records and icons use it.
+    public var label: String { format == "Livestream" ? "Live" : format }
 }
 public struct Library: Codable, Sendable {
-    public var schema = 2
+    public static let currentSchema = 3
+    public static let formats = ["Long", "Short", "Podcast", "Livestream"]
+    public var schema = Library.currentSchema
     public var templates: [TemplateRecord] = []
     public var projects: [ProjectRecord] = []
-    public var presets = ["Long", "Short", "Podcast", "Livestream"].map(Preset.init)
+    public var presets = Library.formats.map(Preset.init)
     public var locations: [CatalogueLocation]?
+    public var templateSets: [TemplateSet]?
     public init() {}
 }
 public struct LibraryStore: Sendable {
@@ -85,18 +91,31 @@ public struct LibraryStore: Sendable {
     public func load() throws -> Library {
         guard FileManager.default.fileExists(atPath: file.path) else { return Library() }
         var library = try JSONDecoder().decode(Library.self, from: Data(contentsOf: file))
-        guard (1...2).contains(library.schema) else { throw AppFailure("This library uses a newer schema. It has not been modified.") }
-        library.schema = 2
+        guard (1...Library.currentSchema).contains(library.schema) else { throw AppFailure("This library uses a newer schema. It has not been modified.") }
+        library.schema = Library.currentSchema
+        if library.templateSets == nil { library.templateSets = [] }
         return library
+    }
+    /// Reads the schema number stored on disk without decoding the whole document.
+    func storedSchema() -> Int? {
+        guard let data = try? Data(contentsOf: file),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
+        return json["schema"] as? Int
     }
     public func save(_ library: Library) throws {
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
-        // Keep a single recoverable schema-one snapshot before the first upgraded write.
-        let migrationBackup = root.appendingPathComponent("library-before-schema-2.json")
-        if FileManager.default.fileExists(atPath: file.path), !FileManager.default.fileExists(atPath: migrationBackup.path),
-           let old = try? Data(contentsOf: file),
-           let json = try? JSONSerialization.jsonObject(with: old) as? [String: Any], json["schema"] as? Int == 1 {
-            try old.write(to: migrationBackup, options: .withoutOverwriting)
+        // Keep one recoverable snapshot per schema upgrade, written once, never overwritten.
+        if let stored = storedSchema(), stored < Library.currentSchema {
+            let backup = root.appendingPathComponent("library-before-schema-\(Library.currentSchema).json")
+            if !FileManager.default.fileExists(atPath: backup.path), let old = try? Data(contentsOf: file) {
+                try old.write(to: backup, options: .withoutOverwriting)
+            }
+            if stored == 1 {
+                let legacyBackup = root.appendingPathComponent("library-before-schema-2.json")
+                if !FileManager.default.fileExists(atPath: legacyBackup.path), let old = try? Data(contentsOf: file) {
+                    try old.write(to: legacyBackup, options: .withoutOverwriting)
+                }
+            }
         }
         let encoder = JSONEncoder(); encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         try encoder.encode(library).write(to: file, options: .atomic)
