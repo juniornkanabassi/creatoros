@@ -1,96 +1,71 @@
 # Content Template
 
-Junior chose Content Template as the current name. The enclosing project folder and documentation have been renamed. Source targets, installed 0.3.0 app, old archives and data directory still use Project Templates pending Claude's safe display-name update. Existing technical names in commands and paths below remain intentional, not instructions to discard or rename user data.
+Native SwiftUI/AppKit Mac app that creates correctly named, correctly iconed project folders from reusable templates. Version 0.1.0 is the first build under this name. Builds 0.1.0 to 0.3.0 of the earlier series were installed as Project Templates; the bundle identifier `local.projecttemplates.mac`, the executable name and the data folder `~/Library/Application Support/Project Templates/` are kept on purpose so nothing the user saved is stranded.
 
-Native SwiftUI/AppKit utility. Current version is 0.3.0, a development milestone, not the complete version-one specification. This update adds an in-app file browser, consistent format artwork and filters, and a native parameter form with live naming and icon previews.
+Read `../00 Project State/ARCHITECTURE-ESSENTIALS.md` before changing code. The full design is `../00 Project State/ARCHITECTURE.md` and the product statement is `../00 Project State/PRD.md`.
 
 ## Build and run
 
-Requires an Apple silicon Mac and Swift 6 command-line tools with a macOS SDK. No third-party dependencies. Source deployment target is macOS 14; the current test machine runs macOS 26.6.2. Older supported OS releases still need testing.
-
-From this folder:
+Apple silicon Mac, Xcode 26.6 or Swift 6 command-line tools with a macOS SDK. No third-party dependencies. Deployment target macOS 14; tested on macOS 26.6.
 
 ```sh
-swift build --scratch-path /private/tmp/project-templates-build
-swift run --scratch-path /private/tmp/project-templates-build CoreChecks
+swift build --scratch-path /private/tmp/content-template-build
+swift run --scratch-path /private/tmp/content-template-build CoreChecks
+swift run --scratch-path /private/tmp/content-template-build CoreChecks --master "/path/to/a/real/template"
 zsh build.sh
 ```
 
-The packaging script builds the `.app` in a fresh temporary packaging directory and writes a versioned ZIP under `../Outputs/`, using the version from Info.plist. It refuses to replace an existing archive. For a separate iteration choose a fresh `PROJECT_TEMPLATES_OUTPUT_ROOT`. Extract into a normal local Applications folder, not a file-provider-managed folder. JuniorOS's provider was observed reattaching FinderInfo to app bundles and invalidating strict signature verification, so durable delivery here is an archive. The locally installed build is in the current user's Applications folder.
+`CoreChecks` prints `RESULT n checks passed` and keeps its disposable fixtures under the temporary directory it prints. The optional `--master` argument runs a read-only import and creation against a real template and verifies every byte and every folder icon afterwards.
 
-The binary uses an ad-hoc local signature, not Developer ID or notarisation. Open `Package.swift` in Xcode to work on the source package; packaging remains in the script. Xcode 26.6 is installed and working.
+`build.sh` builds release, assembles `Content Template.app` in a fresh temporary folder, strips FinderInfo the file provider may have attached, signs ad hoc, verifies strictly and writes `../Outputs/Content Template <version>.zip` with `ditto`. It refuses to overwrite an existing archive; set `CONTENT_TEMPLATE_OUTPUT_ROOT` for a separate iteration. Extract into a normal local Applications folder, never inside JuniorOS, whose provider re-attaches metadata that breaks the signature.
 
-## App icon
+For interface testing launch with `--data-directory <disposable folder>`; copy the real `library.json` and `Templates/` there first if a realistic library is wanted. Never point a test at a production destination or at the original templates.
 
-Original code-native artwork is in `Scripts/render-icon.swift`. Run `zsh Scripts/build-icon.sh` to regenerate the transparent 1024-pixel PNG and multi-resolution ICNS. The installer uses `Resources/AppIcon.icns` and Info.plist's `CFBundleIconFile`, so the icon travels with the app instead of relying on a local Finder override. Keep this artwork during the name update unless Junior requests a redesign.
+## Source layout
 
-For isolated UI testing launch the executable with `--data-directory` followed by a disposable absolute directory. Normal runs keep JSON and managed templates under the current user's Application Support/Project Templates. Never point test data at another application's data folder.
+```
+Sources/TemplateCore/     engine, no UI
+  Library.swift           JSON store, schema 3, upgrade backups
+  TemplateSets.swift      content template sets and per-format variants
+  Naming.swift            fields, tokens, the shared substitution rule, validation
+  FileEngine.swift        template reader, copy plan, copy engine, icon service
+  Preview.swift           placeholder rendering that can never become a copy plan
+  Catalogue.swift         project discovery, availability, retained export indexing
+  ProjectBrowser.swift    safe read-only folder listing and opening rules
+Sources/ProjectTemplates/ the app
+  AppModel.swift          state, selection, structure cache, background runner
+  CreationView.swift      New Project form and live preview
+  CatalogueViews.swift    Projects list, inspector, discovery sheet
+  TemplateSetsView.swift  Templates page, set detail, legacy templates, new-set sheet
+  FileBrowserView.swift   shared Icon, List and Column browser
+  ProjectFileBrowser.swift host for browsing a real folder with open rules
+  SettingsView.swift      Settings window
+  ProjectTemplatesApp.swift scene, menus, main split view, import sheet
+Sources/CoreChecks/       assertion suite
+Scripts/render-icon.swift original app icon drawing; build-icon.sh regenerates the ICNS
+Resources/                Info.plist, AppIcon
+```
 
-## Current implementation
+## Git
 
-- Independent whole-folder and `.pht/Files` imports, with mode, size and tree preview.
-- Structure-only import excludes regular files and packages, preserving directory icons.
-- Four format presets with remembered destinations/bookmarks and independently saved image/folder icons. Saved icons remain fixed until explicitly changed.
-- Manual number, optional campaign and title; preview-driven output naming.
-- Background scan/copy, progress, cancellation, exclusive finalisation and no overwrites.
-- Searchable project and export catalogue across user-selected local, external and mounted cloud folders.
-- Saved collection locations, review-before-register discovery, refresh, locate with previous-path history, and removal of records only.
-- Native AppKit video preview, initially paused and muted, plus opening in the user's chosen video app.
-- Multiple explicitly marked final exports per project and a combined finals-only view. Never guesses final approval from filenames or modification dates.
-- Native Project Number, Content Format, Campaign and Project Name parameter grid, a separate template selector and exact filename replacement preview.
-- Saved format artwork in project/export rows and visible All, Long, Short, Podcast and Live filter buttons. Export format follows its parent project, not a guess from the video's filename.
-- Project and managed-template file browsing, current-folder search, parent/root navigation and a Project documents shortcut for editing files. Double-click a folder to browse, or select a document and open it in its default application.
+`Source/` is a local git repository. The current code was tagged `v0.0.0` as the baseline before the 0.1.0 work and `v0.1.0` at delivery. Hooks are local config; after cloning run `git config core.hooksPath .githooks` and `git config commit.template .gitmessage`. Nothing is pushed anywhere until Junior says so.
 
-No personal paths, templates, preferences or history are bundled in the executable.
+## What the app does
 
-## Catalogue behaviour
+- A **content template** is a brand, client or campaign set. Each of Long, Short, Podcast and Live can point at its own managed payload, or share another format's. A set plus a format resolves to one payload or to a setup state; there is no fallback.
+- **Legacy templates** (managed copies not in any set) are still usable directly, and one button turns one into a set with all four formats on that payload.
+- **Import** a folder or a Post Haste `.pht` as files and folders or as folder structure only, with a tree preview and size before copying. The original is never touched.
+- **New Project** shows the whole prospective folder as soon as a set and format are chosen, with `[Project Number]` and `[Project Name]` placeholders, and re-renders on every keystroke from a cached structural scan. Create is enabled only when the rendering is executable and a destination is chosen.
+- **Naming**: Project Number, Content Format, optional Campaign, Project Name joined by ` — `. Files starting with `Template` take the full name; `[template]` and the four field tokens work; `[Conent Form]` is mapped for the old misspelling. Contents are never rewritten and package internals are never renamed.
+- **Icons**: the saved format icon goes on the outer folder; every nested `Icon\r` resource fork is preserved and hidden.
+- **Projects**: a searchable list across drives with availability checks, previous locations, Open Folder, Reveal, Locate and the file browser. Selecting a project no longer indexes or saves anything.
+- **Browser**: Icon, List and Column views with Cmd-1, Cmd-2 and Cmd-3 in the View menu, routed to the frontmost browser, remembered per surface.
+- **Settings** window on Cmd-comma: per-format icon and destination, naming summary, data location.
 
-Add a collection through Projects → Add, review the detected folders, then register them. Add one existing project when its layout is not recognised. More → Add Export Subfolder supports custom export locations inside the project. The collection scanner recognises common numbered and legacy project layouts, stops at recognised project roots and does not recurse into their source media. Export indexing reads names, sizes and dates, not video contents. Playback is explicit and may hydrate a cloud placeholder.
+## Data
 
-The JSON catalogue caches relative export paths, marked finals, prior project locations and volume identity. It remains searchable while drives are disconnected. Selection refreshes that project, not every drive at launch. Locate Folder records the old path without moving anything. Collection scans deduplicate exact paths, retain unseen projects and preserve user marks; copies in different locations remain separate. No automatic historical location reconstruction or content-hash duplicate detection is claimed.
+`library.json` schema 3. Loads schema 1 to 3, refuses newer. The first save over an older file keeps `library-before-schema-3.json` next to it. Export records from 0.2.0 and 0.3.0 are kept but unused; see `../00 Project State/Deferred features.md`. Interface state (selected set, format, page, view modes) lives in `UserDefaults`.
 
-Discovery has bounded depth and entry counts. A partial export scan retains cached entries with a visible note. Missing, inaccessible and stale bookmarks do not erase records. Offline and wrong-volume states exist, but physical unplug-during-playback, permissions and cloud hydration still need release testing. H.264 playback was tested; the extensions indexed are not a promise that every codec is natively playable.
+## Limits worth knowing
 
-Schema 1 loads into schema 2 with optional new fields. The first upgraded save keeps `library-before-schema-2.json`. Do not run older app versions against upgraded data. Avoid simultaneous app instances and assistant edits; release-grade cross-process locking is still pending.
-
-`LibraryAdmin` is an explicit local migration/check helper, not bundled in the app. `inspect` reads a collection; `catalogue` registers one with a library backup; `icons` captures four existing custom folder icons in Long, Short, Podcast, Livestream order. Quit the app before helper writes. The macOS icon service must be accessible; a restricted tool process can return generic folder artwork even for a custom-icon folder, so visually check captured results. Use `Scripts/inspect-folder-icons.swift` for read-only PNG inspection.
-
-## Shared assistant handover
-
-Read `AGENTS.md` here and the project-level instructions. `CLAUDE.md` points to the same rules. MEMORY holds current decisions/status; Validation holds executed checks and recovery details. Work in this same source folder from any assistant. Update those records after meaningful work, not just when a handoff is requested. HANDOFF is only a compatibility pointer, not another status file to maintain.
-
-## File browser and folder artwork
-
-Files opens the selected project's immediate directory without a Finder window. Search filters that directory; Project documents performs a bounded search for supported editing files, ignoring media/export branches and package internals. Packages remain opaque. Opening uses NSWorkspace and the registered application, with visible failure messages. Managed-template documents require a warning confirmation because saving in an editor changes the reusable copy, though not its original import source. Browsing itself is read-only. Generic executable/script launching is deliberately excluded.
-
-The browser and template tree use actual macOS file/folder icons. Finder's `Icon\r`, AppleDouble files and `.DS_Store` are hidden in the browser. Icon copying preserves FinderInfo/resource forks and explicitly sets the hidden flag on generated `Icon\r` metadata. Do not delete those files: they carry macOS folder artwork. There is no portable, file-free custom folder icon shared by macOS, Windows and phone file browsers. Windows uses separate shell metadata such as desktop.ini and an icon resource; no Windows export feature is implemented.
-
-Browser enumeration is cancellable and bounded, checks volume identity and containment, and rejects symlinks. It is not a general Finder replacement or an adversarial filesystem security boundary. Launching a cloud-only document may cause its provider to download it.
-
-## Filename contract
-
-Field tokens are case-sensitive `[Project Number]`, `[Content Format]`, `[Campaign]`, `[Project Name]`. The complete-name token `[template]` is case-insensitive, including `[Template]`. `[Conent Form]` maps to Content Format explicitly. Unrecognised tokens produce an error. Replacement is single-pass; user-entered values are not recursively expanded.
-
-Legacy replacement is case-insensitive and applies only to the exact `Template` name or a leading `Template.` or `Template ` boundary. Thus `Template.prproj`, `Template Description.rtf` and `Template – Video Thumbnail.psd` are renamed. `My Template notes.txt` and `Templates.txt` are unchanged. Packages are copied without substitutions inside their contents. No Adobe/Rich Text internal data is rewritten.
-
-Ordinary output components reject Windows-reserved characters/device names, control characters, path traversal, trailing dots/spaces and case/Unicode collisions. Finder `Icon\r` metadata is exempt. `.DS_Store` is deliberately omitted as disposable Finder view state, not custom icon data.
-
-## File-copy policy
-
-The engine streams independent file data in 1 MiB chunks and checks cancellation between chunks. Only FinderInfo and resource-fork extended attributes are copied. It does not replay arbitrary provider IDs, ACLs or ownership data. Filesystem permissions/executable bits and other specialised metadata are not preserved by this milestone, so do not use it to distribute executable software templates.
-
-All symlinks are rejected in full imports. Structure-only reports and skips them. No attempt is made to follow links into source media. A changed file invalidates an existing plan. A uniquely named sibling staging folder is committed using macOS `renamex_np` with `RENAME_EXCL`; failure cleanup removes only that operation's stage. Destination write access and mount errors surface to the user.
-
-The current implementation assumes the app-managed library is not concurrently rewritten by an adversarial process. It does not yet provide descriptor-relative traversal protecting every directory component against malicious symlink-swap races. Do not use this as a security boundary for untrusted, actively changing templates. No cloud/network atomicity or upload completion is claimed.
-
-## Remaining release gates
-
-See the project implementation plan and validation report. Still to implement or fully validate are automatic shared/per-format counters, editable presets/naming, cached template indexing, multi-item drag/drop, branch exclusions in the UI, managed editing/duplication/re-import recovery, portable sharing, optional Post Haste recents, release-grade volume/access recovery, transaction recovery and multi-instance coordination. Direct Premiere opening and native browser navigation were exercised with a generated disposable project in 0.3.0; this does not establish arbitrary Adobe media relinking.
-
-The reader already accepts branch exclusions internally, but the interface does not expose them yet. Package matching uses native package metadata plus known extensions; unfamiliar package formats need tests. Resource forks are copied whole rather than streamed, so unusually large metadata may affect memory/cancellation responsiveness. Estimated size currently describes file data, not metadata or allocated storage.
-
-## Release route
-
-Local testing needs no purchased membership. Smooth external distribution requires an authorised Developer ID Application identity, hardened-runtime signing, an Apple notarisation submission and stapled ticket, followed by verification on another Mac. None is performed by `build.sh`.
-
-When authorised and credentials exist, the release sequence is to rebuild into a fresh release folder, sign with the selected Developer ID identity and hardened runtime, create a metadata-preserving archive with `ditto`, submit via `xcrun notarytool`, inspect the accepted result, staple with `xcrun stapler`, then verify with `codesign` and `spctl`. Do not run this sequence under someone else's identity or disable Gatekeeper. See [Apple Developer ID](https://developer.apple.com/developer-id/) and [notarisation guidance](https://developer.apple.com/documentation/security/notarizing-macos-software-before-distribution).
+Ad-hoc signed, not Developer ID or notarised; do not distribute it as a finished release. Column view widths are fixed. Folder artwork is macOS metadata and does not travel to Windows or phones. The copy engine is not a security boundary against templates being modified adversarially while copying. Automatic counters, drag-and-drop import, branch exclusion, managed payload editing, portable sharing and Post Haste recents remain unbuilt.
