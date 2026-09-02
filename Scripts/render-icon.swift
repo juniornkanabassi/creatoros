@@ -53,6 +53,54 @@ NSGraphicsContext.restoreGraphicsState()
 NSGradient(starting: colour(0xFFFEF7), ending: colour(0xE7EEFA))!.draw(in: folder, angle: -90)
 rounded(NSRect(x: 228, y: 553, width: 568, height: 5), radius: 2.5, fill: colour(0xB9CCE8, alpha: 0.7))
 
+// Three original cards fan out of the folder mouth: editing (purple, timeline strip),
+// graphics (blue, stacked layers) and streaming (charcoal, record dot). They borrow the
+// familiar colours of the apps Junior edits, designs and streams with, not their logos.
+func card(centre: NSPoint, angle: CGFloat, fill: NSColor, draw: () -> Void) {
+    NSGraphicsContext.saveGraphicsState()
+    let transform = NSAffineTransform()
+    transform.translateX(by: centre.x, yBy: centre.y)
+    transform.rotate(byDegrees: angle)
+    transform.concat()
+    let cardShadow = NSShadow(); cardShadow.shadowColor = colour(0x08194F, alpha: 0.35)
+    cardShadow.shadowBlurRadius = 14; cardShadow.shadowOffset = NSSize(width: 0, height: -8); cardShadow.set()
+    rounded(NSRect(x: -74, y: -96, width: 148, height: 192), radius: 26, fill: fill)
+    NSShadow().set()
+    colour(0xFFFFFF, alpha: 0.18).setStroke()
+    let outline = NSBezierPath(roundedRect: NSRect(x: -74, y: -96, width: 148, height: 192), xRadius: 26, yRadius: 26)
+    outline.lineWidth = 3; outline.stroke()
+    draw()
+    NSGraphicsContext.restoreGraphicsState()
+}
+// Editing card, left, tilted outwards: a timeline of clips.
+card(centre: NSPoint(x: 356, y: 540), angle: 12, fill: colour(0x6A3DDB)) {
+    for (index, width) in [96, 60, 80].enumerated() {
+        rounded(NSRect(x: -50, y: 40 - CGFloat(index) * 34, width: CGFloat(width), height: 20), radius: 6, fill: colour(0xFFFFFF, alpha: index == 0 ? 0.95 : 0.7))
+    }
+    rounded(NSRect(x: -2, y: -70, width: 4, height: 140), radius: 2, fill: colour(0xFFD166))
+}
+// Streaming card, centre, upright and tallest: a record dot with a signal arc.
+card(centre: NSPoint(x: 512, y: 570), angle: 0, fill: colour(0x2B2F36)) {
+    colour(0xFFFFFF, alpha: 0.85).setStroke()
+    let ring = NSBezierPath(ovalIn: NSRect(x: -44, y: -44, width: 88, height: 88)); ring.lineWidth = 8; ring.stroke()
+    colour(0xE94F4F).setFill(); NSBezierPath(ovalIn: NSRect(x: -22, y: -22, width: 44, height: 44)).fill()
+}
+// Graphics card, right, tilted the other way: three offset layers.
+card(centre: NSPoint(x: 668, y: 540), angle: -12, fill: colour(0x1F6FD6)) {
+    for index in 0..<3 {
+        rounded(NSRect(x: -46 + CGFloat(index) * 12, y: -36 + CGFloat(index) * 26, width: 80, height: 34), radius: 9, fill: colour(0xFFFFFF, alpha: 0.55 + CGFloat(index) * 0.2))
+    }
+}
+
+// The folder front, drawn over the cards so they appear to rise out of it.
+let front = NSBezierPath(roundedRect: NSRect(x: 204, y: 258, width: 616, height: 222), xRadius: 46, yRadius: 46)
+NSGraphicsContext.saveGraphicsState()
+let frontShadow = NSShadow(); frontShadow.shadowColor = colour(0x08194F, alpha: 0.30)
+frontShadow.shadowBlurRadius = 18; frontShadow.shadowOffset = NSSize(width: 0, height: 10); frontShadow.set()
+colour(0xFBF9ED).setFill(); front.fill()
+NSGraphicsContext.restoreGraphicsState()
+NSGradient(starting: colour(0xFFFEF7), ending: colour(0xE7EEFA))!.draw(in: front, angle: -90)
+
 // A restrained inset creation mark remains clear even in the small icon sizes.
 rounded(NSRect(x: 606, y: 300, width: 160, height: 160), radius: 42, fill: colour(0x15469A))
 rounded(NSRect(x: 626, y: 320, width: 120, height: 120), radius: 29, fill: colour(0x75E5C4))

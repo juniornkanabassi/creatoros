@@ -1,18 +1,18 @@
 #!/bin/zsh
 set -euo pipefail
 cd "${0:A:h}"
-BUILD_ROOT="${PROJECT_TEMPLATES_BUILD_ROOT:-/private/tmp/project-templates-build}"
-OUTPUT_ROOT="${PROJECT_TEMPLATES_OUTPUT_ROOT:-../Outputs}"
+BUILD_ROOT="${CONTENT_TEMPLATE_BUILD_ROOT:-/private/tmp/content-template-build}"
+OUTPUT_ROOT="${CONTENT_TEMPLATE_OUTPUT_ROOT:-../Outputs}"
 APP_VERSION=$(/usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' Resources/Info.plist)
-ARCHIVE_PATH="$OUTPUT_ROOT/Project Templates $APP_VERSION.zip"
+ARCHIVE_PATH="$OUTPUT_ROOT/Content Template $APP_VERSION.zip"
 if [[ -e "$ARCHIVE_PATH" ]]; then
-  print -u2 "Build destination already exists. Choose a fresh PROJECT_TEMPLATES_OUTPUT_ROOT; this script never replaces a delivered app."
+  print -u2 "Build destination already exists. Choose a fresh CONTENT_TEMPLATE_OUTPUT_ROOT; this script never replaces a delivered app."
   exit 1
 fi
 swift build --scratch-path "$BUILD_ROOT" -c release --product ProjectTemplates
 BIN_PATH=$(swift build --scratch-path "$BUILD_ROOT" -c release --show-bin-path)
-BUILD_STAGE=$(mktemp -d /private/tmp/project-templates-package.XXXXXX)
-APP_PATH="$BUILD_STAGE/Project Templates.app"
+BUILD_STAGE=$(mktemp -d /private/tmp/content-template-package.XXXXXX)
+APP_PATH="$BUILD_STAGE/Content Template.app"
 mkdir -p "$APP_PATH/Contents/MacOS" "$APP_PATH/Contents/Resources"
 cp "$BIN_PATH/ProjectTemplates" "$APP_PATH/Contents/MacOS/ProjectTemplates"
 cp Resources/Info.plist "$APP_PATH/Contents/Info.plist"

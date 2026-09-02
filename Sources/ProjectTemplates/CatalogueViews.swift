@@ -1,104 +1,69 @@
 import SwiftUI
-import AVKit
 import TemplateCore
 
-struct NativeVideoPreview: NSViewRepresentable {
-    let player: AVPlayer
-    func makeNSView(context: Context) -> AVPlayerView {
-        let view = AVPlayerView()
-        view.controlsStyle = .floating
-        view.showsFullScreenToggleButton = true
-        view.player = player
-        return view
-    }
-    func updateNSView(_ view: AVPlayerView, context: Context) { if view.player !== player { view.player = player } }
-    static func dismantleNSView(_ view: AVPlayerView, coordinator: ()) { view.player?.pause(); view.player = nil }
-}
-
-struct FormatIcon: View {
-    let data: Data?
-    var size: CGFloat = 26
-    var body: some View {
-        Group {
-            if let data, let image = NSImage(data: data) { Image(nsImage: image).resizable().scaledToFit() }
-            else { Image(systemName: "folder.fill").resizable().scaledToFit().foregroundStyle(.secondary) }
-        }.frame(width: size, height: size).accessibilityHidden(true)
-    }
-}
-
-struct CatalogueView: View {
+/// The content column of Projects.
+struct ProjectList: View {
     @EnvironmentObject var m: AppModel
-    var exportsOnly = false
     var body: some View {
-        VStack(spacing: 12) {
+        VStack(spacing: 0) {
             HStack {
-                TextField("Search projects, exports or previous locations", text: $m.search).textFieldStyle(.roundedBorder)
-                Menu("Add") {
-                    Button("Project Collection or Drive Folder…") { m.scanLocation() }
-                    Button("One Existing Project…") { m.addExisting() }
-                }
-            }.padding(.horizontal, 20).padding(.top, 16)
-            HStack {
-                FormatButtons(selection: $m.formatFilter, includeAll: true).help("Format follows the parent project, including its video exports.")
+                FormatButtons(selection: $m.formatFilter, includeAll: true).help("Filter by the format the project was created as.")
                 Spacer()
-                if exportsOnly { Toggle("Finals only", isOn: $m.onlyFinals).toggleStyle(.switch).controlSize(.small) }
-            }.padding(.horizontal, 20)
-            HSplitView {
-                VStack(alignment: .leading, spacing: 0) {
-                    if exportsOnly { allExports }
-                    else {
-                        List(m.filteredProjects, selection: $m.selectedProject) { record in
-                            HStack(alignment: .top, spacing: 10) {
-                                FormatIcon(data: m.library.presets.first { $0.format == record.format }?.icon)
-                                VStack(alignment: .leading, spacing: 5) {
-                                    Text(record.name).font(.headline)
-                                    Text("\(record.volumeName ?? "Saved location") · \((record.exports ?? []).count) exports").font(.caption).foregroundStyle(.secondary)
-                                    Text(record.path).font(.caption2).foregroundStyle(.secondary).lineLimit(2)
-                                }
-                            }.padding(.vertical, 6).tag(record.id)
-                        }.onChange(of: m.selectedProject) { m.selectProject() }
+            }.padding(.horizontal, 16).padding(.vertical, 10)
+            List(m.filteredProjects, selection: $m.selectedProject) { record in
+                HStack(alignment: .top, spacing: 10) {
+                    FormatIcon(data: m.library.presets.first { $0.format == record.format }?.icon)
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(record.name).font(.headline).lineLimit(2)
+                        Text(record.volumeName ?? "Saved location").font(.caption).foregroundStyle(.secondary)
+                        Text(record.path).font(.caption2).foregroundStyle(.tertiary).lineLimit(1).truncationMode(.middle)
                     }
-                    if m.library.projects.isEmpty {
-                        Text("Add a collection folder to build your catalogue. Files stay where they are.").font(.callout).foregroundStyle(.secondary).padding()
-                    }
-                    DisclosureGroup("Saved locations (\((m.library.locations ?? []).count))") {
-                        ForEach(m.library.locations ?? []) { location in
-                            HStack { Text(location.name).font(.caption).help(location.path); Spacer(); Button("Scan") { m.rescanLocation(location) }.font(.caption) }
-                        }
-                    }.padding(12)
-                }.frame(minWidth: 270, idealWidth: 420, maxWidth: 800, maxHeight: .infinity, alignment: .topLeading)
-                if let record = m.selectedRecord { ProjectInspector(record: record).frame(minWidth: 400, idealWidth: 540, maxWidth: .infinity, maxHeight: .infinity) }
-                else { ContentUnavailableView("Your projects, wherever they live", systemImage: "externaldrive", description: Text("Select a project or export. Cached names and locations remain searchable when a drive is disconnected.")).frame(minWidth: 400, idealWidth: 540, maxWidth: .infinity, maxHeight: .infinity) }
-            }.frame(maxHeight: .infinity)
-            Text("\(m.filteredProjects.count) projects · \(m.filteredProjects.reduce(0) { $0 + (exportsOnly ? m.matchingExports($1).count : ($1.exports ?? []).count) }) exports. Files stay in their original folders.")
-                .font(.caption).foregroundStyle(.secondary).padding(.bottom, 12)
-        }.sheet(isPresented: $m.discoveryPresented) { DiscoveryView() }
-        .onAppear { m.inspectorTab = exportsOnly ? "Exports" : "Files" }
-        .onDisappear { m.stopPreview() }
-    }
-    var allExports: some View {
-        List {
-            ForEach(m.filteredProjects) { record in
-                ForEach(m.matchingExports(record)) { export in
-                    Button {
-                        m.selectedProject = record.id
-                        m.inspectorTab = "Exports"
-                        m.inspectProject(record)
-                        m.preview(export, in: record)
-                    } label: {
-                        HStack(alignment: .top) {
-                            FormatIcon(data: m.library.presets.first { $0.format == record.format }?.icon)
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text((export.relativePath as NSString).lastPathComponent).lineLimit(2)
-                                Text(record.name).font(.caption).foregroundStyle(.secondary)
-                                Text(record.volumeName ?? record.path).font(.caption2).foregroundStyle(.secondary)
-                            }
-                            Spacer(minLength: 0)
-                            if record.markedFinals.contains(export.relativePath) { Image(systemName: "star.fill").foregroundStyle(.orange).accessibilityLabel("Marked final") }
-                        }.padding(.vertical, 5).frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())
-                    }.buttonStyle(.plain)
+                }.padding(.vertical, 4).tag(record.id)
+            }
+            .onChange(of: m.selectedProject) { m.selectProject() }
+            .overlay {
+                if m.library.projects.isEmpty {
+                    ContentUnavailableView("No projects yet", systemImage: "externaldrive", description: Text("Create a project, or add a folder of existing projects. Files stay where they are."))
+                } else if m.filteredProjects.isEmpty {
+                    ContentUnavailableView.search(text: m.search)
                 }
             }
+            Divider()
+            DisclosureGroup {
+                ForEach(m.library.locations ?? []) { location in
+                    HStack {
+                        Text(location.name).font(.caption).help(location.path)
+                        Spacer()
+                        Button("Scan Again") { m.rescanLocation(location) }.font(.caption)
+                        Button { m.removeLocation(location) } label: { Image(systemName: "minus.circle") }.buttonStyle(.plain).help("Forget this location. Projects already registered stay.")
+                    }
+                }
+                if (m.library.locations ?? []).isEmpty { Text("None saved").font(.caption).foregroundStyle(.secondary) }
+            } label: {
+                Text("\(m.filteredProjects.count) projects · \((m.library.locations ?? []).count) saved locations").font(.caption).foregroundStyle(.secondary)
+            }.padding(.horizontal, 16).padding(.vertical, 8)
+        }
+        .searchable(text: $m.search, placement: .toolbar, prompt: "Search projects and previous locations")
+        .toolbar {
+            ToolbarItem(placement: .primaryAction) {
+                Menu {
+                    Button("Folder of Projects or Drive…") { m.scanLocation() }
+                    Button("One Existing Project…") { m.addExisting() }
+                } label: { Label("Add", systemImage: "plus") }
+            }
+        }
+        .sheet(isPresented: $m.discoveryPresented) { DiscoveryView() }
+    }
+}
+
+/// The detail column of Projects.
+struct ProjectDetail: View {
+    @EnvironmentObject var m: AppModel
+    var body: some View {
+        if let record = m.selectedRecord { ProjectInspector(record: record).id(record.id) }
+        else {
+            ContentUnavailableView("Your projects, wherever they live", systemImage: "externaldrive",
+                                   description: Text("Select a project to browse its files. Names and locations stay searchable while a drive is disconnected."))
         }
     }
 }
@@ -106,64 +71,41 @@ struct CatalogueView: View {
 struct ProjectInspector: View {
     @EnvironmentObject var m: AppModel
     let record: ProjectRecord
+    var inspection: ProjectInspection? { m.inspections[record.id] }
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
-                HStack(spacing: 12) { FormatIcon(data: m.library.presets.first { $0.format == record.format }?.icon, size: 38); Text(record.name).font(.title3.weight(.semibold)).textSelection(.enabled) }
-                Text(m.inspections[record.id]?.status ?? "Checking location…").font(.callout).foregroundStyle(.secondary)
-                Text(record.path).font(.caption).textSelection(.enabled)
-                HStack {
-                    Button("Open Folder") { m.open(record) }
-                    Button("Reveal") { m.reveal(record) }
-                    Menu("More") {
-                        Button("Refresh Exports") { m.inspectProject(record) }
-                        Button("Locate Folder…") { m.locate(record) }
-                        Button("Add Export Subfolder…") { m.addExportFolder(record) }
-                        Button("Remove Catalogue Record") { m.removeRecord(record) }
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 12) {
+                FormatIcon(data: m.library.presets.first { $0.format == record.format }?.icon, size: 40)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(record.name).font(.title3.weight(.semibold)).textSelection(.enabled).lineLimit(2)
+                    HStack(spacing: 6) {
+                        Image(systemName: inspection == nil ? "circle.dotted" : (inspection!.available ? "checkmark.circle.fill" : "exclamationmark.triangle.fill"))
+                            .foregroundStyle(inspection?.available == true ? .green : .orange)
+                        Text(inspection?.status ?? "Checking location…").font(.callout).foregroundStyle(.secondary).lineLimit(2)
                     }
                 }
-                if let old = record.previousPaths, !old.isEmpty {
-                    DisclosureGroup("Previous locations") { Text(old.joined(separator: "\n")).font(.caption).textSelection(.enabled) }
-                }
-                Picker("Project contents", selection: $m.inspectorTab) { Text("Files").tag("Files"); Text("Video exports").tag("Exports") }.pickerStyle(.segmented)
-                if m.inspectorTab == "Files" {
-                    ProjectFileBrowser(record: record).id(record.id)
-                } else {
-                if let player = m.player, let export = m.selectedExport {
-                    NativeVideoPreview(player: player).frame(height: 240)
-                    Text((export.relativePath as NSString).lastPathComponent).font(.caption).lineLimit(2)
-                    Text("Preview starts paused and muted. Cloud-only files may need downloading; unsupported codecs can be opened in another app.").font(.caption2).foregroundStyle(.secondary)
-                }
-                Divider()
-                HStack { Text("Video exports").font(.headline); Spacer(); Text("\((record.exports ?? []).count)").foregroundStyle(.secondary) }
-                if let indexed = record.lastIndexed { Text("Last indexed \(indexed.formatted())").font(.caption).foregroundStyle(.secondary) }
-                if (record.exports ?? []).isEmpty {
-                    Text("No video exports were found in the recognised export folders. Use More → Add Export Subfolder for a different structure.").foregroundStyle(.secondary)
-                }
-                ForEach(record.exports ?? []) { export in
-                    VStack(alignment: .leading, spacing: 6) {
-                        HStack(alignment: .top) {
-                            FormatIcon(data: m.library.presets.first { $0.format == record.format }?.icon, size: 22)
-                            Text((export.relativePath as NSString).lastPathComponent).font(.subheadline.weight(.medium)).lineLimit(3)
-                            if record.markedFinals.contains(export.relativePath) { Image(systemName: "star.fill").foregroundStyle(.orange).accessibilityLabel("Marked final") }
-                        }
-                        Text(export.relativePath).font(.caption2).foregroundStyle(.secondary).textSelection(.enabled)
-                        Text(ByteCountFormatter.string(fromByteCount: export.bytes, countStyle: .file)).font(.caption).foregroundStyle(.secondary)
-                        HStack {
-                            Button("Preview") { m.preview(export, in: record) }
-                            Button("Open") { m.preview(export, in: record, external: true) }
-                            Button(record.markedFinals.contains(export.relativePath) ? "Unmark Final" : "Mark Final") { m.markFinal(export, in: record) }
-                        }.font(.caption)
-                    }.padding(.vertical, 7)
+                Spacer()
+            }
+            Text(record.path).font(.caption).foregroundStyle(.secondary).lineLimit(2).truncationMode(.middle).textSelection(.enabled)
+            HStack {
+                Button("Open Folder") { m.open(record) }
+                Button("Reveal in Finder") { m.reveal(record) }
+                Menu("More") {
+                    Button("Check Again") { m.inspectProject(record) }
+                    Button("Locate Folder…") { m.locate(record) }
                     Divider()
-                }
-                ForEach(record.markedFinals.filter { final in !(record.exports ?? []).contains(where: { $0.relativePath == final }) }.sorted(), id: \.self) { final in
-                    Text("Your marked final is not in the latest index: \(final). Its saved selection has been retained.").font(.caption).foregroundStyle(.orange)
-                }
-                if let notes = record.scanNotes, !notes.isEmpty { DisclosureGroup("Index notes") { Text(notes.joined(separator: "\n")).font(.caption) } }
-                }
-            }.padding(20)
-        }
+                    Button("Remove from List", role: .destructive) { m.removeRecord(record) }
+                }.fixedSize()
+            }
+            if let old = record.previousPaths, !old.isEmpty {
+                DisclosureGroup("Previous locations") { Text(old.joined(separator: "\n")).font(.caption).textSelection(.enabled) }.font(.callout)
+            }
+            if inspection?.available == true {
+                FolderBrowserHost(title: record.name, resolveRoot: { try ProjectBrowser.root(record) }, surface: .projectFiles)
+            } else if inspection != nil {
+                ContentUnavailableView("Folder unavailable", systemImage: "externaldrive.badge.xmark", description: Text("Reconnect the drive or use Locate Folder. The record stays in your list.")).frame(maxHeight: .infinity)
+            } else { Spacer() }
+        }.padding(20)
     }
 }
 
@@ -171,17 +113,21 @@ struct DiscoveryView: View {
     @EnvironmentObject var m: AppModel
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            Text("Add projects to your catalogue").font(.title2.weight(.semibold))
-            Text(m.discovery?.location.path ?? "").font(.caption).textSelection(.enabled)
-            Text("Select the detected projects to register. Recognition is based on folder structure, not proof that a project is finished. Nothing will be moved, renamed or deleted.").foregroundStyle(.secondary)
+            Text("Add projects to your list").font(.title2.weight(.semibold))
+            Text(m.discovery?.location.path ?? "").font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
+            Text("Select the folders to register. Recognition is based on folder structure. Nothing will be moved, renamed or deleted.").foregroundStyle(.secondary)
             List(m.discovery?.projects ?? []) { record in
                 Toggle(isOn: Binding(get: { m.discoverySelection.contains(record.id) }, set: { if $0 { m.discoverySelection.insert(record.id) } else { m.discoverySelection.remove(record.id) } })) {
-                    VStack(alignment: .leading) { Text(record.name); Text("\(record.format) · \((record.exports ?? []).count) exports · \(record.path)").font(.caption).foregroundStyle(.secondary) }
+                    VStack(alignment: .leading) { Text(record.name); Text("\(record.format) · \(record.path)").font(.caption).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle) }
                 }
             }
             if let notes = m.discovery?.notes, !notes.isEmpty { DisclosureGroup("Scan notes") { ScrollView { Text(notes.joined(separator: "\n")).font(.caption) }.frame(maxHeight: 80) } }
-            if m.discovery?.projects.isEmpty == true { Text("No projects recognised. Add one existing project manually, or choose a smaller collection.").font(.callout) }
-            HStack { Button("Cancel") { m.discoveryPresented = false }; Spacer(); Button("Register \(m.discoverySelection.count) Projects") { m.registerDiscovery() }.buttonStyle(.borderedProminent) }
-        }.padding(24).frame(width: 750, height: 570)
+            if m.discovery?.projects.isEmpty == true { Text("No projects recognised. Add one existing project manually, or choose a smaller folder.").font(.callout) }
+            HStack {
+                Button("Cancel") { m.discoveryPresented = false }.keyboardShortcut(.cancelAction)
+                Spacer()
+                Button("Register \(m.discoverySelection.count) Projects") { m.registerDiscovery() }.buttonStyle(.borderedProminent).disabled(m.discoverySelection.isEmpty)
+            }
+        }.padding(24).frame(width: 760, height: 560)
     }
 }

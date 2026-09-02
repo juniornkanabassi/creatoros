@@ -8,6 +8,10 @@ public struct BrowserItem: Identifiable, Sendable {
     public let package: Bool
     public let bytes: Int64
     public let modified: Date?
+    public init(relativePath: String, name: String, directory: Bool, package: Bool, bytes: Int64, modified: Date?) {
+        self.relativePath = relativePath; self.name = name; self.directory = directory
+        self.package = package; self.bytes = bytes; self.modified = modified
+    }
 }
 
 /// Read-only navigation. No metadata files, symlinks, package internals or executable launch.
