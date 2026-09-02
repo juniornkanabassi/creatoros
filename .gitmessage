@@ -1,0 +1,17 @@
+
+# ^ Line 1: what changed, in one line, under 72 characters.
+#   Write it as an instruction, not a report: "Add the contact form
+#   endpoint", not "Added" or "Adding". Then a blank line.
+#
+#   Everything below the blank line is WHY. That is the part worth
+#   writing, because the diff already shows what changed but nothing
+#   records what you were thinking. Include anything you would be
+#   annoyed to have to work out again:
+#
+#     - what you tried that did not work, and why
+#     - a number you measured rather than guessed
+#     - a decision someone might otherwise quietly undo
+#
+#   Lines starting with # are ignored. Save and close to commit.
+#   In nano that is Ctrl+O, Enter, then Ctrl+X.
+#   To abandon the commit, delete everything above and save.

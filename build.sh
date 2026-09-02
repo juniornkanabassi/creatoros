@@ -1,0 +1,30 @@
+#!/bin/zsh
+set -euo pipefail
+cd "${0:A:h}"
+BUILD_ROOT="${PROJECT_TEMPLATES_BUILD_ROOT:-/private/tmp/project-templates-build}"
+OUTPUT_ROOT="${PROJECT_TEMPLATES_OUTPUT_ROOT:-../Outputs}"
+APP_VERSION=$(/usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' Resources/Info.plist)
+ARCHIVE_PATH="$OUTPUT_ROOT/Project Templates $APP_VERSION.zip"
+if [[ -e "$ARCHIVE_PATH" ]]; then
+  print -u2 "Build destination already exists. Choose a fresh PROJECT_TEMPLATES_OUTPUT_ROOT; this script never replaces a delivered app."
+  exit 1
+fi
+swift build --scratch-path "$BUILD_ROOT" -c release --product ProjectTemplates
+BIN_PATH=$(swift build --scratch-path "$BUILD_ROOT" -c release --show-bin-path)
+BUILD_STAGE=$(mktemp -d /private/tmp/project-templates-package.XXXXXX)
+APP_PATH="$BUILD_STAGE/Project Templates.app"
+mkdir -p "$APP_PATH/Contents/MacOS" "$APP_PATH/Contents/Resources"
+cp "$BIN_PATH/ProjectTemplates" "$APP_PATH/Contents/MacOS/ProjectTemplates"
+cp Resources/Info.plist "$APP_PATH/Contents/Info.plist"
+cp Resources/AppIcon.icns "$APP_PATH/Contents/Resources/AppIcon.icns"
+# Finder/File Provider can attach FinderInfo to this newly made bundle directory.
+# Remove it only from our generated app root, never from imported template data.
+if /usr/bin/xattr -p com.apple.FinderInfo "$APP_PATH" >/dev/null 2>&1; then
+  /usr/bin/xattr -d com.apple.FinderInfo "$APP_PATH"
+fi
+/usr/bin/codesign --force --sign - "$APP_PATH"
+/usr/bin/codesign --verify --strict "$APP_PATH"
+mkdir -p "$OUTPUT_ROOT"
+/usr/bin/ditto -c -k --sequesterRsrc --keepParent "$APP_PATH" "$ARCHIVE_PATH"
+print "Local ad-hoc-signed development app: ${APP_PATH:A}"
+print "Archive for installation outside file-provider folders: ${ARCHIVE_PATH:A}"

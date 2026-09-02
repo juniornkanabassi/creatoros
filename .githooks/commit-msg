@@ -1,0 +1,60 @@
+#!/bin/sh
+#
+# Rejects commit messages that will be useless in six months.
+#
+# This is deliberately narrow. It does not enforce a house style, a prefix
+# convention or a character count, because a hook that nags on every commit
+# gets bypassed and then it protects nothing. It blocks four things only:
+# an empty message, a message too short to say anything, a single filler
+# word, and a subject line that is really a paragraph.
+#
+# Lives in .githooks/ rather than .git/hooks/ so that it is committed and
+# survives a fresh clone. Git is pointed at it by core.hooksPath, which is
+# local config, so after cloning this repo somewhere new, run:
+#
+#   git config core.hooksPath .githooks
+#
+# To bypass it deliberately: git commit --no-verify
+
+MSG_FILE="$1"
+
+# Strip comments and blank lines to get at the real message.
+BODY=$(grep -v '^#' "$MSG_FILE" | sed '/^[[:space:]]*$/d')
+SUBJECT=$(printf '%s\n' "$BODY" | head -1)
+LEN=$(printf '%s' "$SUBJECT" | wc -c | tr -d ' ')
+
+fail() {
+  printf '\n  Commit stopped: %s\n\n' "$1" >&2
+  printf '  You wrote: "%s"\n\n' "$SUBJECT" >&2
+  printf '  A commit message is a note to yourself in six months, when you have\n' >&2
+  printf '  forgotten all of this. Say what changed and why.\n\n' >&2
+  printf '    git commit -m "Raise the CTA scrim to 0.42, measured 4.09:1 at 0.30"\n\n' >&2
+  printf '  To commit anyway: git commit --no-verify\n\n' >&2
+  exit 1
+}
+
+# Merges, reverts and fixups generate their own messages. Leave them alone.
+case "$SUBJECT" in
+  "Merge "*|"Revert "*|"fixup!"*|"squash!"*) exit 0 ;;
+esac
+
+[ -z "$BODY" ] && fail "the message is empty"
+
+[ "$LEN" -lt 10 ] && fail "that is $LEN characters, which cannot say anything useful"
+
+# One filler word on its own. The commonest useless message there is.
+LOWER=$(printf '%s' "$SUBJECT" | tr '[:upper:]' '[:lower:]' | tr -d '.!' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+case "$LOWER" in
+  update|updates|updated|change|changes|changed|fix|fixes|fixed|stuff|things|misc|wip|test|temp|asdf|commit|edit|edits|tweak|tweaks|minor|small\ fix|final|done|new)
+    fail "\"$LOWER\" describes every commit ever made, so it distinguishes nothing" ;;
+esac
+
+# Over-long subject lines are a style problem, not a correctness one, so this
+# warns and continues rather than blocking.
+if [ "$LEN" -gt 72 ]; then
+  printf '\n  Note: that subject line is %s characters.\n' "$LEN" >&2
+  printf '  Under 72 keeps it readable in git log. Consider moving the detail\n' >&2
+  printf '  to a second paragraph. Committed anyway.\n\n' >&2
+fi
+
+exit 0
