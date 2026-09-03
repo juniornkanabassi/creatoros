@@ -465,7 +465,27 @@ enum BadgeColour: String, CaseIterable, Identifiable {
         let locations = distinctLocations
         Task.detached(priority: .utility) {
             let mounted = Set(locations.filter(\.isMounted).map(\.key))
-            await MainActor.run { self.mountedLocations = mounted }
+            await MainActor.run { self.mountedLocations = mounted; self.backfillFolderDates() }
+        }
+    }
+    private var backfilling = false
+    /// Records registered before folder dates were kept get their creation date read once from disk, when the drive is there.
+    func backfillFolderDates() {
+        guard !backfilling, storeUsable else { return }
+        let pending = library.projects.filter { !$0.isPlanned && $0.folderCreated == nil && mountedLocations.contains($0.location.key) }
+        guard !pending.isEmpty else { return }
+        backfilling = true
+        Task.detached(priority: .utility) {
+            var dates: [UUID: Date] = [:]
+            for record in pending {
+                if let date = try? URL(fileURLWithPath: record.path).resourceValues(forKeys: [.creationDateKey]).creationDate { dates[record.id] = date }
+            }
+            let found = dates
+            await MainActor.run {
+                self.backfilling = false
+                guard !found.isEmpty else { return }
+                self.attempt { try self.mutate { lib in for i in lib.projects.indices { if let date = found[lib.projects[i].id] { lib.projects[i].folderCreated = date } } } }
+            }
         }
     }
     func badgeColour(_ location: ProjectLocation) -> BadgeColour {

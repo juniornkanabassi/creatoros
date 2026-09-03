@@ -38,8 +38,9 @@ struct ProjectFilters: View {
     @EnvironmentObject var m: AppModel
     var includeStage = true
     var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+        FormatButtons(selection: $m.formatFilter, includeAll: true).help("Filter by the format the project was created as.")
         HStack(spacing: 10) {
-            FormatButtons(selection: $m.formatFilter, includeAll: true).help("Filter by the format the project was created as.")
             Picker("Location", selection: $m.locationFilter) {
                 Text("All locations").tag(Optional<String>.none)
                 ForEach(m.distinctLocations, id: \.key) { location in
@@ -55,6 +56,7 @@ struct ProjectFilters: View {
             Spacer()
             Button { m.refreshMounts() } label: { Image(systemName: "arrow.clockwise") }.controlSize(.small).help("Check which drives are connected")
         }
+        }
     }
 }
 
@@ -67,7 +69,7 @@ struct ProjectStatusEditor: View {
     @State private var notes = ""
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Picker("Stage", selection: Binding(get: { record.stage ?? m.library.stageList.first ?? "" }, set: { m.setStage($0, for: record.id) })) {
+            Picker("Stage", selection: Binding(get: { m.effectiveStage(record) }, set: { m.setStage($0, for: record.id) })) {
                 ForEach(m.library.stageList, id: \.self) { Text($0).tag($0) }
             }
             TextField("Campaign", text: $campaign, prompt: Text("None")).onSubmit(save)
@@ -142,8 +144,10 @@ struct PipelineSidebar: View {
             } else {
                 ContentUnavailableView("Your content, stage by stage", systemImage: "rectangle.3.group",
                                        description: Text("Select a card to edit its stage, campaign, editor and notes. Drag cards between columns to move them along."))
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
                 Button { m.newIdeaPresented = true } label: { Label("New Idea", systemImage: "lightbulb") }.help("Add an idea without a folder yet")

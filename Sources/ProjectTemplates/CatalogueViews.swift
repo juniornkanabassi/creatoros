@@ -73,7 +73,7 @@ struct ProjectRow: View {
                 HStack(spacing: 6) {
                     LocationBadge(location: record.location)
                     if unavailable { UnavailableChip() }
-                    if let stage = record.stage { StageChip(stage: stage) }
+                    StageChip(stage: m.effectiveStage(record))
                     if let editor = record.editor { Label(editor, systemImage: "person").font(.caption).foregroundStyle(.secondary).lineLimit(1) }
                 }
                 HStack(spacing: 6) {
@@ -168,7 +168,7 @@ struct ProjectInspector: View {
             DisclosureGroup(isExpanded: $showStatus) {
                 ProjectStatusEditor(record: record).padding(.top, 6)
             } label: {
-                HStack(spacing: 8) { Text("Status").font(.headline); if let stage = record.stage { StageChip(stage: stage) } }
+                HStack(spacing: 8) { Text("Status").font(.headline); StageChip(stage: m.effectiveStage(record)) }
             }
             if let old = record.previousPaths, !old.isEmpty {
                 DisclosureGroup("Previous locations") { Text(old.joined(separator: "\n")).font(.caption).textSelection(.enabled) }.font(.callout)

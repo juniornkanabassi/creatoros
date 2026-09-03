@@ -21,8 +21,12 @@ extension AppModel {
             (search.isEmpty || $0.searchableText.localizedCaseInsensitiveContains(search))
         }
     }
+    /// A record with no stage yet counts as finished if it has a folder, or as an idea if it does not.
+    func effectiveStage(_ record: ProjectRecord) -> String {
+        record.stage ?? (record.isPlanned ? library.stageList.first : library.stageList.last) ?? ""
+    }
     func projects(in stage: String) -> [ProjectRecord] {
-        let list = pipelineProjects.filter { ($0.stage ?? library.stageList.first) == stage }
+        let list = pipelineProjects.filter { effectiveStage($0) == stage }
         return list.sorted { a, b in
             if a.isPlanned != b.isPlanned { return a.isPlanned }
             return (a.numberValue ?? -1) > (b.numberValue ?? -1)
