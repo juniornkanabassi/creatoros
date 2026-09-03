@@ -19,7 +19,7 @@ import TemplateCore
             MainView().environmentObject(model).frame(minWidth: 1000, minHeight: 680)
                 .onAppear {
                     NSApp.setActivationPolicy(.regular); NSApp.activate(ignoringOtherApps: true); model.refresh()
-                    WindowSetup.apply()
+                    WindowSetup.apply(zoom: { model.zoom($0) }, reset: { model.zoomLevel = 0 })
                 }
         }
         .defaultSize(width: 1280, height: 820)
@@ -75,9 +75,26 @@ struct ZoomedInterface<Content: View>: View {
 /// Full screen and text zoom are keyboard habits. macOS 15 moved the system Enter Full Screen shortcut to the Globe key,
 /// so the View menu item is given back its Control-Command-F equivalent here.
 enum WindowSetup {
-    static func apply() {
+    private static var keyMonitor: Any?
+    static func apply(zoom: @escaping (Int) -> Void, reset: @escaping () -> Void) {
         for window in NSApp.windows where window.styleMask.contains(.titled) {
             window.collectionBehavior.insert(.fullScreenPrimary)
+        }
+        // Control with = + - 0 zooms from anywhere in the window, including while a text field has focus,
+        // and Control-Shift-= (the + key) counts as Control-+. Handled here so the menu equivalents never double up.
+        if keyMonitor == nil {
+            keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+                let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask).subtracting([.shift, .numericPad, .function])
+                guard flags == .control else { return event }
+                // Key codes cover every layout; the characters cover keyboards where = and - sit elsewhere.
+                let characters = event.charactersIgnoringModifiers ?? ""
+                switch (event.keyCode, characters) {
+                case (24, _), (69, _), (_, "="), (_, "+"): zoom(1); return nil
+                case (27, _), (78, _), (_, "-"), (_, "_"): zoom(-1); return nil
+                case (29, _), (82, _), (_, "0"): reset(); return nil
+                default: return event
+                }
+            }
         }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
             guard let view = NSApp.mainMenu?.items.first(where: { $0.title == "View" })?.submenu else { return }

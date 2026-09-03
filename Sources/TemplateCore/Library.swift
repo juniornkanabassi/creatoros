@@ -114,9 +114,13 @@ public struct CustomField: Codable, Identifiable, Sendable, Hashable {
     public init(name: String, includeInName: Bool = true) { id = UUID(); self.name = name; self.includeInName = includeInName }
 }
 public struct Library: Codable, Sendable {
-    public static let currentSchema = 4
+    public static let currentSchema = 5
     public static let formats = ["Long", "Short", "Podcast", "Livestream"]
     public static let defaultStages = ["Idea", "Writing", "Filming", "Editing", "Published"]
+    public static let defaultLiveStages = ["Scheduled", "Streamed"]
+    /// Colours that read as progress from afar: grey for a thought, warm while it is being made, green when it is out.
+    public static let defaultStageColours = ["Idea": "gray", "Writing": "yellow", "Filming": "orange", "Editing": "purple", "Published": "green",
+                                             "Scheduled": "blue", "Streamed": "green"]
     public var schema = Library.currentSchema
     public var templates: [TemplateRecord] = []
     public var projects: [ProjectRecord] = []
@@ -125,8 +129,21 @@ public struct Library: Codable, Sendable {
     public var templateSets: [TemplateSet]?
     public var stages: [String]?
     public var customFields: [CustomField]?
+    // Schema 5: a second board for live streams, a colour per stage, and Finder tags. All optional.
+    public var liveStages: [String]?
+    public var stageColours: [String: String]?
+    public var finderTags: Bool?
     public init() {}
     public var stageList: [String] { (stages ?? []).isEmpty ? Library.defaultStages : stages! }
+    public var liveStageList: [String] { (liveStages ?? []).isEmpty ? Library.defaultLiveStages : liveStages! }
+    public func stages(for kind: PipelineKind) -> [String] { kind == .live ? liveStageList : stageList }
+    /// Every configured stage across both boards, recordings first.
+    public var allStages: [String] { stageList + liveStageList.filter { !stageList.contains($0) } }
+    public func colour(of stage: String) -> StageColour {
+        StageColour(rawValue: stageColours?[stage] ?? Library.defaultStageColours[stage] ?? "") ?? .none
+    }
+    /// Stage tags on folders follow the app unless switched off in Settings.
+    public var finderTagsEnabled: Bool { finderTags ?? true }
     public var fieldList: [CustomField] { customFields ?? [] }
 }
 public struct LibraryStore: Sendable {

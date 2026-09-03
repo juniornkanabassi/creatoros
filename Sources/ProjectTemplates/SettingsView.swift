@@ -6,6 +6,7 @@ struct SettingsView: View {
     @EnvironmentObject var m: AppModel
     @State private var newField = ""
     @State private var newStage = ""
+    @State private var newLiveStage = ""
     var body: some View {
         TabView {
             formatTab.tabItem { Label("Formats", systemImage: "folder") }
@@ -68,24 +69,43 @@ struct SettingsView: View {
 
     var pipelineTab: some View {
         Form {
+            stageSection(.recordings, header: "Recording stages", newPrompt: "For example, Thumbnail",
+                         footer: "Long, Short and Podcast projects. The first stage holds ideas without a folder; a new project starts in the second stage. Projects already in a renamed stage keep their old stage name until you move them.",
+                         reset: Library.defaultStages)
+            stageSection(.live, header: "Live stream stages", newPrompt: "For example, Clipped",
+                         footer: "Live streams. A new stream starts in the first stage. Streams already in a renamed stage keep their old stage name until you move them.",
+                         reset: Library.defaultLiveStages)
             Section {
-                ForEach(Array(m.library.stageList.enumerated()), id: \.offset) { index, stage in
-                    StageSettingsRow(index: index, stage: stage)
-                }
+                Toggle("Show each stage as a Finder tag on the folder", isOn: Binding(get: { m.library.finderTagsEnabled }, set: { m.setFinderTags($0) }))
                 HStack {
-                    TextField("New stage", text: $newStage, prompt: Text("For example, Thumbnail")).onSubmit { addStage() }
-                    Button("Add") { addStage() }.disabled(newStage.trimmingCharacters(in: .whitespaces).isEmpty)
+                    Button("Tag All Folders Now") { m.tagAllFolders() }.disabled(m.tagging || !m.library.finderTagsEnabled)
+                    if m.tagging { ProgressView().controlSize(.small) }
+                    Text(m.status).font(.caption).foregroundStyle(.secondary).lineLimit(2)
                 }
-                Button("Reset to Idea, Writing, Filming, Editing, Published") { m.setStages(Library.defaultStages) }
-            } header: { Text("Stages") } footer: {
-                Text("The first stage holds ideas without a folder. A new project starts in the second stage. Projects already in a renamed stage keep their old stage name until you move them.")
+            } header: { Text("Finder") } footer: {
+                Text("Moving a project to a stage puts a tag with that stage's name and colour on its folder, replacing the previous stage tag and keeping any other tags. Tags are only written when the drive is connected; Tag All Folders Now catches up the rest. The app never moves, renames or deletes folders.")
             }
         }.formStyle(.grouped)
+        .onAppear { if !m.tagging { m.status = "" } }
     }
-    func addStage() {
-        let clean = newStage.trimmingCharacters(in: .whitespaces)
-        guard !clean.isEmpty, !m.library.stageList.contains(clean) else { return }
-        m.setStages(m.library.stageList + [clean]); newStage = ""
+    func stageSection(_ kind: PipelineKind, header: String, newPrompt: String, footer: String, reset: [String]) -> some View {
+        let stages = m.library.stages(for: kind)
+        return Section {
+            ForEach(Array(stages.enumerated()), id: \.offset) { index, stage in
+                StageSettingsRow(kind: kind, index: index, stage: stage)
+            }
+            HStack {
+                TextField("New stage", text: kind == .live ? $newLiveStage : $newStage, prompt: Text(newPrompt)).onSubmit { addStage(kind) }
+                Button("Add") { addStage(kind) }.disabled((kind == .live ? newLiveStage : newStage).trimmingCharacters(in: .whitespaces).isEmpty)
+            }
+            Button("Reset to \(reset.joined(separator: ", "))") { m.setStages(reset, for: kind) }
+        } header: { Text(header) } footer: { Text(footer) }
+    }
+    func addStage(_ kind: PipelineKind) {
+        let clean = (kind == .live ? newLiveStage : newStage).trimmingCharacters(in: .whitespaces)
+        guard !clean.isEmpty, !m.library.stages(for: kind).contains(clean) else { return }
+        m.setStages(m.library.stages(for: kind) + [clean], for: kind)
+        if kind == .live { newLiveStage = "" } else { newStage = "" }
     }
 
     var locationsTab: some View {
@@ -147,16 +167,31 @@ private struct CustomFieldRow: View {
 
 private struct StageSettingsRow: View {
     @EnvironmentObject var m: AppModel
+    let kind: PipelineKind
     let index: Int
     let stage: String
     @State private var name = ""
+    var stages: [String] { m.library.stages(for: kind) }
     var body: some View {
         HStack {
+            Menu {
+                ForEach(StageColour.allCases, id: \.self) { colour in
+                    Button { m.setStageColour(colour, for: stage) } label: {
+                        Label { Text(colour.title) } icon: { Image(systemName: colour == .none ? "circle" : "circle.fill").foregroundStyle(colourValue(colour)) }
+                    }
+                }
+            } label: {
+                Circle().fill(m.stageColour(stage)).frame(width: 14, height: 14)
+                    .overlay(Circle().strokeBorder(Color.primary.opacity(0.15)))
+            }.menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize().help("Colour for \(stage), in the app and on the folder's Finder tag")
             TextField("Stage", text: $name).labelsHidden().onSubmit(save)
             Button("Save") { save() }.disabled(name == stage)
-            Button { var s = m.library.stageList; guard s.count > 2, s.indices.contains(index) else { return }; s.remove(at: index); m.setStages(s) } label: { Image(systemName: "minus.circle") }
-                .buttonStyle(.plain).disabled(m.library.stageList.count <= 2)
+            Button { var s = stages; guard s.count > 2, s.indices.contains(index) else { return }; s.remove(at: index); m.setStages(s, for: kind) } label: { Image(systemName: "minus.circle") }
+                .buttonStyle(.plain).disabled(stages.count <= 2)
         }.onAppear { name = stage }.onChange(of: stage) { name = stage }
     }
-    func save() { var s = m.library.stageList; guard s.indices.contains(index) else { return }; s[index] = name; m.setStages(s) }
+    func save() { var s = stages; guard s.indices.contains(index) else { return }; s[index] = name; m.setStages(s, for: kind) }
+    func colourValue(_ colour: StageColour) -> Color {
+        switch colour { case .none: .secondary; case .gray: .gray; case .green: .green; case .purple: .purple; case .blue: .blue; case .yellow: .yellow; case .red: .red; case .orange: .orange }
+    }
 }

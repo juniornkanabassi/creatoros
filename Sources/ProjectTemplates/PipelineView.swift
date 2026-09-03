@@ -33,13 +33,31 @@ struct StageChip: View {
     }
 }
 
+/// A stage in its own colour, the same colour Finder shows on the folder's tag.
+struct StageBadge: View {
+    @EnvironmentObject var m: AppModel
+    let stage: String
+    var body: some View {
+        let colour = m.stageColour(stage)
+        HStack(spacing: 5) {
+            Circle().fill(colour).frame(width: 7, height: 7)
+            Text(stage).lineLimit(1)
+        }
+        .font(.caption.weight(.medium)).padding(.horizontal, 7).padding(.vertical, 2)
+        .background(colour.opacity(0.14), in: Capsule()).foregroundStyle(colour == .secondary ? Color.secondary : colour)
+        .accessibilityLabel("Stage \(stage)")
+    }
+}
+
 /// Filters shared by Projects and Pipeline: format buttons, location and stage menus.
 struct ProjectFilters: View {
     @EnvironmentObject var m: AppModel
     var includeStage = true
+    /// On Pipeline the buttons follow the board; Projects shows every format.
+    var kind: PipelineKind? = nil
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-        FormatButtons(selection: $m.formatFilter, includeAll: true).help("Filter by the format the project was created as.")
+        if kind != .live { FormatButtons(selection: $m.formatFilter, includeAll: true, kind: kind).help("Filter by the format the project was created as.") }
         HStack(spacing: 10) {
             Picker("Location", selection: $m.locationFilter) {
                 Text("All locations").tag(Optional<String>.none)
@@ -71,7 +89,9 @@ struct ProjectStatusEditor: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             Picker("Stage", selection: Binding(get: { m.effectiveStage(record) }, set: { m.setStage($0, for: record.id) })) {
-                ForEach(m.visibleStages, id: \.self) { Text($0).tag($0) }
+                ForEach(m.moveTargets(for: record), id: \.self) { stage in
+                    Label { Text(stage) } icon: { Image(systemName: "circle.fill").foregroundStyle(m.stageColour(stage)) }.tag(stage)
+                }
             }
             TextField("Campaign", text: $campaign, prompt: Text("None")).onSubmit(save)
             TextField("With", text: $editor, prompt: Text("Editor or collaborator")).onSubmit(save)
@@ -99,8 +119,8 @@ struct ProjectStatusEditor: View {
         saveTask = Task { try? await Task.sleep(for: .milliseconds(700)); if !Task.isCancelled { save() } }
     }
     func save() {
-        let c = campaign.trimmingCharacters(in: .whitespaces), e = editor.trimmingCharacters(in: .whitespaces), n = notes.trimmingCharacters(in: .whitespacesAndNewlines)
-        let s = series.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+        let c = campaign.trimmingCharacters(in: .whitespacesAndNewlines), e = editor.trimmingCharacters(in: .whitespacesAndNewlines), n = notes.trimmingCharacters(in: .whitespacesAndNewlines)
+        let s = series.split(separator: ",").map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
         guard c != (record.campaign ?? "") || e != (record.editor ?? "") || n != (record.notes ?? "") || s != (record.series ?? []) else { return }
         m.updateProject(record.id) { $0.campaign = c.isEmpty ? nil : c; $0.editor = e.isEmpty ? nil : e; $0.notes = n.isEmpty ? nil : n; $0.series = s.isEmpty ? nil : s }
     }
@@ -112,7 +132,10 @@ struct PipelineSidebar: View {
     var selected: ProjectRecord? { m.library.projects.first { $0.id == m.pipelineSelection } }
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            ProjectFilters(includeStage: false).padding(.horizontal, 16).padding(.vertical, 10)
+            Picker("Board", selection: $m.pipelineKind) { ForEach(PipelineKind.allCases) { Text($0.title).tag($0) } }
+                .pickerStyle(.segmented).labelsHidden().padding(.horizontal, 16).padding(.top, 12)
+                .help("Recordings move from idea to published. Live streams are scheduled, then streamed.")
+            ProjectFilters(includeStage: false, kind: m.pipelineKind).padding(.horizontal, 16).padding(.vertical, 10)
             Divider()
             if let record = selected {
                 Form {
@@ -146,8 +169,11 @@ struct PipelineSidebar: View {
                     }
                 }.formStyle(.grouped)
             } else {
-                ContentUnavailableView("Your content, stage by stage", systemImage: "rectangle.3.group",
-                                       description: Text("Select a card to edit its stage, campaign, editor and notes. Drag cards between columns to move them along."))
+                ContentUnavailableView(m.pipelineKind == .live ? "Streams, scheduled and streamed" : "Your content, stage by stage",
+                                       systemImage: m.pipelineKind == .live ? "dot.radiowaves.left.and.right" : "rectangle.3.group",
+                                       description: Text(m.pipelineKind == .live
+                                                         ? "Select a stream to edit its details. Drag it to Streamed once it is done. Each stage's colour is also the folder's tag colour in Finder."
+                                                         : "Select a card to edit its stage, campaign, editor and notes. Drag cards between columns to move them along. Each stage's colour is also the folder's tag colour in Finder."))
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
@@ -155,6 +181,7 @@ struct PipelineSidebar: View {
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
                 Button { m.newIdeaPresented = true } label: { Label("New Idea", systemImage: "lightbulb") }.help("Add an idea without a folder yet")
+                    .disabled(m.pipelineKind == .live)
             }
         }
         .sheet(isPresented: $m.newIdeaPresented) { NewIdeaSheet() }
@@ -168,7 +195,7 @@ struct PipelineBoard: View {
     var body: some View {
         ScrollView(.horizontal) {
             HStack(alignment: .top, spacing: 12) {
-                ForEach(m.visibleStages, id: \.self) { stage in StageColumn(stage: stage) }
+                ForEach(m.boardStages, id: \.self) { stage in StageColumn(stage: stage) }
             }.padding(16)
         }
         .background(Color(nsColor: .underPageBackgroundColor))
@@ -181,13 +208,23 @@ struct StageColumn: View {
     @State private var targeted = false
     var body: some View {
         let items = m.projects(in: stage)
+        let colour = m.stageColour(stage)
         VStack(alignment: .leading, spacing: 8) {
-            HStack {
+            HStack(spacing: 7) {
+                Circle().fill(colour).frame(width: 10, height: 10)
                 Text(stage).font(.headline)
                 Text("\(items.count)").font(.caption.monospacedDigit()).foregroundStyle(.secondary)
                     .padding(.horizontal, 6).padding(.vertical, 1).background(.quaternary, in: Capsule())
                 Spacer()
+                Menu {
+                    Menu("Move All \(items.count) to") {
+                        ForEach(m.library.stages(for: m.pipelineKind), id: \.self) { target in
+                            Button(target) { m.moveAll(from: stage, to: target) }.disabled(target == stage)
+                        }
+                    }.disabled(items.isEmpty)
+                } label: { Image(systemName: "ellipsis.circle") }.menuStyle(.borderlessButton).fixedSize().help("Move every card in this column")
             }.padding(.horizontal, 4)
+            Rectangle().fill(colour.opacity(0.5)).frame(height: 3).clipShape(Capsule()).padding(.horizontal, 4)
             ScrollView {
                 LazyVStack(spacing: 8) {
                     ForEach(items) { record in ProjectCard(record: record) }
@@ -197,8 +234,9 @@ struct StageColumn: View {
         }
         .frame(width: 250)
         .padding(10)
-        .background(RoundedRectangle(cornerRadius: 12).fill(targeted ? Color.accentColor.opacity(0.12) : Color(nsColor: .controlBackgroundColor).opacity(0.6)))
-        .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(targeted ? Color.accentColor : .clear, lineWidth: 2))
+        .background(RoundedRectangle(cornerRadius: 12).fill(targeted ? colour.opacity(0.18) : colour.opacity(0.06)))
+        .background(RoundedRectangle(cornerRadius: 12).fill(Color(nsColor: .controlBackgroundColor).opacity(0.6)))
+        .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(targeted ? colour : .clear, lineWidth: 2))
         .dropDestination(for: String.self) { ids, _ in
             for id in ids.compactMap(UUID.init) { m.setStage(stage, for: id) }
             return true
@@ -227,16 +265,19 @@ struct ProjectCard: View {
                 }
             }
         }
-        .padding(10)
+        .padding(10).padding(.leading, 4)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(RoundedRectangle(cornerRadius: 9).fill(Color(nsColor: .controlBackgroundColor)))
+        .overlay(alignment: .leading) {
+            RoundedRectangle(cornerRadius: 2).fill(m.stageColour(m.effectiveStage(record))).frame(width: 4).padding(.vertical, 8).padding(.leading, 4)
+        }
         .overlay(RoundedRectangle(cornerRadius: 9).strokeBorder(selected ? Color.accentColor : Color.primary.opacity(0.08), lineWidth: selected ? 2 : 1))
         .contentShape(Rectangle())
         .gesture(TapGesture(count: 2).onEnded { if !record.isPlanned { m.selectedProject = record.id; m.page = .projects; m.selectProject() } })
         .simultaneousGesture(TapGesture().onEnded { m.pipelineSelection = record.id })
         .draggable(record.id.uuidString)
         .contextMenu {
-            Menu("Move to") { ForEach(m.visibleStages, id: \.self) { stage in Button(stage) { m.setStage(stage, for: record.id) }.disabled(stage == record.stage) } }
+            Menu("Move to") { ForEach(m.moveTargets(for: record), id: \.self) { stage in Button(stage) { m.setStage(stage, for: record.id) }.disabled(stage == m.effectiveStage(record)) } }
             if record.isPlanned { Button("Start Project…") { m.startPlanned(record) } }
             else { Button("Show in Projects") { m.selectedProject = record.id; m.page = .projects; m.selectProject() }; Button("Open Folder") { m.open(record) } }
             Divider()
@@ -259,7 +300,7 @@ struct NewIdeaSheet: View {
             Text("An idea sits in the first column without a number or folder. Start it from Pipeline when you are ready to make it.").foregroundStyle(.secondary)
             Form {
                 TextField("Title", text: $title, prompt: Text("What the video is about"))
-                Picker("Format", selection: $format) { ForEach(m.library.presets) { Text($0.label).tag($0.format) } }
+                Picker("Format", selection: $format) { ForEach(m.library.presets.filter { PipelineKind.recordings.includes(format: $0.format) }) { Text($0.label).tag($0.format) } }
                 TextField("Campaign", text: $campaign, prompt: Text("Optional"))
                 TextField("Notes", text: $notes, prompt: Text("Hook, angle, references"), axis: .vertical).lineLimit(2...6)
             }.formStyle(.grouped).frame(height: 240)
@@ -270,6 +311,6 @@ struct NewIdeaSheet: View {
                     .buttonStyle(.borderedProminent).keyboardShortcut(.defaultAction).disabled(title.trimmingCharacters(in: .whitespaces).isEmpty)
             }
         }.padding(24).frame(width: 520)
-        .onAppear { format = m.format }
+        .onAppear { format = PipelineKind.recordings.includes(format: m.format) ? m.format : "Long" }
     }
 }

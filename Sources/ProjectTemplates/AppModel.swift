@@ -104,6 +104,8 @@ enum BadgeColour: String, CaseIterable, Identifiable {
     @Published var activeSurfaces: [BrowserSurface] = []
     @Published var zoomLevel: Int { didSet { defaults.set(zoomLevel, forKey: "zoomLevel") } }
     @Published var pipelineSelection: UUID?
+    @Published var pipelineKind: PipelineKind { didSet { defaults.set(pipelineKind.rawValue, forKey: "pipelineKind"); if !pipelineKind.includes(format: formatFilter) { formatFilter = "All formats" } } }
+    @Published var tagging = false
     @Published var newIdeaPresented = false
     @Published var groupByDate: Bool { didSet { defaults.set(groupByDate, forKey: "groupByDate") } }
     @Published var relinkCandidates: [UUID: [URL]] = [:]
@@ -133,6 +135,7 @@ enum BadgeColour: String, CaseIterable, Identifiable {
         locationFilter = defaults.string(forKey: "locationFilter")
         zoomLevel = defaults.object(forKey: "zoomLevel") as? Int ?? 0
         groupByDate = defaults.object(forKey: "groupByDate") as? Bool ?? true
+        pipelineKind = PipelineKind(rawValue: defaults.string(forKey: "pipelineKind") ?? "") ?? .recordings
         for surface in BrowserSurface.allCases {
             viewModes[surface] = BrowserViewMode(rawValue: defaults.string(forKey: "viewMode." + surface.rawValue) ?? "") ?? .list
         }
@@ -394,19 +397,23 @@ enum BadgeColour: String, CaseIterable, Identifiable {
             self.created = url
             do {
                 var record = try ProjectRecord(url: url, format: format)
-                let stages = self.library.stageList
+                // A recording starts in its second stage because the first holds ideas; a live stream starts as Scheduled.
+                let kind = PipelineKind.of(format: format)
+                let stages = self.library.stages(for: kind)
+                let starting = kind == .live ? stages.first : (stages.count > 1 ? stages[1] : stages.first)
                 if let origin {
-                    record.stage = origin.stage == stages.first ? (stages.dropFirst().first ?? origin.stage) : origin.stage
+                    record.stage = origin.stage == stages.first && kind == .recordings ? (starting ?? origin.stage) : origin.stage
                     record.campaign = origin.campaign; record.series = origin.series; record.editor = origin.editor
                     record.notes = origin.notes; record.notionURL = origin.notionURL
                 } else {
-                    record.stage = stages.count > 1 ? stages[1] : stages.first
+                    record.stage = starting
                     if !campaignAtCreation.isEmpty { record.campaign = campaignAtCreation }
                 }
                 try self.mutate { lib in
                     if let origin { lib.projects.removeAll { $0.id == origin.id } }
                     lib.projects.insert(record, at: 0)
                 }
+                self.tagFolder(record)
                 self.startingFrom = nil
                 self.numberIsAutomatic = true
                 self.refreshMounts()
@@ -608,10 +615,21 @@ enum BadgeColour: String, CaseIterable, Identifiable {
     func updateProject(_ id: UUID, _ change: (inout ProjectRecord) -> Void) {
         attempt { try mutate { lib in if let i = lib.projects.firstIndex(where: { $0.id == id }) { change(&lib.projects[i]) } } }
     }
-    func setStage(_ stage: String, for id: UUID) { updateProject(id) { $0.stage = stage } }
+    func setStage(_ stage: String, for id: UUID) {
+        updateProject(id) { $0.stage = stage }
+        if let record = library.projects.first(where: { $0.id == id }) { tagFolder(record) }
+    }
+    /// Moves every card in one column at once; a deliberate action from the column's own menu.
+    func moveAll(from stage: String, to target: String) {
+        let ids = projects(in: stage).map(\.id)
+        guard !ids.isEmpty else { return }
+        attempt { try mutate { lib in for i in lib.projects.indices where ids.contains(lib.projects[i].id) { lib.projects[i].stage = target } } }
+        for record in library.projects where ids.contains(record.id) { tagFolder(record) }
+    }
     func addIdea(title: String, format: String, campaign: String, notes: String) {
         let clean = title.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !clean.isEmpty else { error = "Give the idea a title."; return }
+        guard PipelineKind.of(format: format) == .recordings else { error = "Live streams are scheduled, not collected as ideas. Create the stream from New Project."; return }
         var record = ProjectRecord(planned: clean, format: format, stage: library.stageList.first ?? "Idea", campaign: campaign.isEmpty ? nil : campaign)
         record.notes = notes.isEmpty ? nil : notes
         attempt { try mutate { $0.projects.insert(record, at: 0) } }
@@ -632,7 +650,63 @@ enum BadgeColour: String, CaseIterable, Identifiable {
         page = .newProject
         changeFormat()
     }
-    func setStages(_ stages: [String]) { attempt { let checked = try Configuration.stages(stages); try mutate { $0.stages = checked } } }
+    func setStages(_ stages: [String], for kind: PipelineKind = .recordings) {
+        attempt {
+            let checked = try Configuration.stages(stages)
+            try mutate { if kind == .live { $0.liveStages = checked } else { $0.stages = checked } }
+        }
+    }
+    func setStageColour(_ colour: StageColour, for stage: String) {
+        attempt { try mutate { lib in var colours = lib.stageColours ?? [:]; colours[stage] = colour.rawValue; lib.stageColours = colours } }
+        for record in library.projects where record.stage == stage { tagFolder(record) }
+    }
+    func setFinderTags(_ enabled: Bool) { attempt { try mutate { $0.finderTags = enabled } } }
+    func stageColour(_ stage: String) -> Color {
+        switch library.colour(of: stage) {
+        case .none: .secondary; case .gray: .gray; case .green: .green; case .purple: .purple; case .blue: .blue; case .yellow: .yellow; case .red: .red; case .orange: .orange
+        }
+    }
+
+    // MARK: Finder tags
+
+    /// Writes the record's stage onto its folder as a Finder tag, so Finder shows the same colour. One-way, app to Finder,
+    /// and only when the drive is connected; nothing is hydrated or searched. Failures are silent because the record is already saved.
+    func tagFolder(_ record: ProjectRecord) {
+        guard library.finderTagsEnabled, !record.isPlanned, let stage = record.stage, library.allStages.contains(stage) else { return }
+        guard record.location.isMounted else { return }
+        let colour = library.colour(of: stage), known = library.allStages, url = URL(fileURLWithPath: record.path)
+        Task.detached(priority: .utility) {
+            guard (try? url.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true else { return }
+            _ = try? FinderTags.apply(stage: stage, colour: colour, knownStages: known, to: url)
+        }
+    }
+    /// Tags every staged folder on a connected drive, one after another, and reports the count. Unstaged folders are left alone.
+    func tagAllFolders() {
+        guard !tagging else { return }
+        let known = library.allStages, colours = library
+        let records = library.projects.filter { !$0.isPlanned && $0.stage != nil && known.contains($0.stage!) && mountedLocations.contains($0.location.key) }
+        let skipped = library.projects.filter { !$0.isPlanned && $0.stage != nil && known.contains($0.stage!) }.count - records.count
+        guard !records.isEmpty else { status = "No staged folders are on a connected drive."; return }
+        tagging = true
+        Task {
+            defer { tagging = false }
+            var done = 0, missing = 0, failed = 0
+            for (index, record) in records.enumerated() {
+                status = "Tagging folder \(index + 1) of \(records.count)…"
+                let stage = record.stage!, colour = colours.colour(of: stage), url = URL(fileURLWithPath: record.path)
+                let outcome: Int = await Task.detached(priority: .utility) {
+                    guard (try? url.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true else { return 1 }
+                    do { try FinderTags.apply(stage: stage, colour: colour, knownStages: known, to: url); return 0 } catch { return 2 }
+                }.value
+                switch outcome { case 0: done += 1; case 1: missing += 1; default: failed += 1 }
+            }
+            var parts = ["Tagged \(done) folders in Finder."]
+            if missing > 0 { parts.append("\(missing) folders were not found.") }
+            if failed > 0 { parts.append("\(failed) could not be written.") }
+            if skipped > 0 { parts.append("\(skipped) are on drives that are not connected.") }
+            status = parts.joined(separator: " ")
+        }
+    }
     func addCustomField(_ name: String) {
         attempt {
             let clean = try Configuration.fieldName(name, others: library.fieldList.map(\.name))

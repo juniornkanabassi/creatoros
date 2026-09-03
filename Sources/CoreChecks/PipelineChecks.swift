@@ -62,6 +62,42 @@ func pipelineChecks(base: URL) throws {
     library.projects[1] = record
     try store.save(library)
     let back = try store.load()
-    try check(back.schema == 4 && back.projects[1].stage == "Editing" && back.projects[1].editor == "Freelancer" && back.projects[0].isPlanned && back.fieldList.first?.name == "Sponsor" && back.stageList == ["Idea", "Scripting", "Done"], "pipeline fields, custom fields and stages persist")
+    try check(back.schema == Library.currentSchema && back.projects[1].stage == "Editing" && back.projects[1].editor == "Freelancer" && back.projects[0].isPlanned && back.fieldList.first?.name == "Sponsor" && back.stageList == ["Idea", "Scripting", "Done"], "pipeline fields, custom fields and stages persist")
     try check(Library().stageList == Library.defaultStages, "default stages apply when none are saved")
+}
+
+/// Two boards, stage colours and Finder tags.
+func boardChecks(base: URL) throws {
+    try check(PipelineKind.of(format: "Livestream") == .live && PipelineKind.of(format: "Long") == .recordings && PipelineKind.of(format: "Existing") == .recordings, "live streams have their own board, everything else is a recording")
+    var library = Library()
+    try check(library.stages(for: .live) == ["Scheduled", "Streamed"] && library.stages(for: .recordings) == Library.defaultStages, "default stages per board")
+    try check(library.colour(of: "Published") == .green && library.colour(of: "Scheduled") == .blue && library.colour(of: "Unclassified") == .none, "default stage colours, none for unknown stages")
+    library.stageColours = ["Published": "red"]
+    library.liveStages = ["Booked", "Streamed", "Clipped"]
+    library.finderTags = false
+    try check(library.colour(of: "Published") == .red && library.allStages == Library.defaultStages + ["Booked", "Streamed", "Clipped"] && !library.finderTagsEnabled, "colour overrides, custom live stages and the Finder switch")
+    let store = LibraryStore(root: base.appendingPathComponent("Board library"))
+    try store.save(library)
+    let back = try store.load()
+    try check(back.liveStageList == ["Booked", "Streamed", "Clipped"] && back.colour(of: "Published") == .red && back.finderTags == false && back.schema == 5, "live stages, colours and the Finder switch persist in schema 5")
+    for colour in StageColour.allCases { try check(StageColour(finderIndex: colour.finderIndex) == colour, "Finder colour index round-trips for \(colour.rawValue)") }
+
+    let folder = base.appendingPathComponent("Board/231 — Livestream — Lille vs PSG")
+    try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+    try check(try FinderTags.read(folder).isEmpty, "a fresh folder has no tags")
+    try FinderTags.write([.init(name: "Client", colour: .red)], to: folder)
+    let known = Library().allStages
+    try check(try FinderTags.apply(stage: "Scheduled", colour: .blue, knownStages: known, to: folder), "applying a stage tag reports a change")
+    try check(try FinderTags.read(folder) == [.init(name: "Client", colour: .red), .init(name: "Scheduled", colour: .blue)], "the stage tag joins the folder's own tags")
+    try check(!(try FinderTags.apply(stage: "Scheduled", colour: .blue, knownStages: known, to: folder)), "applying the same stage again changes nothing")
+    try FinderTags.apply(stage: "Streamed", colour: .green, knownStages: known, to: folder)
+    try check(try FinderTags.read(folder) == [.init(name: "Client", colour: .red), .init(name: "Streamed", colour: .green)], "moving stage replaces only the stage tag")
+    try check(FinderTags.stage(of: folder, knownStages: known) == "Streamed", "the folder reports its stage from Finder")
+    let raw = try PropertyListSerialization.propertyList(from: try IconService.attribute(FinderTags.attribute, at: folder) ?? Data(), format: nil) as? [String]
+    try check(raw == ["Client\n6", "Streamed\n2"], "tags are stored the way Finder stores them")
+    try FinderTags.clear(knownStages: known, from: folder)
+    try check(try FinderTags.read(folder) == [.init(name: "Client", colour: .red)], "clearing stage tags keeps the rest")
+    try FinderTags.write([], to: folder)
+    try check(try FinderTags.read(folder).isEmpty && FinderTags.stage(of: folder, knownStages: known) == nil, "an empty tag list removes the attribute")
+    try rejects("tags cannot be read from a missing folder") { _ = try FinderTags.read(base.appendingPathComponent("Board/missing")) }
 }

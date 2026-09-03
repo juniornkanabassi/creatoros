@@ -1,6 +1,6 @@
 # Content Template
 
-Native SwiftUI/AppKit Mac app that creates correctly named, correctly iconed project folders from reusable templates and tracks them through the content pipeline. Installed and current source: 0.2.0 build 2, the code tagged `v0.2.0`; git is the authority on the version. Current archive: `../Outputs/Content Template 0.2.0.zip`. The bundle identifier `local.projecttemplates.mac`, executable name and data folder `~/Library/Application Support/Project Templates/` never change so saved data is not stranded.
+Native SwiftUI/AppKit Mac app that creates correctly named, correctly iconed project folders from reusable templates and tracks them through the content pipeline. Installed and current source: 0.3.0 build 1, the code tagged `v0.3.0`; git is the authority on the version. Current archive: `../Outputs/Content Template 0.3.0.zip`. The bundle identifier `local.projecttemplates.mac`, executable name and data folder `~/Library/Application Support/Project Templates/` never change so saved data is not stranded.
 
 Read `../00 Project State/ARCHITECTURE-ESSENTIALS.md` before changing code. The full design is `../00 Project State/ARCHITECTURE.md` and the product statement is `../00 Project State/PRD.md`.
 
@@ -25,7 +25,8 @@ For interface testing launch with `--data-directory <disposable folder>`; copy t
 
 ```
 Sources/TemplateCore/     engine, no UI
-  Library.swift           JSON store, schema 4, upgrade backups
+  Library.swift           JSON store, schema 5, upgrade backups
+  Pipelines.swift         Recordings and Live boards, stage colours, Finder tags
   TemplateSets.swift      content template sets and per-format variants
   Naming.swift            fields, tokens, the shared substitution rule, validation
   FileEngine.swift        template reader, copy plan, copy engine, icon service
@@ -54,7 +55,7 @@ Resources/                Info.plist, AppIcon
 
 ## Git
 
-`Source/` is a local git repository, tagged `v0.0.0` (baseline), `v0.1.0` and `v0.2.0` at each delivery. Hooks are local config; after cloning run `git config core.hooksPath .githooks` and `git config commit.template .gitmessage`. Nothing is pushed anywhere until Junior says so.
+`Source/` is a local git repository, tagged `v0.0.0` (baseline), `v0.1.0`, `v0.2.0` and `v0.3.0` at each delivery. Hooks are local config; after cloning run `git config core.hooksPath .githooks` and `git config commit.template .gitmessage`. Nothing is pushed anywhere until Junior says so.
 
 ## What the app does
 
@@ -69,12 +70,13 @@ Resources/                Info.plist, AppIcon
 - **Relinking**: searches are bounded to saved locations and configured destinations, not arbitrary whole drives. One match can relink automatically when the original volume is connected and the original folder is missing. Offline originals or multiple candidates require a choice, because another copy is not proof of a move. Previous paths are retained.
 - **Pipeline**: a board with one column per stage; cards carry stage, campaign, series, editor, notes and a Notion link; ideas without a folder live in the first column and can be started into New Project.
 - **Browser**: Icon, List and Column views with Cmd-1, Cmd-2 and Cmd-3 in the View menu, routed to the frontmost browser, remembered per surface.
-- **Menus**: Control-= and Control-- scale the interface, Control-Command-F toggles full screen, Go switches pages.
+- **Menus**: Control-= (or Control-+) and Control-- scale the interface, Control-0 resets, Control-Command-F toggles full screen, Go switches pages.
+- **Pipeline**: Recordings and Live boards with their own stages and colours (Settings → Pipeline); a stage change also writes a Finder tag of the same name and colour on the folder, switchable off there. `Scripts/verify-notion-backup.py` re-checks the Notion backups read-only.
 - **Settings** window on Cmd-comma: Formats, Naming (extra fields), Pipeline (stages), Locations (badge colours), About.
 
 ## Data
 
-`library.json` schema 4. Loads schema 1 to 4, refuses newer. The first save over an older file keeps `library-before-schema-4.json` next to it. Retained export records stay unused; see `../00 Project State/Deferred features.md`. Interface state lives in `UserDefaults`; a `--data-directory` run uses its own defaults suite.
+`library.json` schema 5. Loads schema 1 to 5, refuses newer. The first save over an older file keeps `library-before-schema-5.json` next to it. Retained export records stay unused; see `../00 Project State/Deferred features.md`. Interface state lives in `UserDefaults`; a `--data-directory` run uses its own defaults suite.
 
 ## Personal setup and Notion backup utilities
 

@@ -73,7 +73,7 @@ struct ProjectRow: View {
                 HStack(spacing: 6) {
                     LocationBadge(location: record.location)
                     if unavailable { UnavailableChip() }
-                    StageChip(stage: m.effectiveStage(record))
+                    StageBadge(stage: m.effectiveStage(record))
                     if let editor = record.editor { Label(editor, systemImage: "person").font(.caption).foregroundStyle(.secondary).lineLimit(1) }
                 }
                 HStack(spacing: 6) {
@@ -102,7 +102,7 @@ struct ProjectActions: View {
         Button("Open Folder") { m.open(record) }
         Button("Reveal in Finder") { m.reveal(record) }
         Button("Show in Pipeline") { m.pipelineSelection = record.id; m.page = .pipeline }
-        Menu("Move to Stage") { ForEach(m.visibleStages, id: \.self) { stage in Button(stage) { m.setStage(stage, for: record.id) }.disabled(stage == record.stage) } }
+        Menu("Move to Stage") { ForEach(m.moveTargets(for: record), id: \.self) { stage in Button(stage) { m.setStage(stage, for: record.id) }.disabled(stage == m.effectiveStage(record)) } }
         Divider()
         Button("Find Moved Folder") { m.relink(record) }
         Button("Locate Folder…") { m.locate(record) }
@@ -168,7 +168,7 @@ struct ProjectInspector: View {
             DisclosureGroup(isExpanded: $showStatus) {
                 ProjectStatusEditor(record: record).padding(.top, 6)
             } label: {
-                HStack(spacing: 8) { Text("Status").font(.headline); StageChip(stage: m.effectiveStage(record)) }
+                HStack(spacing: 8) { Text("Status").font(.headline); StageBadge(stage: m.effectiveStage(record)) }
             }
             if let old = record.previousPaths, !old.isEmpty {
                 DisclosureGroup("Previous locations") { Text(old.joined(separator: "\n")).font(.caption).textSelection(.enabled) }.font(.callout)

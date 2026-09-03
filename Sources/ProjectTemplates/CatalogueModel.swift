@@ -13,9 +13,10 @@ extension AppModel {
             (search.isEmpty || $0.searchableText.localizedCaseInsensitiveContains(search))
         }.sorted { $0.name.localizedStandardCompare($1.name) == .orderedDescending }
     }
-    /// Projects for the board, planned ideas included, with the same format, location and search filters.
+    /// Projects for the current board, planned ideas included, with the same format, location and search filters.
     var pipelineProjects: [ProjectRecord] {
         library.projects.filter {
+            pipelineKind.includes(format: $0.format) &&
             (formatFilter == "All formats" || $0.format == formatFilter) &&
             (locationFilter == nil || $0.isPlanned || $0.location.key == locationFilter) &&
             (search.isEmpty || $0.searchableText.localizedCaseInsensitiveContains(search))
@@ -25,8 +26,22 @@ extension AppModel {
     func effectiveStage(_ record: ProjectRecord) -> String {
         record.stage ?? (record.isPlanned ? library.stageList.first : "Unclassified") ?? "Unclassified"
     }
+    /// Every stage across both boards, plus any stage a record still carries that is no longer configured.
     var visibleStages: [String] {
-        library.stageList + Set(library.projects.map(effectiveStage).filter { !library.stageList.contains($0) }).sorted()
+        let configured = library.allStages
+        return configured + Set(library.projects.map(effectiveStage).filter { !configured.contains($0) }).sorted()
+    }
+    /// Columns of the current board: its configured stages, then any orphaned stage its records still use.
+    var boardStages: [String] {
+        let configured = library.stages(for: pipelineKind)
+        let orphans = Set(library.projects.filter { pipelineKind.includes(format: $0.format) }.map(effectiveStage).filter { !configured.contains($0) })
+        return configured + orphans.sorted()
+    }
+    /// Where one record can be moved: its own board's stages, keeping its current stage in the list if that is no longer configured.
+    func moveTargets(for record: ProjectRecord) -> [String] {
+        let configured = library.stages(for: PipelineKind.of(format: record.format))
+        let current = effectiveStage(record)
+        return configured.contains(current) ? configured : configured + [current]
     }
     func projects(in stage: String) -> [ProjectRecord] {
         let list = pipelineProjects.filter { effectiveStage($0) == stage }

@@ -18,10 +18,12 @@ struct FormatButtons: View {
     @Binding var selection: String
     var includeAll = false
     var showReadiness = false
+    /// Limit the buttons to one board's formats; nil shows every preset.
+    var kind: PipelineKind? = nil
     var body: some View {
         HStack(spacing: 6) {
             if includeAll { formatButton("All formats", label: "All") }
-            ForEach(m.library.presets) { preset in formatButton(preset.format, label: preset.label) }
+            ForEach(m.library.presets.filter { kind?.includes(format: $0.format) ?? true }) { preset in formatButton(preset.format, label: preset.label) }
             if includeAll && m.library.projects.contains(where: { $0.format == "Existing" }) { formatButton("Existing", label: "Other") }
         }.controlSize(.small)
     }
