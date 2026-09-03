@@ -1,6 +1,6 @@
 # Content Template
 
-Native SwiftUI/AppKit Mac app that creates correctly named, correctly iconed project folders from reusable templates and tracks them through the content pipeline. Installed and current source: 0.1.0 build 4, preserving all features from Claude's 0.2.0 build 2 and restoring Junior's explicitly requested version label. Current archive: `../Outputs/Build 4/Content Template 0.1.0.zip`. The bundle identifier `local.projecttemplates.mac`, executable name and data folder `~/Library/Application Support/Project Templates/` never change so saved data is not stranded.
+Native SwiftUI/AppKit Mac app that creates correctly named, correctly iconed project folders from reusable templates and tracks them through the content pipeline. Installed and current source: 0.2.0 build 2, the code tagged `v0.2.0`; git is the authority on the version. Current archive: `../Outputs/Content Template 0.2.0.zip`. The bundle identifier `local.projecttemplates.mac`, executable name and data folder `~/Library/Application Support/Project Templates/` never change so saved data is not stranded.
 
 Read `../00 Project State/ARCHITECTURE-ESSENTIALS.md` before changing code. The full design is `../00 Project State/ARCHITECTURE.md` and the product statement is `../00 Project State/PRD.md`.
 
