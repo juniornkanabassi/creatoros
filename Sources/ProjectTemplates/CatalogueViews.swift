@@ -61,7 +61,7 @@ struct ProjectList: View {
 struct ProjectRow: View {
     @EnvironmentObject var m: AppModel
     let record: ProjectRecord
-    var unavailable: Bool { !m.mountedLocations.contains(record.location.key) }
+    var unavailable: Bool { !m.mountedLocations.contains(record.location.key) || m.inspections[record.id]?.available == false }
     var body: some View {
         HStack(alignment: .top, spacing: 10) {
             FormatIcon(data: m.library.presets.first { $0.format == record.format }?.icon)

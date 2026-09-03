@@ -2,6 +2,13 @@ import Foundation
 import TemplateCore
 
 func pipelineChecks(base: URL) throws {
+    try check(try Configuration.fieldName(" Sponsor ", others: []) == "Sponsor", "custom field names trim whitespace")
+    for name in ["", "template", "project number", "[Client]", "Client\nName", "Sponsor"] {
+        do { _ = try Configuration.fieldName(name, others: ["Sponsor"]); throw AppFailure("invalid custom field accepted") }
+        catch { try check(error.localizedDescription != "invalid custom field accepted", "reject invalid or duplicate field \(name)") }
+    }
+    do { _ = try Configuration.stages(["Idea", "idea"]); throw AppFailure("duplicate stages accepted") }
+    catch { try check(error.localizedDescription != "duplicate stages accepted", "stage names cannot collide ignoring case") }
     let folder = base.appendingPathComponent("Pipeline/01 Longs/230 — Long — Lille vs PSG | Post-Game Reaction")
     try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
     var record = try ProjectRecord(url: folder, format: "Long")

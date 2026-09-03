@@ -36,20 +36,19 @@ extension AppModel {
         }
     }
     /// Availability only. Nothing is indexed and the library is not saved.
-    func inspectProject(_ record: ProjectRecord) {
+    func inspectProject(_ record: ProjectRecord, findMoved: Bool = false) {
         inspectionRevision += 1; let revision = inspectionRevision
         let id = record.id
         Task {
             let result = await Task.detached(priority: .userInitiated) { Catalogue.availability(record) }.value
             guard inspectionRevision == revision else { return }
             inspections[id] = result
+            if findMoved && !result.available && !record.isPlanned { relink(record, quietly: true) }
         }
     }
     func selectProject() {
         guard let record = selectedRecord else { return }
-        inspectProject(record)
-        // A missing folder on a connected drive is the moved-project case. Try to find it before showing unavailable.
-        if !record.isPlanned, !FileManager.default.fileExists(atPath: record.path) { relink(record, quietly: true) }
+        inspectProject(record, findMoved: true)
     }
     func scanLocation(_ url: URL? = nil) {
         guard let url = url ?? folderPanel(title: "Choose a folder containing projects") else { return }

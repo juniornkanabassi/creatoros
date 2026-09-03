@@ -4,10 +4,19 @@ import TemplateCore
 
 @main struct ContentTemplateApp: App {
     @StateObject private var model = AppModel()
+    init() {
+        // A second launch should activate the running app, not open a second
+        // writer over the same library. Test bundles use a separate identifier.
+        if let identifier = Bundle.main.bundleIdentifier,
+           let existing = NSRunningApplication.runningApplications(withBundleIdentifier: identifier)
+            .first(where: { $0.processIdentifier != ProcessInfo.processInfo.processIdentifier }) {
+            existing.activate(options: [.activateAllWindows])
+            exit(0)
+        }
+    }
     var body: some Scene {
         WindowGroup("Content Template") {
             MainView().environmentObject(model).frame(minWidth: 1000, minHeight: 680)
-                .dynamicTypeSize(model.dynamicTypeSize)
                 .onAppear {
                     NSApp.setActivationPolicy(.regular); NSApp.activate(ignoringOtherApps: true); model.refresh()
                     WindowSetup.apply()
@@ -23,9 +32,10 @@ import TemplateCore
                         .disabled(model.activeSurface == nil)
                 }
                 Divider()
-                Button("Bigger Text") { model.zoom(1) }.keyboardShortcut("=", modifiers: .command)
-                Button("Smaller Text") { model.zoom(-1) }.keyboardShortcut("-", modifiers: .command)
-                Button("Actual Size") { model.zoomLevel = 0 }.keyboardShortcut("0", modifiers: .command)
+                Button("Bigger Text") { model.zoom(1) }.keyboardShortcut("=", modifiers: .control)
+                Button("Smaller Text") { model.zoom(-1) }.keyboardShortcut("-", modifiers: .control)
+                Button("Actual Size") { model.zoomLevel = 0 }.keyboardShortcut("0", modifiers: .control)
+                Button("Toggle Full Screen") { NSApp.keyWindow?.toggleFullScreen(nil) }.keyboardShortcut("f", modifiers: [.control, .command])
                 Divider()
             }
             CommandMenu("Go") {
@@ -34,7 +44,31 @@ import TemplateCore
                 }
             }
         }
-        Settings { SettingsView().environmentObject(model) }
+        Settings {
+            ZoomedInterface(scale: model.uiScale, minimumWidth: 600) {
+                SettingsView().environmentObject(model)
+            }.frame(width: 600 * model.uiScale, height: 520 * model.uiScale)
+        }
+    }
+}
+
+/// macOS does not scale this interface's semantic fonts with Dynamic Type.
+/// Scale layout and hit targets together, with horizontal scrolling at narrow
+/// widths rather than clipping controls or shrinking the text back down.
+struct ZoomedInterface<Content: View>: View {
+    let scale: CGFloat
+    let minimumWidth: CGFloat
+    @ViewBuilder let content: () -> Content
+    var body: some View {
+        GeometryReader { geometry in
+            let width = max(minimumWidth, geometry.size.width / scale)
+            ScrollView(.horizontal) {
+                content()
+                    .frame(width: width, height: geometry.size.height / scale)
+                    .scaleEffect(scale, anchor: .topLeading)
+                    .frame(width: width * scale, height: geometry.size.height, alignment: .topLeading)
+            }
+        }
     }
 }
 
@@ -61,7 +95,7 @@ struct MainView: View {
         NavigationSplitView {
             List(selection: $m.page) {
                 ForEach(Page.allCases) { page in
-                    Label { Text(page.rawValue).font(.system(size: 15, weight: .medium)) } icon: { Image(systemName: page.systemImage).font(.system(size: 17)) }
+                    Label { Text(page.rawValue).font(.system(size: 15 * m.uiScale, weight: .medium)) } icon: { Image(systemName: page.systemImage).font(.system(size: 17 * m.uiScale)) }
                         .padding(.vertical, 6).tag(page)
                 }
             }
@@ -74,6 +108,7 @@ struct MainView: View {
                 }.frame(maxWidth: .infinity, alignment: .leading).padding(14)
             }
         } content: {
+            ZoomedInterface(scale: m.uiScale, minimumWidth: 380) {
             Group {
                 switch m.page {
                 case .newProject: CreationForm()
@@ -82,8 +117,10 @@ struct MainView: View {
                 case .templates: TemplateSetList()
                 }
             }
+            }
             .navigationSplitViewColumnWidth(min: 380, ideal: 440, max: 560)
         } detail: {
+            ZoomedInterface(scale: m.uiScale, minimumWidth: 420) {
             VStack(spacing: 0) {
                 Group {
                     switch m.page {
@@ -102,6 +139,7 @@ struct MainView: View {
                         if m.busy { Button("Cancel") { m.cancellation.cancel() }.keyboardShortcut(.cancelAction) }
                     }.padding(.horizontal, 20).padding(.vertical, 10).background(.bar)
                 }
+            }
             }
             .navigationSplitViewColumnWidth(min: 420, ideal: 640)
         }

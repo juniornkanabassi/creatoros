@@ -54,11 +54,7 @@ struct SettingsView: View {
             }
             Section {
                 ForEach(m.library.fieldList) { field in
-                    HStack {
-                        TextField("Name", text: Binding(get: { field.name }, set: { var f = field; f.name = $0; m.updateCustomField(f) })).labelsHidden()
-                        Toggle("In folder name", isOn: Binding(get: { field.includeInName }, set: { var f = field; f.includeInName = $0; m.updateCustomField(f) })).toggleStyle(.checkbox)
-                        Button { m.removeCustomField(field.id) } label: { Image(systemName: "minus.circle") }.buttonStyle(.plain).help("Remove this field")
-                    }
+                    CustomFieldRow(field: field)
                 }
                 HStack {
                     TextField("New field", text: $newField, prompt: Text("For example, Sponsor or Client")).onSubmit { m.addCustomField(newField); newField = "" }
@@ -74,11 +70,7 @@ struct SettingsView: View {
         Form {
             Section {
                 ForEach(Array(m.library.stageList.enumerated()), id: \.offset) { index, stage in
-                    HStack {
-                        TextField("Stage", text: Binding(get: { stage }, set: { var s = m.library.stageList; s[index] = $0; m.setStages(s) })).labelsHidden()
-                        Button { var s = m.library.stageList; guard s.count > 2 else { return }; s.remove(at: index); m.setStages(s) } label: { Image(systemName: "minus.circle") }
-                            .buttonStyle(.plain).disabled(m.library.stageList.count <= 2)
-                    }
+                    StageSettingsRow(index: index, stage: stage)
                 }
                 HStack {
                     TextField("New stage", text: $newStage, prompt: Text("For example, Thumbnail")).onSubmit { addStage() }
@@ -124,9 +116,47 @@ struct SettingsView: View {
                 LabeledContent("Data") {
                     HStack { Text(m.store.root.path).lineLimit(2).truncationMode(.middle).textSelection(.enabled); Button("Show") { NSWorkspace.shared.open(m.store.root) } }
                 }
-                LabeledContent("Text size") { HStack { Button("Smaller") { m.zoom(-1) }; Button("Actual") { m.zoomLevel = 0 }; Button("Bigger") { m.zoom(1) } }.controlSize(.small) }
+                LabeledContent("Interface size") {
+                    HStack {
+                        Button("Smaller") { m.zoom(-1) }
+                        Button("Actual") { m.zoomLevel = 0 }
+                        Button("Bigger") { m.zoom(1) }
+                        Text("\(Int((m.uiScale * 100).rounded()))%").monospacedDigit()
+                    }.controlSize(.small)
+                }
                 Text("Offline. No accounts or integrations. Not signed with Developer ID or notarised.").font(.caption).foregroundStyle(.secondary)
             }
         }.formStyle(.grouped)
     }
+}
+
+private struct CustomFieldRow: View {
+    @EnvironmentObject var m: AppModel
+    let field: CustomField
+    @State private var name = ""
+    var body: some View {
+        HStack {
+            TextField("Name", text: $name).labelsHidden().onSubmit(save)
+            Button("Save") { save() }.disabled(name == field.name)
+            Toggle("In folder name", isOn: Binding(get: { field.includeInName }, set: { var f = field; f.includeInName = $0; m.updateCustomField(f) })).toggleStyle(.checkbox)
+            Button { m.removeCustomField(field.id) } label: { Image(systemName: "minus.circle") }.buttonStyle(.plain).help("Remove this field")
+        }.onAppear { name = field.name }.onChange(of: field.name) { name = field.name }
+    }
+    func save() { var f = field; f.name = name; m.updateCustomField(f) }
+}
+
+private struct StageSettingsRow: View {
+    @EnvironmentObject var m: AppModel
+    let index: Int
+    let stage: String
+    @State private var name = ""
+    var body: some View {
+        HStack {
+            TextField("Stage", text: $name).labelsHidden().onSubmit(save)
+            Button("Save") { save() }.disabled(name == stage)
+            Button { var s = m.library.stageList; guard s.count > 2, s.indices.contains(index) else { return }; s.remove(at: index); m.setStages(s) } label: { Image(systemName: "minus.circle") }
+                .buttonStyle(.plain).disabled(m.library.stageList.count <= 2)
+        }.onAppear { name = stage }.onChange(of: stage) { name = stage }
+    }
+    func save() { var s = m.library.stageList; guard s.indices.contains(index) else { return }; s[index] = name; m.setStages(s) }
 }

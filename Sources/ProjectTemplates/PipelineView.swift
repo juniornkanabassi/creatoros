@@ -67,6 +67,7 @@ struct ProjectStatusEditor: View {
     @State private var campaign = ""
     @State private var editor = ""
     @State private var notes = ""
+    @State private var series = ""
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             Picker("Stage", selection: Binding(get: { m.effectiveStage(record) }, set: { m.setStage($0, for: record.id) })) {
@@ -74,6 +75,7 @@ struct ProjectStatusEditor: View {
             }
             TextField("Campaign", text: $campaign, prompt: Text("None")).onSubmit(save)
             TextField("With", text: $editor, prompt: Text("Editor or collaborator")).onSubmit(save)
+            TextField("Series", text: $series, prompt: Text("Separate series with commas")).onSubmit(save)
             TextField("Notes", text: $notes, prompt: Text("Short note"), axis: .vertical).lineLimit(2...5).onSubmit(save)
             if let link = record.notionURL, let url = URL(string: link) {
                 Link(destination: url) { Label("Open in Notion", systemImage: "arrow.up.right.square") }.font(.callout)
@@ -86,8 +88,9 @@ struct ProjectStatusEditor: View {
                 }
             }
         }
-        .onAppear { campaign = record.campaign ?? ""; editor = record.editor ?? ""; notes = record.notes ?? "" }
+        .onAppear { campaign = record.campaign ?? ""; editor = record.editor ?? ""; notes = record.notes ?? ""; series = (record.series ?? []).joined(separator: ", ") }
         .onChange(of: campaign) { scheduleSave() }.onChange(of: editor) { scheduleSave() }.onChange(of: notes) { scheduleSave() }
+        .onChange(of: series) { scheduleSave() }
         .onDisappear(perform: save)
     }
     @State private var saveTask: Task<Void, Never>?
@@ -97,8 +100,9 @@ struct ProjectStatusEditor: View {
     }
     func save() {
         let c = campaign.trimmingCharacters(in: .whitespaces), e = editor.trimmingCharacters(in: .whitespaces), n = notes.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard c != (record.campaign ?? "") || e != (record.editor ?? "") || n != (record.notes ?? "") else { return }
-        m.updateProject(record.id) { $0.campaign = c.isEmpty ? nil : c; $0.editor = e.isEmpty ? nil : e; $0.notes = n.isEmpty ? nil : n }
+        let s = series.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+        guard c != (record.campaign ?? "") || e != (record.editor ?? "") || n != (record.notes ?? "") || s != (record.series ?? []) else { return }
+        m.updateProject(record.id) { $0.campaign = c.isEmpty ? nil : c; $0.editor = e.isEmpty ? nil : e; $0.notes = n.isEmpty ? nil : n; $0.series = s.isEmpty ? nil : s }
     }
 }
 

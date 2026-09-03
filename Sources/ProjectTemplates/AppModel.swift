@@ -110,8 +110,10 @@ enum BadgeColour: String, CaseIterable, Identifiable {
     @Published var relinking: Set<UUID> = []
     @Published var relinkBatchRunning = false
     var mountTimer: Timer?
+    private var checkingMounts = false
+    private var attemptedDates = Set<UUID>()
     let store: LibraryStore
-    let defaults = UserDefaults.standard
+    let defaults: UserDefaults
     var cancellation = Cancellation()
     var scanCancellation = Cancellation()
     var revision = 0
@@ -123,7 +125,8 @@ enum BadgeColour: String, CaseIterable, Identifiable {
         let arguments = ProcessInfo.processInfo.arguments
         if let i = arguments.firstIndex(of: "--data-directory"), arguments.indices.contains(i + 1) {
             store = LibraryStore(root: URL(fileURLWithPath: arguments[i + 1]))
-        } else { store = LibraryStore() }
+            defaults = UserDefaults(suiteName: "local.projecttemplates.test." + Data(arguments[i + 1].utf8).base64EncodedString())!
+        } else { store = LibraryStore(); defaults = .standard }
         page = Page(rawValue: defaults.string(forKey: "page") ?? "") ?? .newProject
         format = defaults.string(forKey: "format") ?? "Short"
         selection = defaults.string(forKey: "selection").flatMap(TemplateSelection.init(stored:))
@@ -382,6 +385,7 @@ enum BadgeColour: String, CaseIterable, Identifiable {
         guard canCreate, let plan, let preview else { return }
         let destination = URL(fileURLWithPath: destination); let name = preview.outerFolderName
         let icon = preset.icon; let format = format; let payloadID = payload?.id
+        let campaignAtCreation = campaign
         let origin = startingFrom.flatMap { id in library.projects.first { $0.id == id } }
         created = nil
         run("Creating project") { token, progress in
@@ -397,7 +401,7 @@ enum BadgeColour: String, CaseIterable, Identifiable {
                     record.notes = origin.notes; record.notionURL = origin.notionURL
                 } else {
                     record.stage = stages.count > 1 ? stages[1] : stages.first
-                    if !self.campaign.isEmpty { record.campaign = self.campaign }
+                    if !campaignAtCreation.isEmpty { record.campaign = campaignAtCreation }
                 }
                 try self.mutate { lib in
                     if let origin { lib.projects.removeAll { $0.id == origin.id } }
@@ -467,19 +471,29 @@ enum BadgeColour: String, CaseIterable, Identifiable {
     }
     /// One stat per distinct location, never per project, so it is safe to call on every appearance.
     func refreshMounts() {
+        guard !checkingMounts else { return }
+        checkingMounts = true
         let locations = distinctLocations
         Task.detached(priority: .utility) {
             let mounted = Set(locations.filter(\.isMounted).map(\.key))
-            await MainActor.run { self.mountedLocations = mounted; self.backfillFolderDates() }
+            await MainActor.run {
+                self.checkingMounts = false
+                let changed = self.mountedLocations != mounted
+                if changed { self.attemptedDates.removeAll() }
+                self.mountedLocations = mounted
+                if changed, let selected = self.selectedRecord { self.inspectProject(selected, findMoved: true) }
+                self.backfillFolderDates()
+            }
         }
     }
     private var backfilling = false
     /// Records registered before folder dates were kept get their creation date read once from disk, when the drive is there.
     func backfillFolderDates() {
         guard !backfilling, storeUsable else { return }
-        let pending = library.projects.filter { !$0.isPlanned && $0.folderCreated == nil && mountedLocations.contains($0.location.key) }
+        let pending = library.projects.filter { !$0.isPlanned && $0.folderCreated == nil && !attemptedDates.contains($0.id) && mountedLocations.contains($0.location.key) && $0.location.kind != .cloud }
         guard !pending.isEmpty else { return }
         backfilling = true
+        attemptedDates.formUnion(pending.map(\.id))
         Task.detached(priority: .utility) {
             var dates: [UUID: Date] = [:]
             for record in pending {
@@ -618,16 +632,19 @@ enum BadgeColour: String, CaseIterable, Identifiable {
         page = .newProject
         changeFormat()
     }
-    func setStages(_ stages: [String]) { attempt { try mutate { $0.stages = stages } } }
+    func setStages(_ stages: [String]) { attempt { let checked = try Configuration.stages(stages); try mutate { $0.stages = checked } } }
     func addCustomField(_ name: String) {
-        let clean = name.trimmingCharacters(in: .whitespaces)
-        guard !clean.isEmpty else { return }
-        guard !["Project Number", "Content Format", "Campaign", "Project Name", "Conent Form"].contains(clean),
-              !library.fieldList.contains(where: { $0.name.caseInsensitiveCompare(clean) == .orderedSame }) else { error = "A field called \(clean) already exists."; return }
-        attempt { try mutate { $0.customFields = $0.fieldList + [CustomField(name: clean)] }; refresh() }
+        attempt {
+            let clean = try Configuration.fieldName(name, others: library.fieldList.map(\.name))
+            try mutate { $0.customFields = $0.fieldList + [CustomField(name: clean)] }; refresh()
+        }
     }
     func updateCustomField(_ field: CustomField) {
-        attempt { try mutate { lib in lib.customFields = lib.fieldList.map { $0.id == field.id ? field : $0 } }; refresh() }
+        attempt {
+            var checked = field
+            checked.name = try Configuration.fieldName(field.name, others: library.fieldList.filter { $0.id != field.id }.map(\.name))
+            try mutate { lib in lib.customFields = lib.fieldList.map { $0.id == checked.id ? checked : $0 } }; refresh()
+        }
     }
     func removeCustomField(_ id: UUID) {
         attempt { try mutate { lib in lib.customFields = lib.fieldList.filter { $0.id != id } }; extraValues[id] = nil; refresh() }
@@ -635,9 +652,8 @@ enum BadgeColour: String, CaseIterable, Identifiable {
 
     // MARK: Zoom
 
-    static let zoomSizes: [DynamicTypeSize] = [.xSmall, .small, .medium, .large, .xLarge, .xxLarge, .xxxLarge]
-    var dynamicTypeSize: DynamicTypeSize { Self.zoomSizes[min(max(zoomLevel + 3, 0), Self.zoomSizes.count - 1)] }
-    func zoom(_ delta: Int) { zoomLevel = min(max(zoomLevel + delta, -3), 3) }
+    var uiScale: CGFloat { 1 + CGFloat(min(max(zoomLevel, -2), 3)) * 0.1 }
+    func zoom(_ delta: Int) { zoomLevel = min(max(zoomLevel + delta, -2), 3) }
 
     // MARK: Browser view modes
 
