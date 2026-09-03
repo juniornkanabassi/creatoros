@@ -1,6 +1,6 @@
 # Content Template
 
-Native SwiftUI/AppKit Mac app that creates correctly named, correctly iconed project folders from reusable templates and tracks them through the content pipeline. Installed and current source: 0.2.0 build 2. The bundle identifier `local.projecttemplates.mac`, executable name and data folder `~/Library/Application Support/Project Templates/` never change so saved data is not stranded.
+Native SwiftUI/AppKit Mac app that creates correctly named, correctly iconed project folders from reusable templates and tracks them through the content pipeline. Installed and current source: 0.1.0 build 4, preserving all features from Claude's 0.2.0 build 2 and restoring Junior's explicitly requested version label. Current archive: `../Outputs/Build 4/Content Template 0.1.0.zip`. The bundle identifier `local.projecttemplates.mac`, executable name and data folder `~/Library/Application Support/Project Templates/` never change so saved data is not stranded.
 
 Read `../00 Project State/ARCHITECTURE-ESSENTIALS.md` before changing code. The full design is `../00 Project State/ARCHITECTURE.md` and the product statement is `../00 Project State/PRD.md`.
 
@@ -66,7 +66,7 @@ Resources/                Info.plist, AppIcon
 - **Icons**: the saved format icon goes on the outer folder; every nested `Icon\r` resource fork is preserved and hidden.
 - **Numbering**: the next number per format comes from the projects already in the list and can be typed over.
 - **Projects**: a searchable list across drives with a coloured location badge and connected dot per drive or cloud folder, an Unavailable chip, format, location and stage filters, pinning, grouping by folder creation date, previous locations, Open Folder, Reveal, Locate, Find Moved Folder and the file browser.
-- **Relinking**: a missing folder is searched for on the other connected drives and saved locations; one match relinks with the old path kept, several are offered.
+- **Relinking**: searches are bounded to saved locations and configured destinations, not arbitrary whole drives. One match can relink automatically when the original volume is connected and the original folder is missing. Offline originals or multiple candidates require a choice, because another copy is not proof of a move. Previous paths are retained.
 - **Pipeline**: a board with one column per stage; cards carry stage, campaign, series, editor, notes and a Notion link; ideas without a folder live in the first column and can be started into New Project.
 - **Browser**: Icon, List and Column views with Cmd-1, Cmd-2 and Cmd-3 in the View menu, routed to the frontmost browser, remembered per surface.
 - **Menus**: Control-= and Control-- scale the interface, Control-Command-F toggles full screen, Go switches pages.
