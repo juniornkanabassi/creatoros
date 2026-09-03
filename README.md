@@ -1,6 +1,6 @@
 # Content Template
 
-Native SwiftUI/AppKit Mac app that creates correctly named, correctly iconed project folders from reusable templates. Version 0.1.0 is the first build under this name. Builds 0.1.0 to 0.3.0 of the earlier series were installed as Project Templates; the bundle identifier `local.projecttemplates.mac`, the executable name and the data folder `~/Library/Application Support/Project Templates/` are kept on purpose so nothing the user saved is stranded.
+Native SwiftUI/AppKit Mac app that creates correctly named, correctly iconed project folders from reusable templates. Installed version is 0.1.0; current source is 0.2.0, not yet packaged or installed. The bundle identifier `local.projecttemplates.mac`, executable name and data folder `~/Library/Application Support/Project Templates/` remain unchanged so saved data is not stranded.
 
 Read `../00 Project State/ARCHITECTURE-ESSENTIALS.md` before changing code. The full design is `../00 Project State/ARCHITECTURE.md` and the product statement is `../00 Project State/PRD.md`.
 
@@ -25,7 +25,7 @@ For interface testing launch with `--data-directory <disposable folder>`; copy t
 
 ```
 Sources/TemplateCore/     engine, no UI
-  Library.swift           JSON store, schema 3, upgrade backups
+  Library.swift           JSON store, schema 4, upgrade backups
   TemplateSets.swift      content template sets and per-format variants
   Naming.swift            fields, tokens, the shared substitution rule, validation
   FileEngine.swift        template reader, copy plan, copy engine, icon service
@@ -64,8 +64,16 @@ Resources/                Info.plist, AppIcon
 
 ## Data
 
-`library.json` schema 3. Loads schema 1 to 3, refuses newer. The first save over an older file keeps `library-before-schema-3.json` next to it. Export records from 0.2.0 and 0.3.0 are kept but unused; see `../00 Project State/Deferred features.md`. Interface state (selected set, format, page, view modes) lives in `UserDefaults`.
+Source uses `library.json` schema 4. Loads schema 1 to 4, refuses newer. The first save over an older file keeps `library-before-schema-4.json` next to it. The installed personal library is still schema 3. Retained export records stay unused; see `../00 Project State/Deferred features.md`. Interface state lives in `UserDefaults`.
+
+## Current source and external migration utility
+
+0.2.0 adds pipeline metadata/board, pinning, date grouping, location badges/filters, configurable fields and suggested per-format numbering. Codex's safety corrections keep unknown stages Unclassified, process batch relinking sequentially, preserve edits made while a search awaits and constrain searches to approved roots. Debug build and 259 core assertions pass. These changes still need isolated interface validation before delivery.
+
+`Scripts/notion-backup.py` is a separate offline utility for the user-authorised export migration, not an app feature. Run `python3 Scripts/notion-backup.py --help` for explicit roots/exports/report arguments. Default production access is read-only; `--apply` creates verified, non-overwriting snapshots. `--supplement-from` handles exported images linked across page subtrees with a separate manifest. Existing different files always stop that write; a previously edited snapshot is never repaired silently. The real run and exceptions are in `../Outputs/Notion Audit/Exports 2026-09-03/README.md`. Do not repeat production writes to recover context.
+
+Run utility checks with `python3 -B -m unittest discover -s Scripts -p test_notion_backup.py`. All 11 tests pass. No dependency download is needed. Neither stages nor campaign metadata have been imported into the personal app library yet.
 
 ## Limits worth knowing
 
-Ad-hoc signed, not Developer ID or notarised; do not distribute it as a finished release. Column view widths are fixed. Folder artwork is macOS metadata and does not travel to Windows or phones. The copy engine is not a security boundary against templates being modified adversarially while copying. Automatic counters, drag-and-drop import, branch exclusion, managed payload editing, portable sharing and Post Haste recents remain unbuilt.
+Ad-hoc signed, not Developer ID or notarised; do not distribute it as a finished release. Column view widths are fixed. Folder artwork is macOS metadata and does not travel to Windows or phones. The copy engine is not a security boundary against templates being modified adversarially while copying. Drag-and-drop import, branch exclusion, managed payload editing, portable sharing and Post Haste recents remain unbuilt. Suggested numbering exists in source, not in the installed 0.1.0 build.
