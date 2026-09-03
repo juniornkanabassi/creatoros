@@ -7,7 +7,11 @@ import TemplateCore
     var body: some Scene {
         WindowGroup("Content Template") {
             MainView().environmentObject(model).frame(minWidth: 1000, minHeight: 680)
-                .onAppear { NSApp.setActivationPolicy(.regular); NSApp.activate(ignoringOtherApps: true); model.refresh() }
+                .dynamicTypeSize(model.dynamicTypeSize)
+                .onAppear {
+                    NSApp.setActivationPolicy(.regular); NSApp.activate(ignoringOtherApps: true); model.refresh()
+                    WindowSetup.apply()
+                }
         }
         .defaultSize(width: 1280, height: 820)
         .commands {
@@ -19,9 +23,35 @@ import TemplateCore
                         .disabled(model.activeSurface == nil)
                 }
                 Divider()
+                Button("Bigger Text") { model.zoom(1) }.keyboardShortcut("=", modifiers: .command)
+                Button("Smaller Text") { model.zoom(-1) }.keyboardShortcut("-", modifiers: .command)
+                Button("Actual Size") { model.zoomLevel = 0 }.keyboardShortcut("0", modifiers: .command)
+                Divider()
+            }
+            CommandMenu("Go") {
+                ForEach(Array(Page.allCases.enumerated()), id: \.element) { index, page in
+                    Button(page.rawValue) { model.page = page }.keyboardShortcut(KeyEquivalent(Character("\(index + 1)")), modifiers: [.command, .shift])
+                }
             }
         }
         Settings { SettingsView().environmentObject(model) }
+    }
+}
+
+/// Full screen and text zoom are keyboard habits. macOS 15 moved the system Enter Full Screen shortcut to the Globe key,
+/// so the View menu item is given back its Control-Command-F equivalent here.
+enum WindowSetup {
+    static func apply() {
+        for window in NSApp.windows where window.styleMask.contains(.titled) {
+            window.collectionBehavior.insert(.fullScreenPrimary)
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+            guard let view = NSApp.mainMenu?.items.first(where: { $0.title == "View" })?.submenu else { return }
+            for item in view.items where item.action == #selector(NSWindow.toggleFullScreen(_:)) {
+                item.keyEquivalent = "f"
+                item.keyEquivalentModifierMask = [.control, .command]
+            }
+        }
     }
 }
 
@@ -30,9 +60,13 @@ struct MainView: View {
     var body: some View {
         NavigationSplitView {
             List(selection: $m.page) {
-                ForEach(Page.allCases) { page in Label(page.rawValue, systemImage: page.systemImage).tag(page) }
+                ForEach(Page.allCases) { page in
+                    Label { Text(page.rawValue).font(.system(size: 15, weight: .medium)) } icon: { Image(systemName: page.systemImage).font(.system(size: 17)) }
+                        .padding(.vertical, 6).tag(page)
+                }
             }
-            .navigationSplitViewColumnWidth(min: 170, ideal: 190, max: 240)
+            .listStyle(.sidebar)
+            .navigationSplitViewColumnWidth(min: 190, ideal: 210, max: 260)
             .safeAreaInset(edge: .bottom) {
                 VStack(alignment: .leading, spacing: 3) {
                     Text("Content Template").font(.caption.weight(.medium))
@@ -43,6 +77,7 @@ struct MainView: View {
             Group {
                 switch m.page {
                 case .newProject: CreationForm()
+                case .pipeline: PipelineSidebar()
                 case .projects: ProjectList()
                 case .templates: TemplateSetList()
                 }
@@ -53,21 +88,22 @@ struct MainView: View {
                 Group {
                     switch m.page {
                     case .newProject: CreationPreview()
+                    case .pipeline: PipelineBoard()
                     case .projects: ProjectDetail()
                     case .templates: TemplateSetDetail()
                     }
                 }.frame(maxWidth: .infinity, maxHeight: .infinity)
-                if m.busy {
+                if m.busy || (!m.status.isEmpty && m.status.hasPrefix("Looking")) {
                     Divider()
                     HStack(spacing: 12) {
-                        ProgressView(value: m.fraction).frame(width: 160)
+                        if m.busy { ProgressView(value: m.fraction).frame(width: 160) }
                         Text(m.status).lineLimit(1).font(.caption).foregroundStyle(.secondary)
                         Spacer()
-                        Button("Cancel") { m.cancellation.cancel() }.keyboardShortcut(.cancelAction)
+                        if m.busy { Button("Cancel") { m.cancellation.cancel() }.keyboardShortcut(.cancelAction) }
                     }.padding(.horizontal, 20).padding(.vertical, 10).background(.bar)
                 }
             }
-            .navigationSplitViewColumnWidth(min: 420, ideal: 620)
+            .navigationSplitViewColumnWidth(min: 420, ideal: 640)
         }
         .navigationTitle(m.page.rawValue)
         .disabled(!m.storeUsable)

@@ -18,16 +18,16 @@ func setChecks(base: URL) throws {
     let original = try encoder.encode(legacy)
     try put(original, at: store.file)
     var loaded = try store.load()
-    try check(loaded.schema == 3 && loaded.sets.isEmpty, "schema-two library loads as schema three with no sets")
+    try check(loaded.schema == 4 && loaded.sets.isEmpty, "schema-two library loads as the current schema with no sets")
     try check(loaded.projects[0].exports?.count == 1 && loaded.projects[0].markedFinals == ["04 Exports/final.mp4"] && loaded.presets[1].icon == Data([1, 2, 3]),
               "export records, finals and icons survive the upgrade untouched")
     try check(loaded.unassignedTemplates.map(\.id) == [record.id], "template with no set is reported as unassigned")
     try store.save(loaded)
-    try check(Data(contentsOf: store.root.appendingPathComponent("library-before-schema-3.json")) == original, "first schema-three save keeps a byte-exact backup")
+    try check(Data(contentsOf: store.root.appendingPathComponent("library-before-schema-4.json")) == original, "first save over an older schema keeps a byte-exact backup")
     try check(!fm.fileExists(atPath: store.root.appendingPathComponent("library-before-schema-2.json").path), "schema-two origin does not fabricate a schema-one backup")
     loaded.projects[0].name = "Edited later"
     try store.save(loaded)
-    try check(Data(contentsOf: store.root.appendingPathComponent("library-before-schema-3.json")) == original, "later saves never overwrite the upgrade backup")
+    try check(Data(contentsOf: store.root.appendingPathComponent("library-before-schema-4.json")) == original, "later saves never overwrite the upgrade backup")
     let reread = try store.load()
     try check(reread.projects[0].exports?.first?.relativePath == "04 Exports/final.mp4", "unused export fields round-trip through save and load")
 

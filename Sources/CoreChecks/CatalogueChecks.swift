@@ -72,7 +72,7 @@ func catalogueChecks(base: URL) throws {
     let original = try JSONSerialization.data(withJSONObject: json)
     try put(original, at: migration.file)
     let migrated = try migration.load()
-    try check(migrated.schema == 3 && migrated.projects.first?.exports == nil && migrated.sets.isEmpty, "schema-one library decodes without new optional fields")
+    try check(migrated.schema == 4 && migrated.projects.first?.exports == nil && migrated.sets.isEmpty, "schema-one library decodes without new optional fields")
     try migration.save(migrated)
     try check(Data(contentsOf: migration.root.appendingPathComponent("library-before-schema-2.json")) == original, "schema migration preserves byte-exact original backup")
     try migration.save(migrated)

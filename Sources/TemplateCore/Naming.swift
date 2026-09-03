@@ -15,6 +15,14 @@ public struct PreviewName: Sendable {
     public var isComplete: Bool { missing.isEmpty && issues.isEmpty }
 }
 
+/// A value for a user-defined naming parameter. Included in the folder name only when the field says so.
+public struct ExtraValue: Sendable, Hashable {
+    public let name: String
+    public let value: String
+    public let includeInName: Bool
+    public init(name: String, value: String, includeInName: Bool) { self.name = name; self.value = value; self.includeInName = includeInName }
+}
+
 public struct ProjectFields: Sendable {
     public static let numberPlaceholder = "[Project Number]"
     public static let titlePlaceholder = "[Project Name]"
@@ -23,9 +31,12 @@ public struct ProjectFields: Sendable {
     public var format: String
     public var campaign: String
     public var title: String
-    public init(number: String, format: String, campaign: String = "", title: String) {
-        self.number = number; self.format = format; self.campaign = campaign; self.title = title
+    public var extras: [ExtraValue]
+    public init(number: String, format: String, campaign: String = "", title: String, extras: [ExtraValue] = []) {
+        self.number = number; self.format = format; self.campaign = campaign; self.title = title; self.extras = extras
     }
+    /// Segments between the format and the title: campaign first, then named extras, blanks dropped.
+    var middle: [String] { ([campaign] + extras.filter { $0.includeInName }.map(\.value)).filter { !$0.isEmpty } }
     public func finalName() throws -> String {
         for (label, value) in [("Project number", number), ("Content format", format), ("Project name", title)] {
             guard !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
@@ -33,14 +44,17 @@ public struct ProjectFields: Sendable {
             }
             try Naming.validate(value)
         }
-        if !campaign.isEmpty { try Naming.validate(campaign) }
-        let name = [number, format, campaign, title].filter { !$0.isEmpty }.joined(separator: " — ")
+        for segment in middle { try Naming.validate(segment) }
+        for extra in extras where !extra.value.isEmpty { try Naming.validate(extra.value) }
+        let name = ([number, format] + middle + [title]).joined(separator: " — ")
         try Naming.validate(name)
         return name
     }
     public var tokens: [String: String] {
-        ["Project Number": number, "Content Format": format, "Conent Form": format,
-         "Campaign": campaign, "Project Name": title]
+        var map = ["Project Number": number, "Content Format": format, "Conent Form": format,
+                   "Campaign": campaign, "Project Name": title]
+        for extra in extras { map[extra.name] = extra.value }
+        return map
     }
     /// Never throws. Missing required values become visible placeholders; invalid values become issues.
     public func previewName() -> PreviewName {
@@ -54,8 +68,10 @@ public struct ProjectFields: Sendable {
         let format = part("Content Format", self.format, placeholder: Self.formatPlaceholder)
         let title = part("Project Name", self.title, placeholder: Self.titlePlaceholder)
         if !campaign.isEmpty { do { try Naming.validate(campaign) } catch { issues.append("Campaign: \(error.localizedDescription)") } }
-        let name = [number, format, campaign, title].filter { !$0.isEmpty }.joined(separator: " — ")
-        let tokens = ["Project Number": number, "Content Format": format, "Conent Form": format, "Campaign": campaign, "Project Name": title]
+        for extra in extras where !extra.value.isEmpty { do { try Naming.validate(extra.value) } catch { issues.append("\(extra.name): \(error.localizedDescription)") } }
+        let name = ([number, format] + middle + [title]).joined(separator: " — ")
+        var tokens = ["Project Number": number, "Content Format": format, "Conent Form": format, "Campaign": campaign, "Project Name": title]
+        for extra in extras { tokens[extra.name] = extra.value }
         return PreviewName(name: name, missing: missing, issues: issues, tokens: tokens)
     }
 }

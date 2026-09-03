@@ -6,19 +6,17 @@ struct ProjectList: View {
     @EnvironmentObject var m: AppModel
     var body: some View {
         VStack(spacing: 0) {
-            HStack {
-                FormatButtons(selection: $m.formatFilter, includeAll: true).help("Filter by the format the project was created as.")
-                Spacer()
-            }.padding(.horizontal, 16).padding(.vertical, 10)
-            List(m.filteredProjects, selection: $m.selectedProject) { record in
-                HStack(alignment: .top, spacing: 10) {
-                    FormatIcon(data: m.library.presets.first { $0.format == record.format }?.icon)
-                    VStack(alignment: .leading, spacing: 3) {
-                        Text(record.name).font(.headline).lineLimit(2)
-                        Text(record.volumeName ?? "Saved location").font(.caption).foregroundStyle(.secondary)
-                        Text(record.path).font(.caption2).foregroundStyle(.tertiary).lineLimit(1).truncationMode(.middle)
-                    }
-                }.padding(.vertical, 4).tag(record.id)
+            ProjectFilters().padding(.horizontal, 16).padding(.vertical, 10)
+            List(selection: $m.selectedProject) {
+                if !m.pinnedProjects.isEmpty {
+                    Section { ForEach(m.pinnedProjects) { ProjectRow(record: $0).tag($0.id) } } header: { Label("Pinned", systemImage: "pin.fill") }
+                }
+                ForEach(m.groupedProjects, id: \.title) { group in
+                    Section(group.title) { ForEach(group.records) { ProjectRow(record: $0).tag($0.id) } }
+                }
+            }
+            .contextMenu(forSelectionType: UUID.self) { ids in
+                if let record = m.library.projects.first(where: { ids.contains($0.id) }) { ProjectActions(record: record) }
             }
             .onChange(of: m.selectedProject) { m.selectProject() }
             .overlay {
@@ -43,16 +41,73 @@ struct ProjectList: View {
                 Text("\(m.filteredProjects.count) projects · \((m.library.locations ?? []).count) saved locations").font(.caption).foregroundStyle(.secondary)
             }.padding(.horizontal, 16).padding(.vertical, 8)
         }
-        .searchable(text: $m.search, placement: .toolbar, prompt: "Search projects and previous locations")
+        .searchable(text: $m.search, placement: .toolbar, prompt: "Search projects, notes and previous locations")
         .toolbar {
-            ToolbarItem(placement: .primaryAction) {
+            ToolbarItemGroup(placement: .primaryAction) {
+                Toggle(isOn: $m.groupByDate) { Label("Group by date", systemImage: "calendar") }.help("Group projects by when their folder was created")
                 Menu {
                     Button("Folder of Projects or Drive…") { m.scanLocation() }
                     Button("One Existing Project…") { m.addExisting() }
+                    Divider()
+                    Button("Find Moved Folders") { m.relinkAll() }.help("Look on the connected drives for folders that have moved")
                 } label: { Label("Add", systemImage: "plus") }
             }
         }
         .sheet(isPresented: $m.discoveryPresented) { DiscoveryView() }
+        .onAppear { m.refreshMounts() }
+    }
+}
+
+struct ProjectRow: View {
+    @EnvironmentObject var m: AppModel
+    let record: ProjectRecord
+    var unavailable: Bool { !m.mountedLocations.contains(record.location.key) }
+    var body: some View {
+        HStack(alignment: .top, spacing: 10) {
+            FormatIcon(data: m.library.presets.first { $0.format == record.format }?.icon)
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 6) {
+                    if record.isPinned { Image(systemName: "pin.fill").font(.caption2).foregroundStyle(.secondary) }
+                    Text(record.name).font(.headline).lineLimit(2)
+                }
+                HStack(spacing: 6) {
+                    LocationBadge(location: record.location)
+                    if unavailable { UnavailableChip() }
+                    if let stage = record.stage { StageChip(stage: stage) }
+                    if let editor = record.editor { Label(editor, systemImage: "person").font(.caption).foregroundStyle(.secondary).lineLimit(1) }
+                }
+                HStack(spacing: 6) {
+                    Text(record.effectiveDate.formatted(date: .abbreviated, time: .omitted)).font(.caption2).foregroundStyle(.tertiary)
+                    Text(record.path).font(.caption2).foregroundStyle(.tertiary).lineLimit(1).truncationMode(.middle)
+                }
+            }
+        }.padding(.vertical, 4)
+    }
+}
+
+struct UnavailableChip: View {
+    var body: some View {
+        Label("Unavailable", systemImage: "externaldrive.badge.xmark").font(.caption.weight(.medium)).labelStyle(.titleAndIcon)
+            .padding(.horizontal, 7).padding(.vertical, 2).background(Color.orange.opacity(0.16), in: Capsule()).foregroundStyle(.orange)
+            .help("The drive or cloud folder is not connected right now")
+    }
+}
+
+/// Shared actions for a project row, card or inspector menu.
+struct ProjectActions: View {
+    @EnvironmentObject var m: AppModel
+    let record: ProjectRecord
+    var body: some View {
+        Button(record.isPinned ? "Unpin" : "Pin") { m.togglePin(record.id) }
+        Button("Open Folder") { m.open(record) }
+        Button("Reveal in Finder") { m.reveal(record) }
+        Button("Show in Pipeline") { m.pipelineSelection = record.id; m.page = .pipeline }
+        Menu("Move to Stage") { ForEach(m.library.stageList, id: \.self) { stage in Button(stage) { m.setStage(stage, for: record.id) }.disabled(stage == record.stage) } }
+        Divider()
+        Button("Find Moved Folder") { m.relink(record) }
+        Button("Locate Folder…") { m.locate(record) }
+        Divider()
+        Button("Remove from List", role: .destructive) { m.removeRecord(record) }
     }
 }
 
@@ -63,7 +118,7 @@ struct ProjectDetail: View {
         if let record = m.selectedRecord { ProjectInspector(record: record).id(record.id) }
         else {
             ContentUnavailableView("Your projects, wherever they live", systemImage: "externaldrive",
-                                   description: Text("Select a project to browse its files. Names and locations stay searchable while a drive is disconnected."))
+                                   description: Text("Select a project to browse its files and update its stage. Names and locations stay searchable while a drive is disconnected."))
         }
     }
 }
@@ -72,30 +127,48 @@ struct ProjectInspector: View {
     @EnvironmentObject var m: AppModel
     let record: ProjectRecord
     var inspection: ProjectInspection? { m.inspections[record.id] }
+    @State private var showStatus = true
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 12) {
                 FormatIcon(data: m.library.presets.first { $0.format == record.format }?.icon, size: 40)
-                VStack(alignment: .leading, spacing: 3) {
+                VStack(alignment: .leading, spacing: 4) {
                     Text(record.name).font(.title3.weight(.semibold)).textSelection(.enabled).lineLimit(2)
-                    HStack(spacing: 6) {
-                        Image(systemName: inspection == nil ? "circle.dotted" : (inspection!.available ? "checkmark.circle.fill" : "exclamationmark.triangle.fill"))
-                            .foregroundStyle(inspection?.available == true ? .green : .orange)
-                        Text(inspection?.status ?? "Checking location…").font(.callout).foregroundStyle(.secondary).lineLimit(2)
+                    HStack(spacing: 8) {
+                        LocationBadge(location: record.location)
+                        if m.relinking.contains(record.id) { ProgressView().controlSize(.mini); Text("Looking for the folder…").font(.callout).foregroundStyle(.secondary) }
+                        else {
+                            Image(systemName: inspection == nil ? "circle.dotted" : (inspection!.available ? "checkmark.circle.fill" : "exclamationmark.triangle.fill"))
+                                .foregroundStyle(inspection?.available == true ? .green : .orange)
+                            Text(inspection?.status ?? "Checking location…").font(.callout).foregroundStyle(.secondary).lineLimit(2)
+                        }
                     }
+                    Text("Created \(record.effectiveDate.formatted(date: .long, time: .omitted))").font(.caption).foregroundStyle(.secondary)
                 }
                 Spacer()
+                Button { m.togglePin(record.id) } label: { Image(systemName: record.isPinned ? "pin.fill" : "pin") }.help(record.isPinned ? "Unpin" : "Pin to the top of the list")
             }
             Text(record.path).font(.caption).foregroundStyle(.secondary).lineLimit(2).truncationMode(.middle).textSelection(.enabled)
+            if let candidates = m.relinkCandidates[record.id], !candidates.isEmpty {
+                VStack(alignment: .leading, spacing: 6) {
+                    Label("Found \(candidates.count) folders with this name. Choose the right one:", systemImage: "arrow.triangle.2.circlepath").font(.callout)
+                    ForEach(candidates, id: \.path) { url in
+                        HStack { Text(url.path).font(.caption).lineLimit(1).truncationMode(.middle); Spacer(); Button("Relink") { m.relink(record, to: url) }.controlSize(.small) }
+                    }
+                }.padding(10).background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 8))
+            }
             HStack {
                 Button("Open Folder") { m.open(record) }
                 Button("Reveal in Finder") { m.reveal(record) }
                 Menu("More") {
-                    Button("Check Again") { m.inspectProject(record) }
-                    Button("Locate Folder…") { m.locate(record) }
-                    Divider()
-                    Button("Remove from List", role: .destructive) { m.removeRecord(record) }
+                    Button("Check Again") { m.inspectProject(record); m.refreshMounts() }
+                    ProjectActions(record: record)
                 }.fixedSize()
+            }
+            DisclosureGroup(isExpanded: $showStatus) {
+                ProjectStatusEditor(record: record).padding(.top, 6)
+            } label: {
+                HStack(spacing: 8) { Text("Status").font(.headline); if let stage = record.stage { StageChip(stage: stage) } }
             }
             if let old = record.previousPaths, !old.isEmpty {
                 DisclosureGroup("Previous locations") { Text(old.joined(separator: "\n")).font(.caption).textSelection(.enabled) }.font(.callout)
@@ -103,7 +176,9 @@ struct ProjectInspector: View {
             if inspection?.available == true {
                 FolderBrowserHost(title: record.name, resolveRoot: { try ProjectBrowser.root(record) }, surface: .projectFiles)
             } else if inspection != nil {
-                ContentUnavailableView("Folder unavailable", systemImage: "externaldrive.badge.xmark", description: Text("Reconnect the drive or use Locate Folder. The record stays in your list.")).frame(maxHeight: .infinity)
+                ContentUnavailableView("Folder unavailable", systemImage: "externaldrive.badge.xmark",
+                                       description: Text("Reconnect the drive, or use Find Moved Folder if it lives somewhere else now. The record stays in your list."))
+                    .frame(maxHeight: .infinity)
             } else { Spacer() }
         }.padding(20)
     }

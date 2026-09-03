@@ -165,6 +165,8 @@ do {
     try browserChecks(base: base)
     try setChecks(base: base)
     try previewChecks(base: base)
+    try pipelineChecks(base: base)
+    try relinkChecks(base: base)
     let args = ProcessInfo.processInfo.arguments
     if let index = args.firstIndex(of: "--master"), args.indices.contains(index + 1) {
         let master = URL(fileURLWithPath: args[index + 1]).resolvingSymlinksInPath()

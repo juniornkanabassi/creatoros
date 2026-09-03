@@ -6,9 +6,27 @@ extension AppModel {
     var selectedRecord: ProjectRecord? { library.projects.first { $0.id == selectedProject } }
     var filteredProjects: [ProjectRecord] {
         library.projects.filter {
+            !$0.isPlanned &&
             (formatFilter == "All formats" || $0.format == formatFilter) &&
+            (locationFilter == nil || $0.location.key == locationFilter) &&
+            (stageFilter == nil || $0.stage == stageFilter) &&
             (search.isEmpty || $0.searchableText.localizedCaseInsensitiveContains(search))
         }.sorted { $0.name.localizedStandardCompare($1.name) == .orderedDescending }
+    }
+    /// Projects for the board, planned ideas included, with the same format, location and search filters.
+    var pipelineProjects: [ProjectRecord] {
+        library.projects.filter {
+            (formatFilter == "All formats" || $0.format == formatFilter) &&
+            (locationFilter == nil || $0.isPlanned || $0.location.key == locationFilter) &&
+            (search.isEmpty || $0.searchableText.localizedCaseInsensitiveContains(search))
+        }
+    }
+    func projects(in stage: String) -> [ProjectRecord] {
+        let list = pipelineProjects.filter { ($0.stage ?? library.stageList.first) == stage }
+        return list.sorted { a, b in
+            if a.isPlanned != b.isPlanned { return a.isPlanned }
+            return (a.numberValue ?? -1) > (b.numberValue ?? -1)
+        }
     }
     /// Availability only. Nothing is indexed and the library is not saved.
     func inspectProject(_ record: ProjectRecord) {
@@ -20,7 +38,12 @@ extension AppModel {
             inspections[id] = result
         }
     }
-    func selectProject() { if let record = selectedRecord { inspectProject(record) } }
+    func selectProject() {
+        guard let record = selectedRecord else { return }
+        inspectProject(record)
+        // A missing folder on a connected drive is the moved-project case. Try to find it before showing unavailable.
+        if !record.isPlanned, !FileManager.default.fileExists(atPath: record.path) { relink(record, quietly: true) }
+    }
     func scanLocation(_ url: URL? = nil) {
         guard let url = url ?? folderPanel(title: "Choose a folder containing projects") else { return }
         run("Looking for projects without moving files") { token, progress in

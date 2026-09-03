@@ -47,6 +47,15 @@ struct CreationForm: View {
     @EnvironmentObject var m: AppModel
     var body: some View {
         Form {
+            if let origin = m.startingFrom.flatMap({ id in m.library.projects.first { $0.id == id } }) {
+                Section {
+                    HStack {
+                        Label("Starting from the idea “\(origin.name)”", systemImage: "lightbulb").font(.callout)
+                        Spacer()
+                        Button("Forget") { m.startingFrom = nil }.controlSize(.small)
+                    }
+                }
+            }
             Section {
                 Picker("Content template", selection: $m.selection) {
                     if m.library.sets.isEmpty && m.library.unassignedTemplates.isEmpty { Text("None yet").tag(Optional<TemplateSelection>.none) }
@@ -65,11 +74,20 @@ struct CreationForm: View {
             Section("Content format") {
                 FormatButtons(selection: $m.format, showReadiness: m.selectedSet != nil).onChange(of: m.format) { m.changeFormat() }
             }
-            Section("Project") {
-                TextField("Project Number", text: $m.number, prompt: Text("For example, 168")).onChange(of: m.number) { m.fieldChanged() }
-                Picker("Content Format", selection: $m.format) { ForEach(m.library.presets) { Text($0.label).tag($0.format) } }
+            Section {
+                TextField("Project Number", text: $m.number, prompt: Text(m.suggestedNumber)).onChange(of: m.number) { m.numberEdited() }
                 TextField("Campaign", text: $m.campaign, prompt: Text("Optional")).onChange(of: m.campaign) { m.fieldChanged() }
+                ForEach(m.library.fieldList) { field in
+                    TextField(field.name, text: Binding(get: { m.extraValues[field.id] ?? "" }, set: { m.extraValues[field.id] = $0 }), prompt: Text(field.includeInName ? "Optional, goes in the folder name" : "Optional"))
+                        .onChange(of: m.extraValues[field.id]) { m.fieldChanged() }
+                }
                 TextField("Project Name", text: $m.title, prompt: Text("Your project title")).onChange(of: m.title) { m.fieldChanged() }
+            } header: {
+                Text("Project")
+            } footer: {
+                Text(m.numberIsAutomatic
+                     ? "Next \(m.formatLabel) is \(m.suggestedNumber), counted from your \(m.formatLabel) projects. Change it if this one is different."
+                     : "Using your own number. Clear the field to go back to the next \(m.formatLabel) number, \(m.suggestedNumber).")
             }
             Section("Destination") {
                 LabeledContent("Folder") {
@@ -77,13 +95,6 @@ struct CreationForm: View {
                         .foregroundStyle(m.destination.isEmpty ? .secondary : .primary).lineLimit(2).truncationMode(.middle).textSelection(.enabled)
                 }
                 Button("Choose…") { m.chooseDestination() }
-            }
-            Section {
-                HStack(spacing: 12) {
-                    FormatIcon(data: m.preset.icon, size: 36)
-                    Text(m.preset.icon == nil ? "The template's own folder icon is kept. Save a \(m.formatLabel) icon in Settings to apply one automatically." : "Your saved \(m.formatLabel) icon goes on the new folder. Icons inside the template stay as they are.")
-                        .font(.caption).foregroundStyle(.secondary)
-                }
             }
         }.formStyle(.grouped)
     }
@@ -206,6 +217,7 @@ struct CreationPreview: View {
                     Button("Browse Project") {
                         if let record = m.library.projects.first(where: { $0.path == created.path }) { m.selectedProject = record.id; m.page = .projects; m.selectProject() }
                     }
+                    Button("Next Project") { m.nextProject() }.buttonStyle(.borderedProminent)
                 }
             }
             Divider()

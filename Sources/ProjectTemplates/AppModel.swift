@@ -3,10 +3,15 @@ import AppKit
 import TemplateCore
 
 enum Page: String, CaseIterable, Identifiable {
-    case newProject = "New Project", projects = "Projects", templates = "Templates"
+    case newProject = "New Project", pipeline = "Pipeline", projects = "Projects", templates = "Templates"
     var id: String { rawValue }
     var systemImage: String {
-        switch self { case .newProject: "folder.badge.plus"; case .projects: "externaldrive"; case .templates: "square.stack.3d.up" }
+        switch self {
+        case .newProject: "folder.badge.plus"
+        case .pipeline: "rectangle.3.group"
+        case .projects: "externaldrive"
+        case .templates: "square.stack.3d.up"
+        }
     }
 }
 
@@ -40,14 +45,29 @@ enum AppInfo {
     static var version: String { Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "development" }
 }
 
+/// Named colours the user can pick for a location badge.
+enum BadgeColour: String, CaseIterable, Identifiable {
+    case gray, orange, green, blue, purple, teal, pink, indigo, red, yellow, brown, mint
+    var id: String { rawValue }
+    var colour: Color {
+        switch self {
+        case .gray: .gray; case .orange: .orange; case .green: .green; case .blue: .blue; case .purple: .purple; case .teal: .teal
+        case .pink: .pink; case .indigo: .indigo; case .red: .red; case .yellow: .yellow; case .brown: .brown; case .mint: .mint
+        }
+    }
+    var title: String { rawValue.prefix(1).uppercased() + rawValue.dropFirst() }
+}
+
 @MainActor final class AppModel: ObservableObject {
     @Published var library = Library()
     @Published var page: Page { didSet { defaults.set(page.rawValue, forKey: "page") } }
     @Published var selection: TemplateSelection? { didSet { defaults.set(selection?.stored, forKey: "selection") } }
     @Published var format: String { didSet { defaults.set(format, forKey: "format") } }
     @Published var number = ""
+    @Published var numberIsAutomatic = true
     @Published var campaign = ""
     @Published var title = ""
+    @Published var extraValues: [UUID: String] = [:]
     @Published var destination = ""
     @Published var preview: PreviewRendering?
     @Published var plan: CopyPlan?
@@ -57,6 +77,7 @@ enum AppInfo {
     @Published var status = ""
     @Published var error: String?
     @Published var created: URL?
+    @Published var startingFrom: UUID?
     @Published var importSource: URL?
     @Published var importName = ""
     @Published var importMode: ImportMode = .full
@@ -71,12 +92,23 @@ enum AppInfo {
     @Published var discoveryPresented = false
     @Published var discoverySelection = Set<UUID>()
     @Published var formatFilter = "All formats"
+    @Published var locationFilter: String? { didSet { defaults.set(locationFilter, forKey: "locationFilter") } }
+    @Published var stageFilter: String?
+    @Published var mountedLocations: Set<String> = []
+    @Published var locationColours: [String: String] = [:]
     @Published var editingIcon = false
     @Published var templateToBrowse: TemplateRecord?
     @Published var templatesSelection: TemplateSelection?
     @Published var newSetPrompt: NewSetPrompt?
     @Published var viewModes: [BrowserSurface: BrowserViewMode] = [:]
     @Published var activeSurfaces: [BrowserSurface] = []
+    @Published var zoomLevel: Int { didSet { defaults.set(zoomLevel, forKey: "zoomLevel") } }
+    @Published var pipelineSelection: UUID?
+    @Published var newIdeaPresented = false
+    @Published var groupByDate: Bool { didSet { defaults.set(groupByDate, forKey: "groupByDate") } }
+    @Published var relinkCandidates: [UUID: [URL]] = [:]
+    @Published var relinking: Set<UUID> = []
+    var mountTimer: Timer?
     let store: LibraryStore
     let defaults = UserDefaults.standard
     var cancellation = Cancellation()
@@ -94,6 +126,9 @@ enum AppInfo {
         page = Page(rawValue: defaults.string(forKey: "page") ?? "") ?? .newProject
         format = defaults.string(forKey: "format") ?? "Short"
         selection = defaults.string(forKey: "selection").flatMap(TemplateSelection.init(stored:))
+        locationFilter = defaults.string(forKey: "locationFilter")
+        zoomLevel = defaults.object(forKey: "zoomLevel") as? Int ?? 0
+        groupByDate = defaults.object(forKey: "groupByDate") as? Bool ?? true
         for surface in BrowserSurface.allCases {
             viewModes[surface] = BrowserViewMode(rawValue: defaults.string(forKey: "viewMode." + surface.rawValue) ?? "") ?? .list
         }
@@ -102,11 +137,17 @@ enum AppInfo {
         if !Library.formats.contains(format) { format = "Short" }
         if !selectionIsValid { selection = defaultSelection }
         destination = preset.destination
+        number = suggestedNumber
+        refreshMounts()
+        mountTimer = Timer.scheduledTimer(withTimeInterval: 20, repeats: true) { [weak self] _ in Task { @MainActor in self?.refreshMounts() } }
     }
 
     // MARK: Selection and resolution
 
-    var fields: ProjectFields { .init(number: number, format: format, campaign: campaign, title: title) }
+    var fields: ProjectFields {
+        .init(number: number, format: format, campaign: campaign, title: title,
+              extras: library.fieldList.map { ExtraValue(name: $0.name, value: extraValues[$0.id] ?? "", includeInName: $0.includeInName) })
+    }
     var preset: Preset { library.presets.first { $0.format == format } ?? Preset(format) }
     var formatLabel: String { preset.label }
     func label(for format: String) -> String { library.presets.first { $0.format == format }?.label ?? format }
@@ -144,6 +185,15 @@ enum AppInfo {
         }
     }
     var canCreate: Bool { !busy && storeUsable && created == nil && plan != nil && preview?.isExecutable == true && !destination.isEmpty }
+
+    // MARK: Numbering
+
+    var suggestedNumber: String { Numbering.next(for: format, in: library.projects) }
+    func numberEdited() {
+        numberIsAutomatic = number == suggestedNumber
+        fieldChanged()
+    }
+    private func applySuggestedNumber() { if numberIsAutomatic || number.isEmpty { number = suggestedNumber; numberIsAutomatic = true } }
 
     // MARK: Persistence
 
@@ -185,6 +235,7 @@ enum AppInfo {
                 destination = url.path
             } catch { destination = ""; self.error = "Destination is unavailable. Choose it again. \(error.localizedDescription)" }
         }
+        applySuggestedNumber()
         refresh()
     }
     func changeSelection() { created = nil; refresh() }
@@ -326,18 +377,40 @@ enum AppInfo {
         guard canCreate, let plan, let preview else { return }
         let destination = URL(fileURLWithPath: destination); let name = preview.outerFolderName
         let icon = preset.icon; let format = format; let payloadID = payload?.id
+        let origin = startingFrom.flatMap { id in library.projects.first { $0.id == id } }
         created = nil
         run("Creating project") { token, progress in
             try CreationEngine.create(plan: plan, destination: destination, name: name, icon: icon, cancellation: token, progress: progress)
         } completion: { url in
             self.created = url
             do {
-                let record = try ProjectRecord(url: url, format: format)
-                try self.mutate { $0.projects.insert(record, at: 0) }
+                var record = try ProjectRecord(url: url, format: format)
+                let stages = self.library.stageList
+                if let origin {
+                    record.stage = origin.stage == stages.first ? (stages.dropFirst().first ?? origin.stage) : origin.stage
+                    record.campaign = origin.campaign; record.series = origin.series; record.editor = origin.editor
+                    record.notes = origin.notes; record.notionURL = origin.notionURL
+                } else {
+                    record.stage = stages.count > 1 ? stages[1] : stages.first
+                    if !self.campaign.isEmpty { record.campaign = self.campaign }
+                }
+                try self.mutate { lib in
+                    if let origin { lib.projects.removeAll { $0.id == origin.id } }
+                    lib.projects.insert(record, at: 0)
+                }
+                self.startingFrom = nil
+                self.numberIsAutomatic = true
+                self.refreshMounts()
             } catch { self.error = "The project exists at \(url.path), but history could not be saved. Do not create it again. Use Add Existing Project to recover. \(error.localizedDescription)" }
         } failure: { message in
             if message.contains("changed"), let payloadID { self.invalidateStructure(payloadID); self.refresh() }
         }
+    }
+    /// Clears the form for the next project, moving the number on.
+    func nextProject() {
+        created = nil; title = ""; campaign = ""; extraValues = [:]; startingFrom = nil
+        numberIsAutomatic = true; number = suggestedNumber
+        refresh()
     }
     func run<T: Sendable>(_ label: String,
                           operation: @escaping @Sendable (Cancellation, @escaping CreationEngine.Progress) async throws -> T,
@@ -373,6 +446,159 @@ enum AppInfo {
             editingIcon = false
         }
     }
+
+    // MARK: Locations
+
+    var distinctLocations: [ProjectLocation] {
+        var seen = Set<String>(); var result: [ProjectLocation] = []
+        for record in library.projects where !record.isPlanned {
+            let location = record.location
+            if seen.insert(location.key).inserted { result.append(location) }
+        }
+        return result.sorted { a, b in
+            if a.kind != b.kind { return a.kind == .local }
+            return a.label.localizedStandardCompare(b.label) == .orderedAscending
+        }
+    }
+    /// One stat per distinct location, never per project, so it is safe to call on every appearance.
+    func refreshMounts() {
+        let locations = distinctLocations
+        Task.detached(priority: .utility) {
+            let mounted = Set(locations.filter(\.isMounted).map(\.key))
+            await MainActor.run { self.mountedLocations = mounted }
+        }
+    }
+    func badgeColour(_ location: ProjectLocation) -> BadgeColour {
+        BadgeColour(rawValue: locationColours[location.key] ?? defaults.string(forKey: "locationColour." + location.key) ?? location.defaultColour) ?? .gray
+    }
+    func setBadgeColour(_ colour: BadgeColour, for location: ProjectLocation) {
+        locationColours[location.key] = colour.rawValue
+        defaults.set(colour.rawValue, forKey: "locationColour." + location.key)
+    }
+
+    // MARK: Pinning, dates and relinking
+
+    func togglePin(_ id: UUID) { updateProject(id) { $0.pinned = $0.isPinned ? nil : true } }
+    /// Section title for a date: Today, Yesterday, Last 7 days, This month, then month and year.
+    func dateGroup(_ date: Date) -> String {
+        let calendar = Calendar.current
+        if calendar.isDateInToday(date) { return "Today" }
+        if calendar.isDateInYesterday(date) { return "Yesterday" }
+        if let week = calendar.date(byAdding: .day, value: -7, to: Date()), date > week { return "Last 7 days" }
+        if calendar.isDate(date, equalTo: Date(), toGranularity: .month) { return "This month" }
+        return date.formatted(.dateTime.month(.wide).year())
+    }
+    var groupedProjects: [(title: String, records: [ProjectRecord])] {
+        let unpinned = filteredProjects.filter { !$0.isPinned }
+        guard groupByDate else { return [("All projects", unpinned)] }
+        let sorted = unpinned.sorted { $0.effectiveDate > $1.effectiveDate }
+        var groups: [(String, [ProjectRecord])] = []
+        for record in sorted {
+            let title = dateGroup(record.effectiveDate)
+            if let last = groups.indices.last, groups[last].0 == title { groups[last].1.append(record) } else { groups.append((title, [record])) }
+        }
+        return groups.map { (title: $0.0, records: $0.1) }
+    }
+    var pinnedProjects: [ProjectRecord] { filteredProjects.filter(\.isPinned) }
+    var unavailableProjects: [ProjectRecord] {
+        library.projects.filter { !$0.isPlanned && (!mountedLocations.contains($0.location.key) || !FileManager.default.fileExists(atPath: $0.path)) }
+    }
+    /// Roots worth searching when a folder has moved: every saved location plus each known drive's archive root.
+    var relinkRoots: [URL] {
+        var roots: [URL] = []
+        for location in library.locations ?? [] { if let url = try? location.resolve(), FileManager.default.fileExists(atPath: url.path) { roots.append(url) } }
+        for location in distinctLocations where mountedLocations.contains(location.key) && location.kind != .local {
+            roots.append(URL(fileURLWithPath: location.mountPath))
+        }
+        var seen = Set<String>()
+        return roots.filter { seen.insert($0.path).inserted }
+    }
+    /// Looks for a moved folder. One match relinks silently; several are offered; none leaves the record as it is.
+    func relink(_ record: ProjectRecord, quietly: Bool = false) {
+        guard !relinking.contains(record.id), !record.isPlanned else { return }
+        relinking.insert(record.id)
+        let roots = relinkRoots
+        Task {
+            let found = await Task.detached(priority: .userInitiated) { Relinker.candidates(for: record, roots: roots) }.value
+            relinking.remove(record.id)
+            guard library.projects.contains(where: { $0.id == record.id }) else { return }
+            if found.count == 1 {
+                attempt {
+                    var updated = record; try updated.relocate(to: found[0])
+                    try mutate { lib in if let i = lib.projects.firstIndex(where: { $0.id == record.id }) { lib.projects[i] = updated } }
+                    relinkCandidates[record.id] = nil
+                    if selectedProject == record.id { inspectProject(updated) }
+                }
+            } else {
+                relinkCandidates[record.id] = found
+                if found.isEmpty && !quietly { error = "No folder called ‘\(record.name)’ was found on the connected drives. Use Locate Folder when you know where it went." }
+            }
+        }
+    }
+    func relink(_ record: ProjectRecord, to url: URL) {
+        attempt {
+            var updated = record; try updated.relocate(to: url)
+            try mutate { lib in if let i = lib.projects.firstIndex(where: { $0.id == record.id }) { lib.projects[i] = updated } }
+            relinkCandidates[record.id] = nil
+            if selectedProject == record.id { inspectProject(updated) }
+        }
+    }
+    /// Tries every project whose folder is missing while its drive, or another drive, is connected.
+    func relinkAll() {
+        let missing = library.projects.filter { !$0.isPlanned && !FileManager.default.fileExists(atPath: $0.path) }
+        for record in missing { relink(record, quietly: true) }
+        status = missing.isEmpty ? "Every project folder is where the list says it is." : "Looking for \(missing.count) moved folders…"
+    }
+
+    // MARK: Pipeline
+
+    func updateProject(_ id: UUID, _ change: (inout ProjectRecord) -> Void) {
+        attempt { try mutate { lib in if let i = lib.projects.firstIndex(where: { $0.id == id }) { change(&lib.projects[i]) } } }
+    }
+    func setStage(_ stage: String, for id: UUID) { updateProject(id) { $0.stage = stage } }
+    func addIdea(title: String, format: String, campaign: String, notes: String) {
+        let clean = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !clean.isEmpty else { error = "Give the idea a title."; return }
+        var record = ProjectRecord(planned: clean, format: format, stage: library.stageList.first ?? "Idea", campaign: campaign.isEmpty ? nil : campaign)
+        record.notes = notes.isEmpty ? nil : notes
+        attempt { try mutate { $0.projects.insert(record, at: 0) } }
+        pipelineSelection = record.id
+    }
+    func removeProject(_ id: UUID) {
+        attempt { try mutate { $0.projects.removeAll { $0.id == id } } }
+        if selectedProject == id { selectedProject = nil }
+        if pipelineSelection == id { pipelineSelection = nil }
+    }
+    /// Prefills New Project from a planned idea. The idea is replaced by the real record on creation.
+    func startPlanned(_ record: ProjectRecord) {
+        format = record.format
+        title = record.title
+        campaign = record.campaign ?? ""
+        startingFrom = record.id
+        created = nil
+        page = .newProject
+        changeFormat()
+    }
+    func setStages(_ stages: [String]) { attempt { try mutate { $0.stages = stages } } }
+    func addCustomField(_ name: String) {
+        let clean = name.trimmingCharacters(in: .whitespaces)
+        guard !clean.isEmpty else { return }
+        guard !["Project Number", "Content Format", "Campaign", "Project Name", "Conent Form"].contains(clean),
+              !library.fieldList.contains(where: { $0.name.caseInsensitiveCompare(clean) == .orderedSame }) else { error = "A field called \(clean) already exists."; return }
+        attempt { try mutate { $0.customFields = $0.fieldList + [CustomField(name: clean)] }; refresh() }
+    }
+    func updateCustomField(_ field: CustomField) {
+        attempt { try mutate { lib in lib.customFields = lib.fieldList.map { $0.id == field.id ? field : $0 } }; refresh() }
+    }
+    func removeCustomField(_ id: UUID) {
+        attempt { try mutate { lib in lib.customFields = lib.fieldList.filter { $0.id != id } }; extraValues[id] = nil; refresh() }
+    }
+
+    // MARK: Zoom
+
+    static let zoomSizes: [DynamicTypeSize] = [.xSmall, .small, .medium, .large, .xLarge, .xxLarge, .xxxLarge]
+    var dynamicTypeSize: DynamicTypeSize { Self.zoomSizes[min(max(zoomLevel + 3, 0), Self.zoomSizes.count - 1)] }
+    func zoom(_ delta: Int) { zoomLevel = min(max(zoomLevel + delta, -3), 3) }
 
     // MARK: Browser view modes
 
