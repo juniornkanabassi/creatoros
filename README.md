@@ -1,6 +1,6 @@
 # Content Template
 
-Native SwiftUI/AppKit Mac app that creates correctly named, correctly iconed project folders from reusable templates. Installed version is 0.1.0; current source is 0.2.0, not yet packaged or installed. The bundle identifier `local.projecttemplates.mac`, executable name and data folder `~/Library/Application Support/Project Templates/` remain unchanged so saved data is not stranded.
+Native SwiftUI/AppKit Mac app that creates correctly named, correctly iconed project folders from reusable templates and tracks them through the content pipeline. Installed and current source: 0.2.0 build 2. The bundle identifier `local.projecttemplates.mac`, executable name and data folder `~/Library/Application Support/Project Templates/` never change so saved data is not stranded.
 
 Read `../00 Project State/ARCHITECTURE-ESSENTIALS.md` before changing code. The full design is `../00 Project State/ARCHITECTURE.md` and the product statement is `../00 Project State/PRD.md`.
 
@@ -31,11 +31,15 @@ Sources/TemplateCore/     engine, no UI
   FileEngine.swift        template reader, copy plan, copy engine, icon service
   Preview.swift           placeholder rendering that can never become a copy plan
   Catalogue.swift         project discovery, availability, retained export indexing
+  Locations.swift         drive and cloud classification, per-format numbering
+  Relink.swift            finding moved project folders
+  Configuration.swift     validation of custom field names and stage lists
   ProjectBrowser.swift    safe read-only folder listing and opening rules
 Sources/ProjectTemplates/ the app
-  AppModel.swift          state, selection, structure cache, background runner
+  AppModel.swift          state, selection, structure cache, numbering, mounts, relinking, pipeline
   CreationView.swift      New Project form and live preview
-  CatalogueViews.swift    Projects list, inspector, discovery sheet
+  PipelineView.swift      board, cards, status editor, filters, location badge, new idea sheet
+  CatalogueViews.swift    Projects list with pinned and date groups, inspector, discovery sheet
   TemplateSetsView.swift  Templates page, set detail, legacy templates, new-set sheet
   FileBrowserView.swift   shared Icon, List and Column browser
   ProjectFileBrowser.swift host for browsing a real folder with open rules
@@ -43,12 +47,14 @@ Sources/ProjectTemplates/ the app
   ProjectTemplatesApp.swift scene, menus, main split view, import sheet
 Sources/CoreChecks/       assertion suite
 Scripts/render-icon.swift original app icon drawing; build-icon.sh regenerates the ICNS
+Scripts/configure-library.swift one-time personal setup (Notion stages and default destinations), run with the app closed
+Scripts/notion-backup.py  offline Notion export backup utility with its tests; not part of the app
 Resources/                Info.plist, AppIcon
 ```
 
 ## Git
 
-`Source/` is a local git repository. The current code was tagged `v0.0.0` as the baseline before the 0.1.0 work and `v0.1.0` at delivery. Hooks are local config; after cloning run `git config core.hooksPath .githooks` and `git config commit.template .gitmessage`. Nothing is pushed anywhere until Junior says so.
+`Source/` is a local git repository, tagged `v0.0.0` (baseline), `v0.1.0` and `v0.2.0` at each delivery. Hooks are local config; after cloning run `git config core.hooksPath .githooks` and `git config commit.template .gitmessage`. Nothing is pushed anywhere until Junior says so.
 
 ## What the app does
 
@@ -58,22 +64,22 @@ Resources/                Info.plist, AppIcon
 - **New Project** shows the whole prospective folder as soon as a set and format are chosen, with `[Project Number]` and `[Project Name]` placeholders, and re-renders on every keystroke from a cached structural scan. Create is enabled only when the rendering is executable and a destination is chosen.
 - **Naming**: Project Number, Content Format, optional Campaign, Project Name joined by ` — `. Files starting with `Template` take the full name; `[template]` and the four field tokens work; `[Conent Form]` is mapped for the old misspelling. Contents are never rewritten and package internals are never renamed.
 - **Icons**: the saved format icon goes on the outer folder; every nested `Icon\r` resource fork is preserved and hidden.
-- **Projects**: a searchable list across drives with availability checks, previous locations, Open Folder, Reveal, Locate and the file browser. Selecting a project no longer indexes or saves anything.
+- **Numbering**: the next number per format comes from the projects already in the list and can be typed over.
+- **Projects**: a searchable list across drives with a coloured location badge and connected dot per drive or cloud folder, an Unavailable chip, format, location and stage filters, pinning, grouping by folder creation date, previous locations, Open Folder, Reveal, Locate, Find Moved Folder and the file browser.
+- **Relinking**: a missing folder is searched for on the other connected drives and saved locations; one match relinks with the old path kept, several are offered.
+- **Pipeline**: a board with one column per stage; cards carry stage, campaign, series, editor, notes and a Notion link; ideas without a folder live in the first column and can be started into New Project.
 - **Browser**: Icon, List and Column views with Cmd-1, Cmd-2 and Cmd-3 in the View menu, routed to the frontmost browser, remembered per surface.
-- **Settings** window on Cmd-comma: per-format icon and destination, naming summary, data location.
+- **Menus**: Control-= and Control-- scale the interface, Control-Command-F toggles full screen, Go switches pages.
+- **Settings** window on Cmd-comma: Formats, Naming (extra fields), Pipeline (stages), Locations (badge colours), About.
 
 ## Data
 
-Source uses `library.json` schema 4. Loads schema 1 to 4, refuses newer. The first save over an older file keeps `library-before-schema-4.json` next to it. The installed personal library is still schema 3. Retained export records stay unused; see `../00 Project State/Deferred features.md`. Interface state lives in `UserDefaults`.
+`library.json` schema 4. Loads schema 1 to 4, refuses newer. The first save over an older file keeps `library-before-schema-4.json` next to it. Retained export records stay unused; see `../00 Project State/Deferred features.md`. Interface state lives in `UserDefaults`; a `--data-directory` run uses its own defaults suite.
 
-## Current source and external migration utility
+## Personal setup and Notion backup utilities
 
-0.2.0 adds pipeline metadata/board, pinning, date grouping, location badges/filters, configurable fields and suggested per-format numbering. Codex's safety corrections keep unknown stages Unclassified, process batch relinking sequentially, preserve edits made while a search awaits and constrain searches to approved roots. Debug build and 259 core assertions pass. These changes still need isolated interface validation before delivery.
-
-`Scripts/notion-backup.py` is a separate offline utility for the user-authorised export migration, not an app feature. Run `python3 Scripts/notion-backup.py --help` for explicit roots/exports/report arguments. Default production access is read-only; `--apply` creates verified, non-overwriting snapshots. `--supplement-from` handles exported images linked across page subtrees with a separate manifest. Existing different files always stop that write; a previously edited snapshot is never repaired silently. The real run and exceptions are in `../Outputs/Notion Audit/Exports 2026-09-03/README.md`. Do not repeat production writes to recover context.
-
-Run utility checks with `python3 -B -m unittest discover -s Scripts -p test_notion_backup.py`. All 11 tests pass. No dependency download is needed. Neither stages nor campaign metadata have been imported into the personal app library yet.
+`Scripts/configure-library.swift` is the one-time personal setup Codex ran on 3 September 2026 with the app closed: it imported Notion stages, campaigns, series and page links from the export audit into blank fields only and set the four default destinations, with a backup. `Scripts/notion-backup.py` is the offline, standard-library-only utility that wrote the verified `01 Documents/Notion Backup/` snapshots; run `python3 -B -m unittest discover -s Scripts -p test_notion_backup.py` for its 11 tests. The results and exceptions are in `../Outputs/Notion Audit/Exports 2026-09-03/README.md`. Do not repeat those writes.
 
 ## Limits worth knowing
 
-Ad-hoc signed, not Developer ID or notarised; do not distribute it as a finished release. Column view widths are fixed. Folder artwork is macOS metadata and does not travel to Windows or phones. The copy engine is not a security boundary against templates being modified adversarially while copying. Drag-and-drop import, branch exclusion, managed payload editing, portable sharing and Post Haste recents remain unbuilt. Suggested numbering exists in source, not in the installed 0.1.0 build.
+Ad-hoc signed, not Developer ID or notarised; do not distribute it as a finished release. Column view widths are fixed. Folder artwork is macOS metadata and does not travel to Windows or phones. The copy engine is not a security boundary against templates being modified adversarially while copying. Drag-and-drop import, branch exclusion, managed payload editing, portable sharing and Post Haste recents remain unbuilt.
