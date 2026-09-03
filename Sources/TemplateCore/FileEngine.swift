@@ -161,6 +161,59 @@ public enum IconService {
     }
 }
 
+/// Result of putting a template's folder icons back onto a project that lost them, for example one that lived in LucidLink.
+public struct IconRestoreReport: Sendable {
+    public var restored: [String] = []
+    public var unmatched: [String] = []
+    public var failed: [String] = []
+    public var outerIconApplied = false
+    public var summary: String {
+        var parts = ["Restored \(restored.count) folder icons."]
+        if outerIconApplied { parts.append("Project icon applied.") }
+        if !unmatched.isEmpty { parts.append("\(unmatched.count) template folders were not found in the project and were skipped.") }
+        if !failed.isEmpty { parts.append("\(failed.count) could not be written.") }
+        return parts.joined(separator: " ")
+    }
+}
+
+public extension IconService {
+    /// Reattaches every custom folder icon the template carries onto the matching folders of an existing project,
+    /// matched by the same substituted paths creation would have produced. Files are never touched, folders are never
+    /// created, renamed or removed; a folder the project no longer has is reported, not made. The outer folder gets
+    /// the preset icon when one is given. Works only on a filesystem that accepts the `Icon\r` support file.
+    static func restore(template payload: URL, fields: ProjectFields, onto project: URL, presetIcon: Data? = nil,
+                        cancellation: Cancellation = Cancellation()) throws -> IconRestoreReport {
+        let plan = try TemplateReader.scan(payload, fields: fields, cancellation: cancellation)
+        guard (try project.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true else { throw AppFailure("The project folder is unavailable.") }
+        var report = IconRestoreReport()
+        let fm = FileManager.default
+        // Icon\r files first, then their folders, so the custom-icon flag never points at a missing file.
+        for entry in plan.entries where entry.metadata {
+            try cancellation.check()
+            let source = payload.appendingPathComponent(entry.source)
+            let target = project.appendingPathComponent(entry.output)
+            let folder = target.deletingLastPathComponent()
+            guard (try? folder.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true else {
+                report.unmatched.append((entry.output as NSString).deletingLastPathComponent); continue
+            }
+            do {
+                if !fm.fileExists(atPath: target.path) { try Data(contentsOf: source).write(to: target) }
+                try copyMetadata(from: source, to: target)
+                try copyMetadata(from: source.deletingLastPathComponent(), to: folder)
+                report.restored.append((entry.output as NSString).deletingLastPathComponent.isEmpty ? "." : (entry.output as NSString).deletingLastPathComponent)
+            } catch {
+                try? fm.removeItem(at: target)
+                report.failed.append("\(entry.output): \(error.localizedDescription)")
+            }
+        }
+        if let presetIcon {
+            do { try apply(presetIcon, to: project); report.outerIconApplied = true }
+            catch { report.failed.append("project folder icon: \(error.localizedDescription)") }
+        }
+        return report
+    }
+}
+
 public enum CreationEngine {
     public typealias Progress = @Sendable (Double, String) -> Void
 

@@ -6,6 +6,8 @@
 //       --no-icons leaves out the Icon\r files, FinderInfo, resource forks and the preset icon (for LucidLink).
 //       Creates one project exactly as the app does (same scan, substitution, rename, copy engine and icon), then audits it.
 //       Refuses when the destination is not a mounted directory or the final folder already exists. Registers nothing in the library.
+//   ContentTool restore-icons --project <folder> --set <name> [--format <f>] [--library <root>]
+//       Puts the template's folder icons back onto an existing project (after it has left LucidLink), matched by path. Files untouched.
 //   ContentTool probe <folder>
 //       Tries the metadata operations a project needs (FinderInfo, ResourceFork, an Icon\r file, hidden flag) in a temporary folder, reports each errno, and removes the folder.
 import Foundation
@@ -204,6 +206,27 @@ case "create":
     }
     report("Files whose size differs from the template", sizeProblems)
     print(sizeProblems.isEmpty && final2.findings.isEmpty ? "Test project generated completely." : "Test project generated with the notes above.")
+case "restore-icons":
+    guard let projectPath = option("--project"), let setName = option("--set") else { print("restore-icons needs --project and --set"); exit(2) }
+    let project = URL(fileURLWithPath: projectPath)
+    let store = LibraryStore(root: option("--library").map { URL(fileURLWithPath: $0) })
+    let library = try store.load()
+    guard let set = library.sets.first(where: { $0.name == setName }) else { print("No set called \(setName)."); exit(1) }
+    let name = project.lastPathComponent
+    let parts = name.components(separatedBy: " — ")
+    let format = option("--format") ?? (parts.count >= 2 ? parts[1] : "")
+    guard let record = library.resolve(setID: set.id, format: format) else { print("\(format) is not set up in \(setName)."); exit(1) }
+    let number = String(name.prefix { $0.isNumber })
+    let title = parts.count >= 3 ? parts.dropFirst(2).joined(separator: " — ") : name
+    let campaign = parts.count >= 4 ? parts[2] : ""
+    let fields = ProjectFields(number: number, format: format, campaign: campaign, title: parts.count >= 4 ? parts.dropFirst(3).joined(separator: " — ") : title)
+    print("# Restore icons onto \(name)\n- template: \(record.name)\n- fields: number \(number), format \(format), campaign \(campaign.isEmpty ? "none" : campaign), title \(fields.title)\n- filesystem: \(fsType(project))\n")
+    let icon = library.presets.first { $0.format == format }?.icon
+    let result = try IconService.restore(template: store.payload(record), fields: fields, onto: project, presetIcon: icon)
+    report("Folders with icons restored", result.restored)
+    report("Template folders not found in the project (skipped)", result.unmatched)
+    report("Failed", result.failed)
+    print(result.summary)
 default:
     print("unknown command \(command)"); exit(2)
 }

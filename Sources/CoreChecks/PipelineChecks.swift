@@ -126,4 +126,22 @@ func plainCopyChecks(base: URL) throws {
     try check((try IconService.attribute("com.apple.FinderInfo", at: docs)) == nil, "plain copy writes no FinderInfo")
     let withIcons = try CreationEngine.create(plan: full, destination: out, name: "000 — Short — Icons", icon: nil)
     try check(FileManager.default.fileExists(atPath: withIcons.appendingPathComponent("01 Documents/Icon\r").path) && (try IconService.attribute("com.apple.FinderInfo", at: withIcons.appendingPathComponent("01 Documents")))?[8] == 0x04, "default creation still copies icon files and flags")
+
+    // Restoring icons onto the plain copy makes it metadata-identical to the copy made with icons.
+    try FileManager.default.createDirectory(at: created.appendingPathComponent("Added by editor"), withIntermediateDirectories: false)
+    let restored = try IconService.restore(template: template, fields: fields, onto: created)
+    try check(restored.restored == ["01 Documents"] && restored.unmatched.isEmpty && restored.failed.isEmpty, "restore reports the folders it iconed")
+    // digestTree keys keep the differing project names in front; compare from the first slash on.
+    func inside(_ tree: [String: String]) -> [String: String] {
+        Dictionary(uniqueKeysWithValues: tree.filter { !$0.key.contains("Added by editor") }.map { (String($0.key.drop(while: { $0 != "/" })), $0.value) })
+    }
+    let plainTree = inside(try digestTree(created)), iconTree = inside(try digestTree(withIcons))
+    try check(plainTree == iconTree, "a restored plain copy carries the same files, icon files and Finder metadata as a copy made with icons")
+    let again = try IconService.restore(template: template, fields: fields, onto: created)
+    try check(again.restored == ["01 Documents"] && inside(try digestTree(created)) == iconTree, "restoring twice changes nothing")
+    try FileManager.default.removeItem(at: created.appendingPathComponent("01 Documents"))
+    let missing = try IconService.restore(template: template, fields: fields, onto: created)
+    try check(missing.unmatched == ["01 Documents"] && missing.restored.isEmpty && !FileManager.default.fileExists(atPath: created.appendingPathComponent("01 Documents").path), "a folder the project no longer has is reported, never created")
+    try rejects("restore refuses a missing project") { _ = try IconService.restore(template: template, fields: fields, onto: out.appendingPathComponent("nowhere")) }
+    _ = iconTree
 }

@@ -667,6 +667,28 @@ enum BadgeColour: String, CaseIterable, Identifiable {
         }
     }
 
+    // MARK: Icons
+
+    /// Puts the current content template's folder icons back onto a registered project, for one that came back from LucidLink.
+    func restoreIcons(_ record: ProjectRecord) {
+        guard !record.isPlanned else { return }
+        guard case .set(let setID) = selection, let set = library.set(setID), let payload = library.resolve(setID: setID, format: record.format) else {
+            error = "Choose a content template set in New Project first; its \(label(for: record.format)) payload provides the icons."; return
+        }
+        let parts = record.name.components(separatedBy: " — ")
+        let fields = ProjectFields(number: record.number ?? "", format: record.format, campaign: parts.count >= 4 ? parts[2] : "",
+                                   title: parts.count >= 4 ? parts.dropFirst(3).joined(separator: " — ") : record.title)
+        let root = store.payload(payload), icon = library.presets.first { $0.format == record.format }?.icon
+        run("Restoring folder icons from \(set.name)") { token, _ in
+            let project = try record.resolve()
+            return try IconService.restore(template: root, fields: fields, onto: project, presetIcon: icon, cancellation: token)
+        } completion: { report in
+            self.status = report.summary
+            if !report.failed.isEmpty { self.error = "Some icons could not be written. " + report.failed.prefix(3).joined(separator: " ") + (report.failed.count > 3 ? " …" : "") + " A drive such as LucidLink cannot hold folder icons; move the project to a Mac drive first." }
+            if self.selectedProject == record.id { self.inspectProject(record) }
+        }
+    }
+
     // MARK: Finder tags
 
     /// Writes the record's stage onto its folder as a Finder tag, so Finder shows the same colour. One-way, app to Finder,
