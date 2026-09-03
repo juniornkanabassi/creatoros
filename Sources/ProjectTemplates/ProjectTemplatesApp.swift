@@ -32,9 +32,9 @@ import TemplateCore
                         .disabled(model.activeSurface == nil)
                 }
                 Divider()
-                Button("Bigger Text") { model.zoom(1) }.keyboardShortcut("=", modifiers: .control)
-                Button("Smaller Text") { model.zoom(-1) }.keyboardShortcut("-", modifiers: .control)
-                Button("Actual Size") { model.zoomLevel = 0 }.keyboardShortcut("0", modifiers: .control)
+                Button("Bigger Text") { model.zoom(1) }.keyboardShortcut("=", modifiers: .command)
+                Button("Smaller Text") { model.zoom(-1) }.keyboardShortcut("-", modifiers: .command)
+                Button("Actual Size") { model.zoomLevel = 0 }.keyboardShortcut("0", modifiers: .command)
                 Button("Toggle Full Screen") { NSApp.keyWindow?.toggleFullScreen(nil) }.keyboardShortcut("f", modifiers: [.control, .command])
                 Divider()
             }
@@ -80,12 +80,13 @@ enum WindowSetup {
         for window in NSApp.windows where window.styleMask.contains(.titled) {
             window.collectionBehavior.insert(.fullScreenPrimary)
         }
-        // Control with = + - 0 zooms from anywhere in the window, including while a text field has focus,
-        // and Control-Shift-= (the + key) counts as Control-+. Handled here so the menu equivalents never double up.
+        // Command with = + - 0 zooms from anywhere in the window, including while a text field has focus,
+        // and Command-Shift-= (the + key) counts as Command-+. Handled here so the menu equivalents never double up.
+        // Junior asked for Command on 3 September after first saying Control; Control-Command-F stays for full screen.
         if keyMonitor == nil {
             keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
                 let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask).subtracting([.shift, .numericPad, .function])
-                guard flags == .control else { return event }
+                guard flags == .command else { return event }
                 // Key codes cover every layout; the characters cover keyboards where = and - sit elsewhere.
                 let characters = event.charactersIgnoringModifiers ?? ""
                 switch (event.keyCode, characters) {

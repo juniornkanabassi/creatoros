@@ -167,6 +167,7 @@ do {
     try previewChecks(base: base)
     try pipelineChecks(base: base)
     try boardChecks(base: base)
+    try plainCopyChecks(base: base)
     try relinkChecks(base: base)
     let args = ProcessInfo.processInfo.arguments
     if let index = args.firstIndex(of: "--master"), args.indices.contains(index + 1) {

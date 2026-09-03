@@ -11,8 +11,12 @@ public struct ProjectLocation: Hashable, Sendable {
     public static let bootDrive = "Macintosh HD"
 
     public init(path: String, volumeName: String? = nil) {
-        if path.hasPrefix("/Volumes/") {
-            let volume = path.split(separator: "/").dropFirst().first.map(String.init) ?? "External"
+        let parts = path.split(separator: "/").map(String.init)
+        if path.hasPrefix("/Volumes/"), parts.count >= 3, parts[1] == parts[2] {
+            // A LucidLink filespace mounts as /Volumes/<filespace>/<filespace>: a cloud drive that looks like a volume.
+            key = "lucid:" + parts[1]; label = "LucidLink"; kind = .cloud; mountPath = "/Volumes/" + parts[1] + "/" + parts[2]
+        } else if path.hasPrefix("/Volumes/") {
+            let volume = parts.dropFirst().first ?? "External"
             key = "volume:" + volume; label = volumeName ?? volume; kind = .external; mountPath = "/Volumes/" + volume
         } else if let range = path.range(of: "/Library/CloudStorage/") {
             let folder = path[range.upperBound...].split(separator: "/").first.map(String.init) ?? "Cloud"
@@ -34,6 +38,7 @@ public struct ProjectLocation: Hashable, Sendable {
     }
     /// The account for a cloud folder, for example jnb@juniornkanabassi.com, when the folder name carries one.
     public var account: String? {
+        if key.hasPrefix("lucid:") { return String(key.dropFirst(6)) }
         guard kind == .cloud, let dash = key.firstIndex(of: "-") else { return nil }
         return String(key[key.index(after: dash)...]).split(separator: " ").first.map(String.init)
     }
@@ -46,6 +51,7 @@ public struct ProjectLocation: Hashable, Sendable {
     public var defaultColour: String {
         if kind == .local { return "gray" }
         if label.localizedCaseInsensitiveContains("naruto") { return "orange" }
+        if label == "LucidLink" { return "indigo" }
         if kind == .cloud { return "green" }
         return "purple"
     }

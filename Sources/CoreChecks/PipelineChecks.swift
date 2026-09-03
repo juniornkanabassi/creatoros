@@ -42,6 +42,9 @@ func pipelineChecks(base: URL) throws {
     let local = ProjectLocation(path: "/Users/j/Content Creation/02 Live Projects/x", volumeName: "Macintosh HD")
     try check(local.kind == .local && local.label == "Macintosh HD" && local.defaultColour == "gray" && local.isMounted, "boot drive classified as local")
     try check(!ProjectLocation(path: "/Volumes/ContentTemplate-Not-Mounted/x").isMounted, "unmounted volume reports not mounted")
+    let lucid = ProjectLocation(path: "/Volumes/junior-nkanabassi/junior-nkanabassi/000 — Short — LucidLink Test 01")
+    try check(lucid.kind == .cloud && lucid.label == "LucidLink" && lucid.account == "junior-nkanabassi" && lucid.mountPath == "/Volumes/junior-nkanabassi/junior-nkanabassi" && lucid.defaultColour == "indigo", "LucidLink filespace classified as a cloud drive")
+    try check(ProjectLocation(path: "/Volumes/junior-nkanabassi/Other/x").kind == .external, "a plain volume with a different second folder stays external")
 
     let fields = ProjectFields(number: "007", format: "Short", campaign: "Series", title: "Episode",
                                extras: [ExtraValue(name: "Sponsor", value: "Surfshark", includeInName: true), ExtraValue(name: "Client", value: "DAZN", includeInName: false)])
@@ -100,4 +103,27 @@ func boardChecks(base: URL) throws {
     try FinderTags.write([], to: folder)
     try check(try FinderTags.read(folder).isEmpty && FinderTags.stage(of: folder, knownStages: known) == nil, "an empty tag list removes the attribute")
     try rejects("tags cannot be read from a missing folder") { _ = try FinderTags.read(base.appendingPathComponent("Board/missing")) }
+}
+
+/// Plain copies for filesystems that cannot hold Finder icon files.
+func plainCopyChecks(base: URL) throws {
+    let template = base.appendingPathComponent("Plain/Template")
+    let inner = template.appendingPathComponent("01 Documents")
+    try FileManager.default.createDirectory(at: inner, withIntermediateDirectories: true)
+    try Data("brief".utf8).write(to: inner.appendingPathComponent("[Project Number] brief.txt"))
+    try Data().write(to: inner.appendingPathComponent("Icon\r"))
+    var finder = Data(count: 32); finder[8] = 0x04
+    _ = finder.withUnsafeBytes { setxattr(inner.path, "com.apple.FinderInfo", $0.baseAddress, 32, 0, XATTR_NOFOLLOW) }
+    let fields = ProjectFields(number: "000", format: "Short", title: "Plain")
+    let full = try TemplateReader.scan(template, fields: fields)
+    let plain = full.withoutIconFiles
+    try check(full.entries.contains { $0.metadata } && !plain.entries.contains { $0.metadata } && plain.excluded.contains("01 Documents/Icon\r") && plain.visible.count == full.visible.count, "a plan without icon files keeps every visible item and lists what it left out")
+    let out = base.appendingPathComponent("Plain/Out")
+    try FileManager.default.createDirectory(at: out, withIntermediateDirectories: true)
+    let created = try CreationEngine.create(plan: plain, destination: out, name: "000 — Short — Plain", icon: nil, finderMetadata: false)
+    let docs = created.appendingPathComponent("01 Documents")
+    try check(FileManager.default.fileExists(atPath: docs.appendingPathComponent("000 brief.txt").path) && !FileManager.default.fileExists(atPath: docs.appendingPathComponent("Icon\r").path), "plain copy renames files and leaves the Icon file out")
+    try check((try IconService.attribute("com.apple.FinderInfo", at: docs)) == nil, "plain copy writes no FinderInfo")
+    let withIcons = try CreationEngine.create(plan: full, destination: out, name: "000 — Short — Icons", icon: nil)
+    try check(FileManager.default.fileExists(atPath: withIcons.appendingPathComponent("01 Documents/Icon\r").path) && (try IconService.attribute("com.apple.FinderInfo", at: withIcons.appendingPathComponent("01 Documents")))?[8] == 0x04, "default creation still copies icon files and flags")
 }

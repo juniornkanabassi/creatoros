@@ -8,6 +8,7 @@ let package = Package(
                .executable(name: "CoreChecks", targets: ["CoreChecks"])],
     targets: [.target(name: "TemplateCore"),
               .executableTarget(name: "ProjectTemplates", dependencies: ["TemplateCore"]),
-              .executableTarget(name: "CoreChecks", dependencies: ["TemplateCore"])],
+              .executableTarget(name: "CoreChecks", dependencies: ["TemplateCore"]),
+              .executableTarget(name: "ContentTool", dependencies: ["TemplateCore"])],
     swiftLanguageModes: [.v5]
 )

@@ -41,6 +41,8 @@ public struct CopyPlan: Sendable {
     public let excluded: [String]
     public var bytes: Int64 { entries.reduce(0) { $0 + $1.bytes } }
     public var visible: [Entry] { entries.filter { !$0.metadata } }
+    /// The same plan without Finder icon support files, for destinations that cannot hold them.
+    public var withoutIconFiles: CopyPlan { CopyPlan(root: root, entries: visible, excluded: excluded + entries.filter(\.metadata).map(\.output)) }
 }
 
 public enum TemplateReader {
@@ -163,7 +165,9 @@ public enum CreationEngine {
     public typealias Progress = @Sendable (Double, String) -> Void
 
     /// Makes an independent, allowlisted-metadata copy into a new destination. Never merges.
-    public static func create(plan: CopyPlan, destination: URL, name: String, icon: Data? = nil,
+    /// `finderMetadata: false` copies plain files and folders only: no FinderInfo, resource forks or preset icon,
+    /// for filesystems such as LucidLink that reject the `Icon\r` support file. Default behaviour is unchanged.
+    public static func create(plan: CopyPlan, destination: URL, name: String, icon: Data? = nil, finderMetadata: Bool = true,
                               cancellation: Cancellation = Cancellation(), progress: Progress = { _, _ in }) throws -> URL {
         try Naming.validate(name)
         try cancellation.check()
@@ -223,16 +227,18 @@ public enum CreationEngine {
                 guard Int64(copied) == entry.bytes, after.contentModificationDate == entry.modified else {
                     throw AppFailure("File changed during copying: \(entry.source). Nothing was committed.")
                 }
-                try IconService.copyMetadata(from: source, to: target)
+                if finderMetadata { try IconService.copyMetadata(from: source, to: target) }
             }
         }
-        // Directory metadata follows children, so the custom-icon flag and Icon\r arrive together.
-        for entry in plan.entries.reversed() where entry.directory {
-            try cancellation.check()
-            try IconService.copyMetadata(from: plan.root.appendingPathComponent(entry.source), to: stage.appendingPathComponent(entry.output))
+        if finderMetadata {
+            // Directory metadata follows children, so the custom-icon flag and Icon\r arrive together.
+            for entry in plan.entries.reversed() where entry.directory {
+                try cancellation.check()
+                try IconService.copyMetadata(from: plan.root.appendingPathComponent(entry.source), to: stage.appendingPathComponent(entry.output))
+            }
+            try IconService.copyMetadata(from: plan.root, to: stage)
+            if let icon { try IconService.apply(icon, to: stage) }
         }
-        try IconService.copyMetadata(from: plan.root, to: stage)
-        if let icon { try IconService.apply(icon, to: stage) }
         try cancellation.check()
         progress(1, "Finalising")
         // RENAME_EXCL prevents a late destination race from replacing another project's folder.
