@@ -9,7 +9,7 @@ extension AppModel {
             !$0.isPlanned &&
             (formatFilter == "All formats" || $0.format == formatFilter) &&
             (locationFilter == nil || $0.location.key == locationFilter) &&
-            (stageFilter == nil || $0.stage == stageFilter) &&
+            (stageFilter == nil || effectiveStage($0) == stageFilter) &&
             (search.isEmpty || $0.searchableText.localizedCaseInsensitiveContains(search))
         }.sorted { $0.name.localizedStandardCompare($1.name) == .orderedDescending }
     }
@@ -21,9 +21,12 @@ extension AppModel {
             (search.isEmpty || $0.searchableText.localizedCaseInsensitiveContains(search))
         }
     }
-    /// A record with no stage yet counts as finished if it has a folder, or as an idea if it does not.
+    /// A folder's existence is not evidence that its content was published.
     func effectiveStage(_ record: ProjectRecord) -> String {
-        record.stage ?? (record.isPlanned ? library.stageList.first : library.stageList.last) ?? ""
+        record.stage ?? (record.isPlanned ? library.stageList.first : "Unclassified") ?? "Unclassified"
+    }
+    var visibleStages: [String] {
+        library.stageList + Set(library.projects.map(effectiveStage).filter { !library.stageList.contains($0) }).sorted()
     }
     func projects(in stage: String) -> [ProjectRecord] {
         let list = pipelineProjects.filter { effectiveStage($0) == stage }

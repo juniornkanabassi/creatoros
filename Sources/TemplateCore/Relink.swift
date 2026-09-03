@@ -5,30 +5,25 @@ public enum Relinker {
     /// Folders that exist right now and carry the record's name. Never scans whole drives; depth and visits are capped.
     public static func candidates(for record: ProjectRecord, roots: [URL], cancellation: Cancellation = Cancellation()) -> [URL] {
         guard !record.isPlanned else { return [] }
+        guard !roots.isEmpty, (try? cancellation.check()) != nil else { return [] }
         let fm = FileManager.default
         let name = record.name
         var found: [String] = []; var seen = Set<String>()
         func consider(_ url: URL) {
             let path = url.standardizedFileURL.path
+            guard (try? cancellation.check()) != nil else { return }
             guard path != record.path, !seen.contains(path) else { return }
             var isDirectory: ObjCBool = false
             guard fm.fileExists(atPath: path, isDirectory: &isDirectory), isDirectory.boolValue else { return }
             if (try? url.resourceValues(forKeys: [.isSymbolicLinkKey]).isSymbolicLink) == true { return }
             seen.insert(path); found.append(path)
         }
-        // 1. The same relative position on every mounted volume and on the boot drive.
-        let location = record.location
-        if !location.mountPath.isEmpty, record.path.hasPrefix(location.mountPath) {
-            let suffix = String(record.path.dropFirst(location.mountPath.count))
-            var mounts = ["/"]
-            if let volumes = try? fm.contentsOfDirectory(atPath: "/Volumes") { mounts += volumes.map { "/Volumes/" + $0 } }
-            for mount in mounts where mount != location.mountPath {
-                consider(URL(fileURLWithPath: (mount == "/" ? "" : mount) + suffix))
-            }
-        }
+        // Search only caller-approved collection roots, never every mounted drive.
         // 2. Saved locations and known roots with the last one to three path components.
         let components = (record.path as NSString).pathComponents
         for root in roots {
+            guard (try? cancellation.check()) != nil else { return [] }
+            guard (try? root.resourceValues(forKeys: [.isSymbolicLinkKey]).isSymbolicLink) != true else { continue }
             for keep in 1...min(3, components.count) {
                 let tail = components.suffix(keep).joined(separator: "/")
                 consider(root.appendingPathComponent(tail))
@@ -38,13 +33,19 @@ public enum Relinker {
         var visited = 0
         for root in roots {
             guard (try? cancellation.check()) != nil else { break }
+            guard visited < 8_000 else { break }
+            guard (try? root.resourceValues(forKeys: [.isSymbolicLinkKey]).isSymbolicLink) != true else { continue }
             guard let enumerator = fm.enumerator(at: root, includingPropertiesForKeys: [.isDirectoryKey, .isSymbolicLinkKey, .isPackageKey],
                                                   options: [.skipsHiddenFiles, .skipsPackageDescendants]) else { continue }
             for case let url as URL in enumerator {
+                guard (try? cancellation.check()) != nil else { return [] }
                 visited += 1
                 if visited > 8_000 { break }
-                let depth = url.pathComponents.count - root.pathComponents.count
-                if depth >= 4 { enumerator.skipDescendants(); continue }
+                // Enumerator URLs may canonicalise /var to /private/var. Its
+                // level remains relative to the requested root in either case.
+                let depth = enumerator.level
+                if depth > 4 { enumerator.skipDescendants(); continue }
+                if depth == 4 { enumerator.skipDescendants() }
                 guard let values = try? url.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey]), values.isDirectory == true, values.isSymbolicLink != true else { continue }
                 if url.lastPathComponent == name { consider(url); enumerator.skipDescendants() }
                 if ["raw footage", "footage", "media", "cache", "caches"].contains(Catalogue.plainFolderName(url.lastPathComponent)) { enumerator.skipDescendants() }

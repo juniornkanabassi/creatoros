@@ -102,7 +102,7 @@ struct ProjectActions: View {
         Button("Open Folder") { m.open(record) }
         Button("Reveal in Finder") { m.reveal(record) }
         Button("Show in Pipeline") { m.pipelineSelection = record.id; m.page = .pipeline }
-        Menu("Move to Stage") { ForEach(m.library.stageList, id: \.self) { stage in Button(stage) { m.setStage(stage, for: record.id) }.disabled(stage == record.stage) } }
+        Menu("Move to Stage") { ForEach(m.visibleStages, id: \.self) { stage in Button(stage) { m.setStage(stage, for: record.id) }.disabled(stage == record.stage) } }
         Divider()
         Button("Find Moved Folder") { m.relink(record) }
         Button("Locate Folder…") { m.locate(record) }

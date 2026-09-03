@@ -50,7 +50,7 @@ struct ProjectFilters: View {
             if includeStage {
                 Picker("Stage", selection: $m.stageFilter) {
                     Text("All stages").tag(Optional<String>.none)
-                    ForEach(m.library.stageList, id: \.self) { Text($0).tag(Optional($0)) }
+                    ForEach(m.visibleStages, id: \.self) { Text($0).tag(Optional($0)) }
                 }.labelsHidden().fixedSize().controlSize(.small)
             }
             Spacer()
@@ -70,7 +70,7 @@ struct ProjectStatusEditor: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             Picker("Stage", selection: Binding(get: { m.effectiveStage(record) }, set: { m.setStage($0, for: record.id) })) {
-                ForEach(m.library.stageList, id: \.self) { Text($0).tag($0) }
+                ForEach(m.visibleStages, id: \.self) { Text($0).tag($0) }
             }
             TextField("Campaign", text: $campaign, prompt: Text("None")).onSubmit(save)
             TextField("With", text: $editor, prompt: Text("Editor or collaborator")).onSubmit(save)
@@ -164,7 +164,7 @@ struct PipelineBoard: View {
     var body: some View {
         ScrollView(.horizontal) {
             HStack(alignment: .top, spacing: 12) {
-                ForEach(m.library.stageList, id: \.self) { stage in StageColumn(stage: stage) }
+                ForEach(m.visibleStages, id: \.self) { stage in StageColumn(stage: stage) }
             }.padding(16)
         }
         .background(Color(nsColor: .underPageBackgroundColor))
@@ -232,7 +232,7 @@ struct ProjectCard: View {
         .simultaneousGesture(TapGesture().onEnded { m.pipelineSelection = record.id })
         .draggable(record.id.uuidString)
         .contextMenu {
-            Menu("Move to") { ForEach(m.library.stageList, id: \.self) { stage in Button(stage) { m.setStage(stage, for: record.id) }.disabled(stage == record.stage) } }
+            Menu("Move to") { ForEach(m.visibleStages, id: \.self) { stage in Button(stage) { m.setStage(stage, for: record.id) }.disabled(stage == record.stage) } }
             if record.isPlanned { Button("Start Project…") { m.startPlanned(record) } }
             else { Button("Show in Projects") { m.selectedProject = record.id; m.page = .projects; m.selectProject() }; Button("Open Folder") { m.open(record) } }
             Divider()

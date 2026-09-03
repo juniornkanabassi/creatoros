@@ -108,6 +108,7 @@ enum BadgeColour: String, CaseIterable, Identifiable {
     @Published var groupByDate: Bool { didSet { defaults.set(groupByDate, forKey: "groupByDate") } }
     @Published var relinkCandidates: [UUID: [URL]] = [:]
     @Published var relinking: Set<UUID> = []
+    @Published var relinkBatchRunning = false
     var mountTimer: Timer?
     let store: LibraryStore
     let defaults = UserDefaults.standard
@@ -190,6 +191,7 @@ enum BadgeColour: String, CaseIterable, Identifiable {
 
     var suggestedNumber: String { Numbering.next(for: format, in: library.projects) }
     func numberEdited() {
+        if number.isEmpty { number = suggestedNumber }
         numberIsAutomatic = number == suggestedNumber
         fieldChanged()
     }
@@ -202,6 +204,7 @@ enum BadgeColour: String, CaseIterable, Identifiable {
         guard storeUsable else { throw AppFailure("Library is read-only after a load error.") }
         var next = library; try change(&next)
         try store.save(next); library = next
+        if numberIsAutomatic && created == nil { number = suggestedNumber }
     }
     func attempt(_ work: () throws -> Void) { do { try work() } catch { self.error = error.localizedDescription } }
 
@@ -235,6 +238,8 @@ enum BadgeColour: String, CaseIterable, Identifiable {
                 destination = url.path
             } catch { destination = ""; self.error = "Destination is unavailable. Choose it again. \(error.localizedDescription)" }
         }
+        // Each format starts with its own sequence; a manual override applies to that form only.
+        numberIsAutomatic = true
         applySuggestedNumber()
         refresh()
     }
@@ -527,24 +532,29 @@ enum BadgeColour: String, CaseIterable, Identifiable {
     var relinkRoots: [URL] {
         var roots: [URL] = []
         for location in library.locations ?? [] { if let url = try? location.resolve(), FileManager.default.fileExists(atPath: url.path) { roots.append(url) } }
-        for location in distinctLocations where mountedLocations.contains(location.key) && location.kind != .local {
-            roots.append(URL(fileURLWithPath: location.mountPath))
+        for preset in library.presets where !preset.destination.isEmpty {
+            let url = URL(fileURLWithPath: preset.destination)
+            if FileManager.default.fileExists(atPath: url.path) { roots.append(url) }
         }
         var seen = Set<String>()
         return roots.filter { seen.insert($0.path).inserted }
     }
-    /// Looks for a moved folder. One match relinks silently; several are offered; none leaves the record as it is.
+    /// Offline originals may be copies, so offer candidates instead of silently redirecting them.
     func relink(_ record: ProjectRecord, quietly: Bool = false) {
+        Task { await searchForMoved(record, quietly: quietly) }
+    }
+    func searchForMoved(_ record: ProjectRecord, quietly: Bool = false) async {
         guard !relinking.contains(record.id), !record.isPlanned else { return }
         relinking.insert(record.id)
+        defer { relinking.remove(record.id) }
         let roots = relinkRoots
-        Task {
             let found = await Task.detached(priority: .userInitiated) { Relinker.candidates(for: record, roots: roots) }.value
-            relinking.remove(record.id)
-            guard library.projects.contains(where: { $0.id == record.id }) else { return }
-            if found.count == 1 {
+            guard let current = library.projects.first(where: { $0.id == record.id }), current.path == record.path else { return }
+            let originalMissing = !FileManager.default.fileExists(atPath: current.path)
+            let candidateAlreadyRegistered = found.first.map { candidate in library.projects.contains { $0.id != current.id && $0.name == current.name && URL(fileURLWithPath: $0.path).resolvingSymlinksInPath() == candidate.resolvingSymlinksInPath() } } ?? false
+            if found.count == 1 && current.location.isMounted && originalMissing && !candidateAlreadyRegistered {
                 attempt {
-                    var updated = record; try updated.relocate(to: found[0])
+                    var updated = current; try updated.relocate(to: found[0])
                     try mutate { lib in if let i = lib.projects.firstIndex(where: { $0.id == record.id }) { lib.projects[i] = updated } }
                     relinkCandidates[record.id] = nil
                     if selectedProject == record.id { inspectProject(updated) }
@@ -553,11 +563,11 @@ enum BadgeColour: String, CaseIterable, Identifiable {
                 relinkCandidates[record.id] = found
                 if found.isEmpty && !quietly { error = "No folder called ‘\(record.name)’ was found on the connected drives. Use Locate Folder when you know where it went." }
             }
-        }
     }
     func relink(_ record: ProjectRecord, to url: URL) {
         attempt {
-            var updated = record; try updated.relocate(to: url)
+            guard var updated = library.projects.first(where: { $0.id == record.id }) else { return }
+            try updated.relocate(to: url)
             try mutate { lib in if let i = lib.projects.firstIndex(where: { $0.id == record.id }) { lib.projects[i] = updated } }
             relinkCandidates[record.id] = nil
             if selectedProject == record.id { inspectProject(updated) }
@@ -565,9 +575,18 @@ enum BadgeColour: String, CaseIterable, Identifiable {
     }
     /// Tries every project whose folder is missing while its drive, or another drive, is connected.
     func relinkAll() {
-        let missing = library.projects.filter { !$0.isPlanned && !FileManager.default.fileExists(atPath: $0.path) }
-        for record in missing { relink(record, quietly: true) }
-        status = missing.isEmpty ? "Every project folder is where the list says it is." : "Looking for \(missing.count) moved folders…"
+        guard !relinkBatchRunning else { return }
+        relinkBatchRunning = true
+        let records = library.projects.filter { !$0.isPlanned }
+        Task {
+            defer { relinkBatchRunning = false }
+            let missing = await Task.detached { records.filter { !FileManager.default.fileExists(atPath: $0.path) } }.value
+            for (index, record) in missing.enumerated() {
+                status = "Looking for moved folders \(index + 1) of \(missing.count)…"
+                await searchForMoved(record, quietly: true)
+            }
+            status = missing.isEmpty ? "Every project folder is where the list says it is." : "Finished checking \(missing.count) missing folders. Review suggested matches in Projects."
+        }
     }
 
     // MARK: Pipeline

@@ -19,8 +19,14 @@ func pipelineChecks(base: URL) throws {
     try check(Numbering.next(for: "Long", in: projects) == "231" && Numbering.next(for: "Short", in: projects) == "176", "next number is per format")
     try check(Numbering.next(for: "Podcast", in: projects) == "001", "first number of a format starts at 001")
     try check(Numbering.next(for: "Short", in: [planned]) == "001", "planned ideas do not consume numbers")
+    var huge = record; huge.name = "9223372036854775807 — Long — Large number"
+    try check(Numbering.next(for: "Long", in: [huge]) == "9223372036854775808", "next number does not overflow machine integers")
+    huge.name = "4294967295 — Long — Large number"
+    try check(Numbering.next(for: "Long", in: [huge]) == "4294967296", "next number is not truncated to 32 bits")
     var twin = record; twin.id = UUID(); twin.path = "/Volumes/Naruto Uzumaki/01 Video Project Archive/01 Recordings/01 Longs/" + record.name
     try check(Numbering.siblings(of: record, in: [record, twin]).count == 1, "same number and format on another drive is a sibling")
+    twin.name = "230 — Long — Another client's unrelated project"
+    try check(Numbering.siblings(of: record, in: [record, twin]).isEmpty, "same number alone does not claim an unrelated project is another copy")
 
     let external = ProjectLocation(path: "/Volumes/Naruto Uzumaki/01 Video Project Archive/01 Recordings/01 Longs/230 — Long — X", volumeName: "Naruto Uzumaki")
     try check(external.kind == .external && external.label == "Naruto Uzumaki" && external.defaultColour == "orange" && external.mountPath == "/Volumes/Naruto Uzumaki", "external drive classified with its default colour")

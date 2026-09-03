@@ -26,5 +26,9 @@ func relinkChecks(base: URL) throws {
     try record.relocate(to: candidates[0])
     try check(record.path == candidates[0].path && record.previousPaths?.first?.hasSuffix("01 Longs/231 — Long — Moved project") == true && record.folderCreated != nil, "relinking records the old path and keeps the creation date")
     let cancelled = Cancellation(); cancelled.cancel()
-    try check(Relinker.candidates(for: record, roots: [newRoot], cancellation: cancelled).count <= 1, "cancellation stops the walk")
+    try check(Relinker.candidates(for: record, roots: [newRoot], cancellation: cancelled).isEmpty, "pre-cancellation stops direct candidates as well as the walk")
+    let otherRoot = base.appendingPathComponent("Relink/Depth check")
+    let depthFour = otherRoot.appendingPathComponent("a/b/c/" + record.name)
+    try fm.createDirectory(at: depthFour, withIntermediateDirectories: true)
+    try check(Relinker.candidates(for: record, roots: [otherRoot]).count == 1, "search includes folders exactly at the depth limit")
 }

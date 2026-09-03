@@ -60,12 +60,20 @@ public enum Numbering {
     public static func next(for format: String, in projects: [ProjectRecord]) -> String {
         let used = projects.filter { $0.format == format && !$0.isPlanned }.compactMap(\.number)
         let width = max(3, used.map(\.count).max() ?? 3)
-        let highest = used.compactMap(Int.init).max() ?? 0
-        return String(format: "%0\(width)d", highest + 1)
+        // Increment decimal strings rather than overflowing Int (or truncating through C %d).
+        let digits = used.filter { !$0.isEmpty && $0.utf8.allSatisfy { (48...57).contains($0) } }
+            .map { String($0.drop(while: { $0 == "0" })) }.map { $0.isEmpty ? "0" : $0 }
+        let highest = digits.max { $0.count == $1.count ? $0 < $1 : $0.count < $1.count } ?? "0"
+        var next = Array(highest.utf8); var carry = true
+        for i in next.indices.reversed() where carry {
+            if next[i] == 57 { next[i] = 48 } else { next[i] += 1; carry = false }
+        }
+        if carry { next.insert(49, at: 0) }
+        return String(repeating: "0", count: max(0, min(width, 255) - next.count)) + String(decoding: next, as: UTF8.self)
     }
     /// Other records with the same number and format, for example the same project on a second drive.
     public static func siblings(of record: ProjectRecord, in projects: [ProjectRecord]) -> [ProjectRecord] {
         guard let number = record.number else { return [] }
-        return projects.filter { $0.id != record.id && $0.format == record.format && $0.number == number }
+        return projects.filter { $0.id != record.id && $0.format == record.format && $0.number == number && Naming.key($0.name) == Naming.key(record.name) }
     }
 }
