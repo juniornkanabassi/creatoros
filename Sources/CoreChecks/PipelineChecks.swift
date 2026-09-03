@@ -143,5 +143,14 @@ func plainCopyChecks(base: URL) throws {
     let missing = try IconService.restore(template: template, fields: fields, onto: created)
     try check(missing.unmatched == ["01 Documents"] && missing.restored.isEmpty && !FileManager.default.fileExists(atPath: created.appendingPathComponent("01 Documents").path), "a folder the project no longer has is reported, never created")
     try rejects("restore refuses a missing project") { _ = try IconService.restore(template: template, fields: fields, onto: out.appendingPathComponent("nowhere")) }
+    // Stripping a copy made with icons leaves exactly a plain copy; restoring brings it back.
+    let plainAgain = try CreationEngine.create(plan: plain, destination: out, name: "000 — Short — Plain again", icon: nil, finderMetadata: false)
+    let stripped = try IconService.strip(project: withIcons)
+    try check(stripped.iconFilesRemoved == ["01 Documents/Icon"] && stripped.foldersCleared == ["01 Documents"] && stripped.failed.isEmpty, "strip reports the icon file and folder it cleared")
+    try check(inside(try digestTree(withIcons)) == inside(try digestTree(plainAgain)), "a stripped project is identical to one created with plain folders")
+    try check(try IconService.strip(project: withIcons).iconFilesRemoved.isEmpty, "stripping twice changes nothing")
+    let roundTrip = try IconService.restore(template: template, fields: fields, onto: withIcons)
+    try check(roundTrip.restored == ["01 Documents"] && inside(try digestTree(withIcons)) == iconTree, "strip then restore returns the original icons")
+    try rejects("strip refuses a missing project") { _ = try IconService.strip(project: out.appendingPathComponent("nowhere")) }
     _ = iconTree
 }

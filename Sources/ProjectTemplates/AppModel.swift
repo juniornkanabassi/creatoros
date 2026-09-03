@@ -106,6 +106,8 @@ enum BadgeColour: String, CaseIterable, Identifiable {
     @Published var pipelineSelection: UUID?
     @Published var pipelineKind: PipelineKind { didSet { defaults.set(pipelineKind.rawValue, forKey: "pipelineKind"); if !pipelineKind.includes(format: formatFilter) { formatFilter = "All formats" } } }
     @Published var tagging = false
+    /// New Project: copy without folder icons, for a destination such as LucidLink that cannot hold them.
+    @Published var plainFolders = false
     @Published var newIdeaPresented = false
     @Published var groupByDate: Bool { didSet { defaults.set(groupByDate, forKey: "groupByDate") } }
     @Published var relinkCandidates: [UUID: [URL]] = [:]
@@ -390,9 +392,11 @@ enum BadgeColour: String, CaseIterable, Identifiable {
         let icon = preset.icon; let format = format; let payloadID = payload?.id
         let campaignAtCreation = campaign
         let origin = startingFrom.flatMap { id in library.projects.first { $0.id == id } }
+        let plain = plainFolders
         created = nil
-        run("Creating project") { token, progress in
-            try CreationEngine.create(plan: plan, destination: destination, name: name, icon: icon, cancellation: token, progress: progress)
+        run(plain ? "Creating project with plain folders" : "Creating project") { token, progress in
+            try CreationEngine.create(plan: plain ? plan.withoutIconFiles : plan, destination: destination, name: name, icon: plain ? nil : icon,
+                                      finderMetadata: !plain, cancellation: token, progress: progress)
         } completion: { url in
             self.created = url
             do {
@@ -669,6 +673,17 @@ enum BadgeColour: String, CaseIterable, Identifiable {
 
     // MARK: Icons
 
+    /// Removes a project's folder icons so it can be copied to LucidLink. The template keeps them; Restore puts them back.
+    func removeFolderIcons(_ record: ProjectRecord) {
+        guard !record.isPlanned else { return }
+        run("Removing folder icons from \(record.name)") { token, _ in
+            try IconService.strip(project: try record.resolve(), cancellation: token)
+        } completion: { report in
+            self.status = report.summary
+            if !report.failed.isEmpty { self.error = "Some icons could not be removed. " + report.failed.prefix(3).joined(separator: " ") }
+            if self.selectedProject == record.id { self.inspectProject(record) }
+        }
+    }
     /// Puts the current content template's folder icons back onto a registered project, for one that came back from LucidLink.
     func restoreIcons(_ record: ProjectRecord) {
         guard !record.isPlanned else { return }

@@ -8,6 +8,8 @@
 //       Refuses when the destination is not a mounted directory or the final folder already exists. Registers nothing in the library.
 //   ContentTool restore-icons --project <folder> --set <name> [--format <f>] [--library <root>]
 //       Puts the template's folder icons back onto an existing project (after it has left LucidLink), matched by path. Files untouched.
+//   ContentTool strip-icons --project <folder>
+//       Removes the Icon\r files and folder icon metadata from a project before it goes to LucidLink. Files untouched.
 //   ContentTool probe <folder>
 //       Tries the metadata operations a project needs (FinderInfo, ResourceFork, an Icon\r file, hidden flag) in a temporary folder, reports each errno, and removes the folder.
 import Foundation
@@ -44,10 +46,11 @@ enum Audit {
     /// Walks everything, hidden files included. Returns findings, icon files, long paths and the count of entries.
     static func run(_ root: URL, base: String = "C:\\Projects\\") -> (findings: [Finding], iconFiles: [String], longPaths: [String], entries: Int) {
         var findings: [Finding] = [], icons: [String] = [], long: [String] = [], count = 0
+        let root = root.resolvingSymlinksInPath()
         let enumerator = FileManager.default.enumerator(at: root, includingPropertiesForKeys: [.isDirectoryKey], options: [])!
         for case let url as URL in enumerator {
             count += 1
-            let relative = String(url.path.dropFirst(root.deletingLastPathComponent().path.count + 1))
+            let relative = String(url.resolvingSymlinksInPath().path.dropFirst(root.deletingLastPathComponent().path.count + 1))
             let name = url.lastPathComponent
             if name == "Icon\r" { icons.append(relative.replacingOccurrences(of: "\r", with: "\\r")); continue }
             for problem in problems(name) { findings.append(Finding(path: relative, problem: problem, corrected: nil)) }
@@ -225,6 +228,14 @@ case "restore-icons":
     let result = try IconService.restore(template: store.payload(record), fields: fields, onto: project, presetIcon: icon)
     report("Folders with icons restored", result.restored)
     report("Template folders not found in the project (skipped)", result.unmatched)
+    report("Failed", result.failed)
+    print(result.summary)
+case "strip-icons":
+    guard let projectPath = option("--project") else { print("strip-icons needs --project"); exit(2) }
+    let result = try IconService.strip(project: URL(fileURLWithPath: projectPath))
+    print("# Strip icons from \(URL(fileURLWithPath: projectPath).lastPathComponent)\n")
+    report("Icon files removed", result.iconFilesRemoved)
+    report("Folders cleared of icon metadata", result.foldersCleared)
     report("Failed", result.failed)
     print(result.summary)
 default:

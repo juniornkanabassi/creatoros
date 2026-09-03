@@ -214,6 +214,58 @@ public extension IconService {
     }
 }
 
+public struct IconStripReport: Sendable {
+    public var iconFilesRemoved: [String] = []
+    public var foldersCleared: [String] = []
+    public var failed: [String] = []
+    public var summary: String {
+        var parts = ["Removed \(iconFilesRemoved.count) icon files and cleared \(foldersCleared.count) folders."]
+        if !failed.isEmpty { parts.append("\(failed.count) could not be changed.") }
+        return parts.joined(separator: " ")
+    }
+}
+
+public extension IconService {
+    /// Removes custom folder icons from a project so it can be copied to a drive that cannot hold them:
+    /// every `Icon\r` file goes, and every folder loses its FinderInfo and resource fork. Ordinary files are never touched.
+    /// The template keeps the icons, so `restore` can put them back later.
+    static func strip(project: URL, cancellation: Cancellation = Cancellation()) throws -> IconStripReport {
+        guard (try project.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true else { throw AppFailure("The project folder is unavailable.") }
+        var report = IconStripReport()
+        let fm = FileManager.default
+        var folders: [URL] = [project]
+        guard let enumerator = fm.enumerator(at: project, includingPropertiesForKeys: [.isDirectoryKey, .isSymbolicLinkKey, .isPackageKey], options: []) else { throw AppFailure("Cannot read the project folder.") }
+        for case let url as URL in enumerator {
+            try cancellation.check()
+            let values = try url.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey, .isPackageKey])
+            if values.isSymbolicLink == true { continue }
+            if values.isPackage == true { enumerator.skipDescendants(); continue }
+            if url.lastPathComponent == "Icon\r" {
+                do { try fm.removeItem(at: url); report.iconFilesRemoved.append(relative(url, to: project)) }
+                catch { report.failed.append("\(relative(url, to: project)): \(error.localizedDescription)") }
+            } else if values.isDirectory == true { folders.append(url) }
+        }
+        for folder in folders {
+            try cancellation.check()
+            var changed = false, problem: String?
+            for name in attributes where (try? attribute(name, at: folder)) ?? nil != nil {
+                if removexattr(folder.path, name, XATTR_NOFOLLOW) == 0 { changed = true } else { problem = String(cString: strerror(errno)) }
+            }
+            if let problem { report.failed.append("\(relative(folder, to: project)): \(problem)") }
+            else if changed { report.foldersCleared.append(relative(folder, to: project)) }
+        }
+        return report
+    }
+    private static func relative(_ url: URL, to root: URL) -> String {
+        // Enumerated paths may carry the /private prefix that Foundation strips from /tmp and /var, and a name
+        // with a carriage return does not resolve, so compare both sides without that prefix.
+        func canonical(_ path: String) -> String { path.hasPrefix("/private/") ? String(path.dropFirst("/private".count)) : path }
+        let base = canonical(root.path), path = canonical(url.path)
+        let clean = (path.hasPrefix(base) ? String(path.dropFirst(base.count)) : path).trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        return clean.isEmpty ? "." : clean.replacingOccurrences(of: "\r", with: "")
+    }
+}
+
 public enum CreationEngine {
     public typealias Progress = @Sendable (Double, String) -> Void
 
@@ -295,8 +347,12 @@ public enum CreationEngine {
         try cancellation.check()
         progress(1, "Finalising")
         // RENAME_EXCL prevents a late destination race from replacing another project's folder.
-        guard renamex_np(stage.path, final.path, UInt32(RENAME_EXCL)) == 0 else {
-            throw AppFailure("Could not finalise without replacing an existing path: \(String(cString: strerror(errno))). Nothing was overwritten.")
+        if renamex_np(stage.path, final.path, UInt32(RENAME_EXCL)) != 0 {
+            // SMB mounts such as LucidLink do not support the exclusive rename (ENOTSUP). Re-check the destination
+            // and use a plain rename; the check-then-rename window is the best that filesystem allows.
+            guard errno == ENOTSUP, !fm.fileExists(atPath: final.path), rename(stage.path, final.path) == 0 else {
+                throw AppFailure("Could not finalise without replacing an existing path: \(String(cString: strerror(errno))). Nothing was overwritten.")
+            }
         }
         committed = true
         progress(1, "Complete")

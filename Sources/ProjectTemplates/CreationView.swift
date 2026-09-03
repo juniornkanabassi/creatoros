@@ -97,6 +97,9 @@ struct CreationForm: View {
                         .foregroundStyle(m.destination.isEmpty ? .secondary : .primary).lineLimit(2).truncationMode(.middle).textSelection(.enabled)
                 }
                 Button("Choose…") { m.chooseDestination() }
+                Toggle("Plain folders, no icons", isOn: $m.plainFolders)
+                    .help("Copies the template without its Mac folder icons, for LucidLink and other drives that cannot hold them. Restore Folder Icons in Projects puts them back later.")
+                    .onChange(of: m.destination) { if ProjectLocation(path: m.destination).label == "LucidLink" { m.plainFolders = true } }
             }
         }.formStyle(.grouped)
     }

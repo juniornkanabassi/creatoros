@@ -106,6 +106,7 @@ struct ProjectActions: View {
         Divider()
         Button("Find Moved Folder") { m.relink(record) }
         Button("Locate Folder…") { m.locate(record) }
+        Button("Remove Folder Icons") { m.removeFolderIcons(record) }.help("Take the folder icons off so the project can be copied to LucidLink; Restore Folder Icons puts them back")
         Button("Restore Folder Icons") { m.restoreIcons(record) }.help("Put the content template's folder icons back after the project lived on a drive that cannot hold them")
         Divider()
         Button("Remove from List", role: .destructive) { m.removeRecord(record) }
