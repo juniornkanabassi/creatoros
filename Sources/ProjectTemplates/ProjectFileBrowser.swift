@@ -42,6 +42,8 @@ struct FolderBrowserHost: View {
             HStack(spacing: 8) {
                 Button { goUp() } label: { Image(systemName: "chevron.up") }.disabled(folder.isEmpty || projectFilesOnly).help("Enclosing folder").accessibilityLabel("Enclosing folder")
                 Button("Root") { folder = ""; selection = nil; projectFilesOnly = false }.disabled(folder.isEmpty && !projectFilesOnly)
+                Button { if let root { NSWorkspace.shared.activateFileViewerSelecting([root.appendingPathComponent(selection ?? folder)]) } } label: { Image(systemName: "arrow.up.forward.app") }
+                    .disabled(root == nil).help("Reveal in Finder: the selected item, or this folder when nothing is selected, ready to drag into YouTube or anywhere else")
                 Text(projectFilesOnly ? "Premiere, After Effects, Photoshop and audio projects" : (folder.isEmpty ? title : folder))
                     .font(.caption).lineLimit(1).truncationMode(.middle).textSelection(.enabled)
                 Spacer()
@@ -54,7 +56,8 @@ struct FolderBrowserHost: View {
                     if projectFilesOnly { documentList(root: root) }
                     else {
                         FileBrowserView(dataSource: FolderDataSource(root: root), mode: m.viewMode(surface), folder: $folder, selection: $selection,
-                                        filter: query, reloadKey: "\(root.path)#\(refreshCount)") { node in requestOpen(node) }
+                                        filter: query, reloadKey: "\(root.path)#\(refreshCount)", onActivate: { node in requestOpen(node) },
+                                        onReveal: { node in NSWorkspace.shared.activateFileViewerSelecting([root.appendingPathComponent(node.id)]) })
                     }
                 } else { ProgressView("Checking folder…").frame(maxWidth: .infinity, maxHeight: .infinity) }
             }

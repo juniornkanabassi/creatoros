@@ -102,6 +102,8 @@ struct FileBrowserView: View {
     var filter = ""
     var reloadKey: AnyHashable = 0
     var onActivate: (FileBrowserNode) -> Void = { _ in }
+    /// Shows the item in Finder. Nil for previews, which have no real files yet.
+    var onReveal: ((FileBrowserNode) -> Void)? = nil
     @State private var loaded: [String: [FileBrowserNode]] = [:]
     @State private var loading: Set<String> = []
     @State private var failure: String?
@@ -181,7 +183,7 @@ struct FileBrowserView: View {
     /// still steps into it, and double-clicking a file opens it under the same rules as the other views.
     func listView(path: String) -> some View {
         let items = nodes(in: path)
-        return OutlineBrowser(nodes: loaded, root: path, filter: filter, selection: $selection, onExpand: { load($0) }, onActivate: { activate($0) }, scale: m.uiScale)
+        return OutlineBrowser(nodes: loaded, root: path, filter: filter, selection: $selection, onExpand: { load($0) }, onActivate: { activate($0) }, scale: m.uiScale, onReveal: onReveal)
             .overlay { if loading.contains(path) && loaded[path] == nil { ProgressView() } else if items.isEmpty && loaded[path] != nil { emptyLabel } }
     }
 
@@ -203,6 +205,10 @@ struct FileBrowserView: View {
                     .contentShape(Rectangle())
                     .gesture(TapGesture(count: 2).onEnded { activate(node) })
                     .simultaneousGesture(TapGesture().onEnded { selection = node.id })
+                    .contextMenu {
+                        Button(node.browsable ? "Browse Folder" : "Open") { activate(node) }
+                        if let onReveal { Button("Reveal in Finder") { onReveal(node) } }
+                    }
                     .help(node.subtitle)
                     .accessibilityElement(children: .combine).accessibilityLabel(node.name).accessibilityHint(node.subtitle)
                     .accessibilityAddTraits(selection == node.id ? .isSelected : [])
@@ -263,7 +269,10 @@ struct FileBrowserView: View {
         .listStyle(.plain)
         .focused($focusedColumn, equals: index)
         .contextMenu(forSelectionType: String.self) { ids in
-            if let node = items.first(where: { ids.contains($0.id) }), !node.browsable { Button("Open") { onActivate(node) } }
+            if let node = items.first(where: { ids.contains($0.id) }) {
+                if !node.browsable { Button("Open") { onActivate(node) } }
+                if let onReveal { Button("Reveal in Finder") { onReveal(node) } }
+            }
         } primaryAction: { ids in
             if let node = items.first(where: { ids.contains($0.id) }), !node.browsable { onActivate(node) }
         }
@@ -302,9 +311,12 @@ struct ColumnDivider: View {
         Rectangle().fill(Color(nsColor: .separatorColor)).frame(width: 1)
             .padding(.horizontal, 3).contentShape(Rectangle())
             .onHover { inside in if inside { NSCursor.resizeLeftRight.push() } else { NSCursor.pop() } }
-            .gesture(DragGesture(minimumDistance: 1).onChanged { value in
+            // Global coordinates: the divider itself moves as the column grows, so a local translation would feed back into the drag.
+            .gesture(DragGesture(minimumDistance: 1, coordinateSpace: .global).onChanged { value in
                 if startWidth == nil { startWidth = width }
-                width = min(max((startWidth ?? width) + value.translation.width, 120), 900); isFitted = false
+                var transaction = Transaction(); transaction.disablesAnimations = true
+                withTransaction(transaction) { width = min(max((startWidth ?? width) + value.translation.width, 120), 900) }
+                isFitted = false
             }.onEnded { _ in startWidth = nil })
             .onTapGesture(count: 2) {
                 if isFitted { width = defaultWidth; isFitted = false } else { width = fitted(); isFitted = true }

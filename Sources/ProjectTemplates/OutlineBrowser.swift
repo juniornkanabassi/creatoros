@@ -14,6 +14,7 @@ struct OutlineBrowser: NSViewRepresentable {
     let onActivate: (FileBrowserNode) -> Void
     /// The interface zoom. AppKit views sit outside SwiftUI's scale effect, so text, rows and icons are scaled here.
     var scale: CGFloat = 1
+    var onReveal: ((FileBrowserNode) -> Void)? = nil
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
 
@@ -167,9 +168,16 @@ struct OutlineBrowser: NSViewRepresentable {
             guard let outline, outline.clickedRow >= 0, let node = node(outline.item(atRow: outline.clickedRow)) else { return }
             let item = NSMenuItem(title: node.browsable ? "Browse Folder" : "Open", action: #selector(menuActivate(_:)), keyEquivalent: "")
             item.target = self; item.representedObject = node.id; menu.addItem(item)
+            if parent.onReveal != nil {
+                let reveal = NSMenuItem(title: "Reveal in Finder", action: #selector(menuReveal(_:)), keyEquivalent: "")
+                reveal.target = self; reveal.representedObject = node.id; menu.addItem(reveal)
+            }
         }
         @objc func menuActivate(_ sender: NSMenuItem) {
             if let id = sender.representedObject as? String, let node = byID[id] { parent.onActivate(node) }
+        }
+        @objc func menuReveal(_ sender: NSMenuItem) {
+            if let id = sender.representedObject as? String, let node = byID[id] { parent.onReveal?(node) }
         }
 
         /// Width that shows every visible value in a column, measured from the data rather than the recycled cells.

@@ -58,15 +58,23 @@ struct StageMenu: View {
     let record: ProjectRecord
     var body: some View {
         let current = m.effectiveStage(record)
-        // A Menu label on macOS keeps only its text, so the pill is the button style itself: tinted with the stage colour.
-        Menu {
-            ForEach(m.moveTargets(for: record), id: \.self) { stage in
-                Button { m.setStage(stage, for: record.id) } label: { Label { Text(stage) } icon: { Image(nsImage: ColourDot.image(m.stageColour(stage))) } }
-                    .disabled(stage == current)
-            }
-        } label: { Text(current).font(.caption.weight(.semibold)) }
-        .menuStyle(.button).buttonStyle(.borderedProminent).controlSize(.small)
-        .tint(m.stageColour(current) == .secondary ? Color.gray : m.stageColour(current)).fixedSize()
+        // A Menu label on macOS keeps only its text and the button style ignores tint, so the pill is drawn around the
+        // menu: the stage colour as the capsule and the dot, the menu itself borderless inside it.
+        let colour = m.stageColour(current) == .secondary ? Color.gray : m.stageColour(current)
+        HStack(spacing: 6) {
+            Circle().fill(colour).frame(width: 8, height: 8)
+            Menu {
+                ForEach(m.moveTargets(for: record), id: \.self) { stage in
+                    Button { m.setStage(stage, for: record.id) } label: { Label { Text(stage) } icon: { Image(nsImage: ColourDot.image(m.stageColour(stage))) } }
+                        .disabled(stage == current)
+                }
+            } label: { Text(current).font(.caption.weight(.semibold)) }
+            .menuStyle(.borderlessButton).fixedSize()
+        }
+        .padding(.leading, 9).padding(.trailing, 4).padding(.vertical, 3)
+        .background(colour.opacity(0.2), in: Capsule())
+        .overlay(Capsule().strokeBorder(colour.opacity(0.55), lineWidth: 1))
+        .foregroundStyle(colour)
         .help("Move this project to another stage. Finder's tag follows when the drive is connected.")
         .accessibilityLabel("Stage \(current), change")
     }
@@ -75,6 +83,27 @@ struct StageMenu: View {
 /// Menus draw SwiftUI images as templates, which loses their colour. A real coloured image keeps it.
 @MainActor enum ColourDot {
     private static var cache: [String: NSImage] = [:]
+    /// The tick of a checklist: a filled blue circle with a white tick when on, an empty ring when off.
+    static func tick(_ on: Bool) -> NSImage {
+        let key = on ? "tick.on" : "tick.off"
+        if let cached = cache[key] { return cached }
+        let image = NSImage(size: NSSize(width: 16, height: 16), flipped: false) { rect in
+            let circle = rect.insetBy(dx: 1.5, dy: 1.5)
+            if on {
+                NSColor.controlAccentColor.setFill(); NSBezierPath(ovalIn: circle).fill()
+                let tick = NSBezierPath(); tick.lineWidth = 1.8; tick.lineCapStyle = .round; tick.lineJoinStyle = .round
+                tick.move(to: NSPoint(x: 4.6, y: 8.2)); tick.line(to: NSPoint(x: 7.0, y: 5.8)); tick.line(to: NSPoint(x: 11.6, y: 10.6))
+                NSColor.white.setStroke(); tick.stroke()
+            } else {
+                let ring = NSBezierPath(ovalIn: circle); ring.lineWidth = 1.3
+                NSColor.secondaryLabelColor.setStroke(); ring.stroke()
+            }
+            return true
+        }
+        image.isTemplate = false
+        cache[key] = image
+        return image
+    }
     static func image(_ colour: Color) -> NSImage {
         let key = colour.description
         if let cached = cache[key] { return cached }
@@ -96,13 +125,14 @@ struct ProjectFilters: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
         if kind != .live { FormatButtons(selection: $m.formatFilter, includeAll: true, kind: kind).help("Filter by the format the project was created as.") }
-        HStack(spacing: 10) {
+        FlowLayout(spacing: 10) {
             let locations = m.distinctLocations
             let shownLocations = locations.filter { !m.hiddenLocations.contains($0.key) }.count
             Menu {
                 ForEach(locations, id: \.key) { location in
-                    Toggle(isOn: Binding(get: { !m.hiddenLocations.contains(location.key) }, set: { m.setHidden(!$0, for: location) })) {
-                        Label { Text(location.label + (location.account.map { " · " + $0 } ?? "")) } icon: { Image(nsImage: ColourDot.image(m.badgeColour(location).colour)) }
+                    let shown = !m.hiddenLocations.contains(location.key)
+                    Button { m.setHidden(shown, for: location) } label: {
+                        Label { Text(location.label + (location.account.map { " · " + $0 } ?? "")) } icon: { Image(nsImage: ColourDot.tick(shown)) }
                     }
                 }
                 Divider()
@@ -116,8 +146,9 @@ struct ProjectFilters: View {
                 let shownStages = stages.filter { !m.excludedStages.contains($0) }.count
                 Menu {
                     ForEach(stages, id: \.self) { stage in
-                        Toggle(isOn: Binding(get: { !m.excludedStages.contains(stage) }, set: { m.setExcluded(!$0, stage: stage) })) {
-                            Label { Text(stage) } icon: { Image(nsImage: ColourDot.image(m.stageColour(stage))) }
+                        let shown = !m.excludedStages.contains(stage)
+                        Button { m.setExcluded(shown, stage: stage) } label: {
+                            Label { Text(stage) } icon: { Image(nsImage: ColourDot.tick(shown)) }
                         }
                     }
                     Divider()
@@ -126,7 +157,6 @@ struct ProjectFilters: View {
                     Label(shownStages == stages.count ? "All stages" : "\(shownStages) of \(stages.count) stages", systemImage: "circle.lefthalf.filled")
                 }.controlSize(.small).fixedSize().help("Tick the stages to show, for example only what is still being written")
             }
-            Spacer()
             Button { m.refreshMounts() } label: { Image(systemName: "arrow.clockwise") }.controlSize(.small).help("Check again which drives and cloud folders are connected")
         }
         }

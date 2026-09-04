@@ -48,6 +48,22 @@ struct PendingAssignment: Equatable { let setID: UUID; let format: String }
 struct NewSetPrompt: Identifiable { let id = UUID(); let mappingTemplateID: UUID?; var name: String }
 struct CachedStructure { let plan: CopyPlan; let rootModified: Date? }
 
+/// What Find Moved Folders concluded about one project whose folder was missing.
+struct RelinkOutcome: Identifiable {
+    enum Kind { case relinked(URL), candidates([URL]), notFound, stillThere }
+    let id: UUID
+    let name: String
+    let previousPath: String
+    let kind: Kind
+}
+struct RelinkReport: Identifiable {
+    let id = UUID()
+    let checked: Int
+    let outcomes: [RelinkOutcome]
+    var relinked: [RelinkOutcome] { outcomes.filter { if case .relinked = $0.kind { return true }; return false } }
+    var unresolved: [RelinkOutcome] { outcomes.filter { switch $0.kind { case .candidates, .notFound: true; default: false } } }
+}
+
 enum AppInfo {
     static var version: String { Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "development" }
 }
@@ -124,6 +140,8 @@ enum BadgeColour: String, CaseIterable, Identifiable {
     @Published var relinkCandidates: [UUID: [URL]] = [:]
     @Published var relinking: Set<UUID> = []
     @Published var relinkBatchRunning = false
+    /// The result of the last Find Moved Folders pass, shown as a sheet.
+    @Published var relinkReport: RelinkReport?
     /// Drives unticked in the Locations filter: their projects stay registered but are kept out of every list, and the drive is never read.
     @Published var hiddenLocations: Set<String> { didSet { defaults.set(Array(hiddenLocations).sorted(), forKey: "hiddenLocations") } }
     var mountTimer: Timer?
@@ -639,28 +657,34 @@ enum BadgeColour: String, CaseIterable, Identifiable {
     func relink(_ record: ProjectRecord, quietly: Bool = false) {
         Task { await searchForMoved(record, quietly: quietly) }
     }
-    func searchForMoved(_ record: ProjectRecord, quietly: Bool = false) async {
-        guard !relinking.contains(record.id), !record.isPlanned else { return }
+    /// One project's result from a relink pass.
+    @discardableResult
+    func searchForMoved(_ record: ProjectRecord, quietly: Bool = false) async -> RelinkOutcome.Kind {
+        guard !relinking.contains(record.id), !record.isPlanned else { return .stillThere }
         relinking.insert(record.id)
         defer { relinking.remove(record.id) }
         // A quiet search, the one that runs when a project is merely selected, stays on the project's own drive.
         // Searching every root would wake the archive drive on each click.
         let roots = quietly ? relinkRoots.filter { ProjectLocation(path: $0.path).key == record.location.key } : relinkRoots
-            let found = await Task.detached(priority: .userInitiated) { Relinker.candidates(for: record, roots: roots) }.value
-            guard let current = library.projects.first(where: { $0.id == record.id }), current.path == record.path else { return }
-            let originalMissing = !FileManager.default.fileExists(atPath: current.path)
-            let candidateAlreadyRegistered = found.first.map { candidate in library.projects.contains { $0.id != current.id && $0.name == current.name && URL(fileURLWithPath: $0.path).resolvingSymlinksInPath() == candidate.resolvingSymlinksInPath() } } ?? false
-            if found.count == 1 && current.location.isMounted && originalMissing && !candidateAlreadyRegistered {
-                attempt {
-                    var updated = current; try updated.relocate(to: found[0])
-                    try mutate { lib in if let i = lib.projects.firstIndex(where: { $0.id == record.id }) { lib.projects[i] = updated } }
-                    relinkCandidates[record.id] = nil
-                    if selectedProject == record.id { inspectProject(updated) }
-                }
-            } else {
-                relinkCandidates[record.id] = found
-                if found.isEmpty && !quietly { error = "No folder called ‘\(record.name)’ was found on the connected drives. Use Locate Folder when you know where it went." }
+        let found = await Task.detached(priority: .userInitiated) { Relinker.candidates(for: record, roots: roots) }.value
+        guard let current = library.projects.first(where: { $0.id == record.id }), current.path == record.path else { return .stillThere }
+        let originalMissing = !FileManager.default.fileExists(atPath: current.path)
+        let candidateAlreadyRegistered = found.first.map { candidate in library.projects.contains { $0.id != current.id && $0.name == current.name && URL(fileURLWithPath: $0.path).resolvingSymlinksInPath() == candidate.resolvingSymlinksInPath() } } ?? false
+        if found.count == 1 && originalMissing && !candidateAlreadyRegistered {
+            var relinked: URL?
+            attempt {
+                var updated = current; try updated.relocate(to: found[0])
+                try mutate { lib in if let i = lib.projects.firstIndex(where: { $0.id == record.id }) { lib.projects[i] = updated } }
+                relinkCandidates[record.id] = nil
+                if selectedProject == record.id { inspectProject(updated) }
+                relinked = found[0]
             }
+            if let relinked { return .relinked(relinked) }
+        }
+        relinkCandidates[record.id] = found
+        if found.isEmpty && !quietly { error = "No folder called ‘\(record.name)’ was found on the ticked drives. Use Locate Folder when you know where it went." }
+        if !originalMissing { return .stillThere }
+        return found.isEmpty ? .notFound : .candidates(found)
     }
     func relink(_ record: ProjectRecord, to url: URL) {
         attempt {
@@ -669,22 +693,26 @@ enum BadgeColour: String, CaseIterable, Identifiable {
             try mutate { lib in if let i = lib.projects.firstIndex(where: { $0.id == record.id }) { lib.projects[i] = updated } }
             relinkCandidates[record.id] = nil
             if selectedProject == record.id { inspectProject(updated) }
+            if let report = relinkReport { relinkReport = RelinkReport(checked: report.checked, outcomes: report.outcomes.filter { $0.id != record.id }) }
         }
     }
-    /// Tries every project whose folder is missing while its drive, or another drive, is connected.
+    /// Checks every project on the ticked drives whose folder is missing, relinks the certain ones, and reports the rest,
+    /// the way an editor reports offline media. Roots from unticked drives are never searched.
     func relinkAll() {
         guard !relinkBatchRunning else { return }
         relinkBatchRunning = true
-        // Only ticked drives take part, in both directions: their records are checked and their roots are searched.
         let records = library.projects.filter { !$0.isPlanned && !hiddenLocations.contains($0.location.key) }
         Task {
             defer { relinkBatchRunning = false }
             let missing = await Task.detached { records.filter { !FileManager.default.fileExists(atPath: $0.path) } }.value
+            var outcomes: [RelinkOutcome] = []
             for (index, record) in missing.enumerated() {
                 status = "Looking for moved folders \(index + 1) of \(missing.count)…"
-                await searchForMoved(record, quietly: true)
+                let kind = await searchForMoved(record, quietly: true)
+                outcomes.append(RelinkOutcome(id: record.id, name: record.name, previousPath: record.path, kind: kind))
             }
-            status = missing.isEmpty ? "Every project folder is where the list says it is." : "Finished checking \(missing.count) missing folders. Review suggested matches in Projects."
+            status = ""
+            relinkReport = RelinkReport(checked: records.count, outcomes: outcomes)
         }
     }
 

@@ -2,6 +2,30 @@ import SwiftUI
 import AppKit
 import TemplateCore
 
+/// Lays children left to right and wraps to the next line when they run out of width, so nothing truncates.
+struct FlowLayout: Layout {
+    var spacing: CGFloat = 6
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let width = proposal.width ?? .infinity
+        var x: CGFloat = 0, y: CGFloat = 0, rowHeight: CGFloat = 0, widest: CGFloat = 0
+        for subview in subviews {
+            let size = subview.sizeThatFits(.unspecified)
+            if x > 0 && x + size.width > width { x = 0; y += rowHeight + spacing; rowHeight = 0 }
+            x += size.width + spacing; rowHeight = max(rowHeight, size.height); widest = max(widest, x - spacing)
+        }
+        return CGSize(width: proposal.width ?? widest, height: y + rowHeight)
+    }
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        var x = bounds.minX, y = bounds.minY, rowHeight: CGFloat = 0
+        for subview in subviews {
+            let size = subview.sizeThatFits(.unspecified)
+            if x > bounds.minX && x + size.width > bounds.maxX { x = bounds.minX; y += rowHeight + spacing; rowHeight = 0 }
+            subview.place(at: CGPoint(x: x, y: y), proposal: ProposedViewSize(size))
+            x += size.width + spacing; rowHeight = max(rowHeight, size.height)
+        }
+    }
+}
+
 struct FormatIcon: View {
     let data: Data?
     var size: CGFloat = 26
@@ -34,7 +58,8 @@ struct FormatButtons: View {
     /// Limit the buttons to one board's formats; nil shows every preset.
     var kind: PipelineKind? = nil
     var body: some View {
-        HStack(spacing: 6) {
+        // Buttons keep their full labels and wrap to a second row when the column is narrow, instead of truncating.
+        FlowLayout(spacing: 6) {
             if includeAll { formatButton("All formats", label: "All") }
             ForEach(m.library.presets.filter { kind?.includes(format: $0.format) ?? true }) { preset in formatButton(preset.format, label: preset.label) }
             if includeAll && m.library.projects.contains(where: { $0.format == "Existing" }) { formatButton("Existing", label: "Other") }
@@ -49,8 +74,8 @@ struct FormatButtons: View {
                         if missing { Image(systemName: "exclamationmark.circle.fill").font(.system(size: 9)).foregroundStyle(.orange).offset(x: 3, y: 3) }
                     }
                 }
-                Text(label).font(.callout.weight(selection == format ? .semibold : .regular))
-            }.padding(.horizontal, 5).padding(.vertical, 5).frame(maxWidth: includeAll ? nil : .infinity)
+                Text(label).font(.callout.weight(selection == format ? .semibold : .regular)).lineLimit(1).fixedSize()
+            }.padding(.horizontal, 5).padding(.vertical, 5)
         }.buttonStyle(.bordered).tint(selection == format ? .accentColor : .secondary)
             .help(missing ? "\(label) is not set up in this content template yet" : label)
             .accessibilityLabel(label).accessibilityAddTraits(selection == format ? .isSelected : [])

@@ -119,7 +119,7 @@ struct SettingsView: View {
                                 .font(.callout).foregroundStyle(.secondary).frame(width: 130, alignment: .trailing)
                             Picker("Colour", selection: Binding(get: { m.badgeColour(location) }, set: { m.setBadgeColour($0, for: location) })) {
                                 ForEach(BadgeColour.allCases) { colour in Label { Text(colour.title) } icon: { Image(nsImage: ColourDot.image(colour.colour)) }.tag(colour) }
-                            }.labelsHidden().frame(width: 120).help("The colour of this location's badge in lists and on cards")
+                            }.labelsHidden().fixedSize().frame(width: 130, alignment: .trailing).help("The colour of this location's badge in lists and on cards")
                         }
                     } label: {
                         HStack(spacing: 8) {
@@ -151,6 +151,10 @@ struct SettingsView: View {
                     }.controlSize(.small)
                 }
                 Text("Offline. No accounts or integrations. Not signed with Developer ID or notarised.").font(.caption).foregroundStyle(.secondary)
+            }
+            Section {
+                Text("© 2026 Junior Nkana Bassi. All rights reserved.").font(.caption).foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .center)
             }
         }.formStyle(.grouped)
     }

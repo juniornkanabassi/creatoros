@@ -45,8 +45,10 @@ struct ProjectList: View {
         .toolbar {
             ToolbarItemGroup(placement: .primaryAction) {
                 Button { m.newProjectPresented = true } label: { Label("New Project", systemImage: "folder.badge.plus") }.help("Create a project from a content template (⌘N)")
-                Button { m.relinkAll() } label: { Label("Find Moved Folders", systemImage: "arrow.triangle.2.circlepath") }
-                    .help("Look on every ticked, connected drive for project folders that have moved, and relink the ones found. Projects that cannot be matched with certainty are listed for you to choose.")
+                Button { m.relinkAll() } label: {
+                    if m.relinkBatchRunning { ProgressView().controlSize(.small).frame(width: 18) } else { Label("Find Moved Folders", systemImage: "arrow.triangle.2.circlepath") }
+                }
+                    .help("Look on every ticked, connected drive for project folders that have moved, and relink the ones found. Projects that cannot be matched with certainty are listed for you to choose. (⌘⇧R)")
                     .disabled(m.relinkBatchRunning)
                 Toggle(isOn: $m.groupByDate) { Label("Group by date", systemImage: "calendar") }.help("Group projects by when their folder was created")
                 Menu {
@@ -56,6 +58,7 @@ struct ProjectList: View {
             }
         }
         .sheet(isPresented: $m.discoveryPresented) { DiscoveryView() }
+        .sheet(item: $m.relinkReport) { report in RelinkReportSheet(report: report) }
         .onAppear { m.refreshMounts() }
     }
 }
@@ -91,7 +94,7 @@ struct UnavailableChip: View {
     var body: some View {
         Label("Unavailable", systemImage: "externaldrive.badge.xmark").font(.caption.weight(.medium)).labelStyle(.titleAndIcon)
             .padding(.horizontal, 7).padding(.vertical, 2).background(Color.orange.opacity(0.16), in: Capsule()).foregroundStyle(.orange)
-            .help("The drive or cloud folder is not connected right now")
+            .help("Unavailable: this project's drive or cloud folder is not connected, or the folder has moved. The record stays in your list; reconnect the drive or use Find Moved Folders.")
     }
 }
 
@@ -144,6 +147,9 @@ struct ProjectInspector: View {
                             Image(systemName: inspection == nil ? "circle.dotted" : (inspection!.available ? "checkmark.circle.fill" : "exclamationmark.triangle.fill"))
                                 .foregroundStyle(inspection?.available == true ? .green : .orange)
                             Text(inspection?.status ?? "Checking location…").font(.callout).foregroundStyle(.secondary).lineLimit(2)
+                                .help(inspection == nil ? "Checking whether the folder is reachable right now."
+                                      : inspection!.available ? "Available: the folder is at this path on a connected drive. It can be opened, browsed and tagged, and its files are the ones the list refers to."
+                                      : "Unavailable: the folder is not at this path right now. The drive may be disconnected, or the folder may have moved. Nothing has been deleted from your list; use Find Moved Folders or Locate Folder.")
                         }
                     }
                     Text("Created \(record.effectiveDate.formatted(date: .long, time: .omitted))").font(.caption).foregroundStyle(.secondary)
@@ -183,6 +189,60 @@ struct ProjectInspector: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else { Spacer() }
         }.padding(20)
+    }
+}
+
+/// The outcome of Find Moved Folders, like an editor's offline-media report: what was relinked, what needs a choice.
+struct RelinkReportSheet: View {
+    @EnvironmentObject var m: AppModel
+    let report: RelinkReport
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            if report.outcomes.isEmpty {
+                ContentUnavailableView("Everything is where the list says it is", systemImage: "checkmark.circle",
+                                       description: Text("All \(report.checked) projects on the ticked drives were found at their recorded paths. Nothing needed relinking."))
+                    .frame(maxWidth: .infinity, minHeight: 220)
+            } else {
+                Text("Find Moved Folders").font(.title2.weight(.semibold))
+                Text("\(report.checked) projects checked on the ticked drives. \(report.relinked.count) relinked automatically, \(report.unresolved.count) need a choice.").foregroundStyle(.secondary)
+                List {
+                    if !report.relinked.isEmpty { Section("Relinked") { ForEach(report.relinked) { relinkedRow($0) } } }
+                    if !report.unresolved.isEmpty { Section("Still missing") { ForEach(report.unresolved) { unresolvedRow($0) } } }
+                }
+            }
+            HStack { Spacer(); Button("Done") { m.relinkReport = nil }.keyboardShortcut(.defaultAction) }
+        }.padding(24).frame(width: 720, height: report.outcomes.isEmpty ? 340 : 560)
+    }
+    func record(_ outcome: RelinkOutcome) -> ProjectRecord? { m.library.projects.first { $0.id == outcome.id } }
+    @ViewBuilder func relinkedRow(_ outcome: RelinkOutcome) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(outcome.name).font(.headline)
+            if case .relinked(let url) = outcome.kind { Text(url.path).font(.caption).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle) }
+        }
+    }
+    @ViewBuilder func unresolvedRow(_ outcome: RelinkOutcome) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(outcome.name).font(.headline)
+            Text("Was at " + outcome.previousPath).font(.caption).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
+            if case .candidates(let urls) = outcome.kind {
+                ForEach(urls, id: \.path) { url in candidateRow(outcome, url: url) }
+                Text(urls.count > 1 ? "More than one folder has this name, so none was chosen for you." : "The original still exists, so this may be a copy rather than a move.")
+                    .font(.caption).foregroundStyle(.secondary)
+            } else {
+                HStack {
+                    Text("Not found on any ticked drive.").font(.caption).foregroundStyle(.secondary)
+                    Spacer()
+                    Button("Locate Folder…") { if let record = record(outcome) { m.locate(record) } }.controlSize(.small)
+                }
+            }
+        }.padding(.vertical, 2)
+    }
+    func candidateRow(_ outcome: RelinkOutcome, url: URL) -> some View {
+        HStack {
+            Text(url.path).font(.caption).lineLimit(1).truncationMode(.middle)
+            Spacer()
+            Button("Use This Folder") { if let record = record(outcome) { m.relink(record, to: url) } }.controlSize(.small)
+        }
     }
 }
 
