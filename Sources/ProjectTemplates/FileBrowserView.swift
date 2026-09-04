@@ -54,12 +54,14 @@ struct FolderDataSource: FileBrowserDataSource {
 /// The prospective project. Read-only, never opens anything, shows badges for renamed and placeholder names.
 struct PreviewDataSource: FileBrowserDataSource {
     let rendering: PreviewRendering
+    /// Plain folders: the project will be copied without its folder icons, so folders show as Finder's plain folder.
+    var plain = false
     var isSynchronous: Bool { true }
     func children(of folder: String, cancellation: Cancellation) throws -> [FileBrowserNode] {
         rendering.children(of: folder).map { entry in
             let badge: BrowserBadge? = entry.issue.map { .issue($0) } ?? (entry.placeholder ? .placeholder : (entry.renamed ? .renamed(from: entry.sourceName) : nil))
             return FileBrowserNode(id: entry.source, name: entry.name, directory: entry.directory, package: entry.package, bytes: entry.bytes,
-                                   modified: nil, artworkURL: rendering.root.appendingPathComponent(entry.source), badge: badge)
+                                   modified: nil, artworkURL: plain && entry.directory ? nil : rendering.root.appendingPathComponent(entry.source), badge: badge)
         }
     }
 }
@@ -72,6 +74,7 @@ struct FileArtwork: View {
     var body: some View {
         Group {
             if let artwork { Image(nsImage: artwork).resizable().scaledToFit() }
+            else if fallback == "folder.fill" { Image(nsImage: NSWorkspace.shared.icon(for: .folder)).resizable().scaledToFit() }
             else { Image(systemName: fallback).resizable().scaledToFit().foregroundStyle(.secondary).padding(size * 0.12) }
         }.frame(width: size, height: size).accessibilityHidden(true)
             .task(id: url) { if let url { artwork = NSWorkspace.shared.icon(forFile: url.path) } }
@@ -91,6 +94,7 @@ struct ViewModePicker: View {
 /// One browser, three Finder-style views. The (folder, selection) pair is the whole navigation state,
 /// so switching views never loses the place.
 struct FileBrowserView: View {
+    @EnvironmentObject var m: AppModel
     let dataSource: any FileBrowserDataSource
     let mode: BrowserViewMode
     @Binding var folder: String
@@ -170,19 +174,12 @@ struct FileBrowserView: View {
 
     // MARK: List
 
+    /// Finder's list view: an outline whose folders expand in place, with resizable columns. Double-clicking a folder
+    /// still steps into it, and double-clicking a file opens it under the same rules as the other views.
     func listView(path: String) -> some View {
         let items = nodes(in: path)
-        return List(selection: $selection) {
-            ForEach(items) { node in
-                BrowserRow(node: node, artworkSize: 26).tag(node.id)
-            }
-        }
-        .contextMenu(forSelectionType: String.self) { ids in
-            if let node = items.first(where: { ids.contains($0.id) }) { Button(node.browsable ? "Browse Folder" : "Open") { activate(node) } }
-        } primaryAction: { ids in
-            if let node = items.first(where: { ids.contains($0.id) }) { activate(node) }
-        }
-        .overlay { if loading.contains(path) { ProgressView() } else if items.isEmpty { emptyLabel } }
+        return OutlineBrowser(nodes: loaded, root: path, filter: filter, selection: $selection, onExpand: { load($0) }, onActivate: { activate($0) }, scale: m.uiScale)
+            .overlay { if loading.contains(path) && loaded[path] == nil { ProgressView() } else if items.isEmpty && loaded[path] != nil { emptyLabel } }
     }
 
     // MARK: Icons

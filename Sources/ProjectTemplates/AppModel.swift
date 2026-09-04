@@ -13,6 +13,14 @@ enum Page: String, CaseIterable, Identifiable {
         case .templates: "square.stack.3d.up"
         }
     }
+    var hint: String {
+        switch self {
+        case .newProject: "Create a project folder from a content template"
+        case .pipeline: "Move recordings and streams through their stages"
+        case .projects: "Browse every project, wherever it lives"
+        case .templates: "The content templates and the folders each format copies"
+        }
+    }
 }
 
 /// What the New Project screen creates from: a set resolved by format, or a legacy template used directly.
@@ -113,6 +121,8 @@ enum BadgeColour: String, CaseIterable, Identifiable {
     @Published var relinkCandidates: [UUID: [URL]] = [:]
     @Published var relinking: Set<UUID> = []
     @Published var relinkBatchRunning = false
+    /// Drives the app leaves alone: their projects stay registered but are kept out of every list, and the drive is never read.
+    @Published var hiddenLocations: Set<String> { didSet { defaults.set(Array(hiddenLocations).sorted(), forKey: "hiddenLocations") } }
     var mountTimer: Timer?
     private var checkingMounts = false
     private var attemptedDates = Set<UUID>()
@@ -135,6 +145,7 @@ enum BadgeColour: String, CaseIterable, Identifiable {
         format = defaults.string(forKey: "format") ?? "Short"
         selection = defaults.string(forKey: "selection").flatMap(TemplateSelection.init(stored:))
         locationFilter = defaults.string(forKey: "locationFilter")
+        hiddenLocations = Set(defaults.stringArray(forKey: "hiddenLocations") ?? [])
         zoomLevel = defaults.object(forKey: "zoomLevel") as? Int ?? 0
         groupByDate = defaults.object(forKey: "groupByDate") as? Bool ?? true
         pipelineKind = PipelineKind(rawValue: defaults.string(forKey: "pipelineKind") ?? "") ?? .recordings
@@ -149,6 +160,7 @@ enum BadgeColour: String, CaseIterable, Identifiable {
         number = suggestedNumber
         refreshMounts()
         mountTimer = Timer.scheduledTimer(withTimeInterval: 20, repeats: true) { [weak self] _ in Task { @MainActor in self?.refreshMounts() } }
+        NotificationCenter.default.addObserver(self, selector: #selector(flushPendingSave), name: NSApplication.willTerminateNotification, object: nil)
     }
 
     // MARK: Selection and resolution
@@ -208,11 +220,37 @@ enum BadgeColour: String, CaseIterable, Identifiable {
     // MARK: Persistence
 
     func save() throws { guard storeUsable else { throw AppFailure("Library is read-only after a load error.") }; try store.save(library) }
+    /// Applies a change at once and writes the library shortly after, off the main thread, so a click never waits for the disk.
+    /// Changes made while a write is in flight are coalesced into the next write; a failed write stops further changes.
     func mutate(_ change: (inout Library) throws -> Void) throws {
         guard storeUsable else { throw AppFailure("Library is read-only after a load error.") }
         var next = library; try change(&next)
-        try store.save(next); library = next
+        library = next
         if numberIsAutomatic && created == nil { number = suggestedNumber }
+        scheduleSave()
+    }
+    private var pendingSave: Library?
+    private var saveTask: Task<Void, Never>?
+    private func scheduleSave() {
+        pendingSave = library
+        guard saveTask == nil else { return }
+        saveTask = Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(100))
+            guard let self else { return }
+            while let snapshot = self.pendingSave, self.storeUsable {
+                self.pendingSave = nil
+                let store = self.store
+                do { try await Task.detached(priority: .userInitiated) { try store.save(snapshot) }.value }
+                catch { self.storeUsable = false; self.error = "The library could not be saved, so further changes are stopped. \(error.localizedDescription)" }
+            }
+            self.saveTask = nil
+        }
+    }
+    /// The last write happens before quitting even if the debounce has not fired.
+    @objc private func flushPendingSave() {
+        guard let snapshot = pendingSave, storeUsable else { return }
+        pendingSave = nil
+        try? store.save(snapshot)
     }
     func attempt(_ work: () throws -> Void) { do { try work() } catch { self.error = error.localizedDescription } }
 
@@ -484,7 +522,7 @@ enum BadgeColour: String, CaseIterable, Identifiable {
     func refreshMounts() {
         guard !checkingMounts else { return }
         checkingMounts = true
-        let locations = distinctLocations
+        let locations = distinctLocations.filter { !hiddenLocations.contains($0.key) }
         Task.detached(priority: .utility) {
             let mounted = Set(locations.filter(\.isMounted).map(\.key))
             await MainActor.run {
@@ -517,6 +555,13 @@ enum BadgeColour: String, CaseIterable, Identifiable {
                 self.attempt { try self.mutate { lib in for i in lib.projects.indices { if let date = found[lib.projects[i].id] { lib.projects[i].folderCreated = date } } } }
             }
         }
+    }
+    /// Locations that take part in lists and filters.
+    var visibleLocations: [ProjectLocation] { distinctLocations.filter { !hiddenLocations.contains($0.key) } }
+    func setHidden(_ hidden: Bool, for location: ProjectLocation) {
+        if hidden { hiddenLocations.insert(location.key); if locationFilter == location.key { locationFilter = nil } }
+        else { hiddenLocations.remove(location.key) }
+        refreshMounts()
     }
     func badgeColour(_ location: ProjectLocation) -> BadgeColour {
         BadgeColour(rawValue: locationColours[location.key] ?? defaults.string(forKey: "locationColour." + location.key) ?? location.defaultColour) ?? .gray
@@ -572,7 +617,9 @@ enum BadgeColour: String, CaseIterable, Identifiable {
         guard !relinking.contains(record.id), !record.isPlanned else { return }
         relinking.insert(record.id)
         defer { relinking.remove(record.id) }
-        let roots = relinkRoots
+        // A quiet search, the one that runs when a project is merely selected, stays on the project's own drive.
+        // Searching every root would wake the archive drive on each click.
+        let roots = quietly ? relinkRoots.filter { ProjectLocation(path: $0.path).key == record.location.key } : relinkRoots
             let found = await Task.detached(priority: .userInitiated) { Relinker.candidates(for: record, roots: roots) }.value
             guard let current = library.projects.first(where: { $0.id == record.id }), current.path == record.path else { return }
             let originalMissing = !FileManager.default.fileExists(atPath: current.path)

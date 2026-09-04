@@ -70,7 +70,7 @@ struct SettingsView: View {
     var pipelineTab: some View {
         Form {
             stageSection(.recordings, header: "Recording stages", newPrompt: "For example, Thumbnail",
-                         footer: "Long, Short and Podcast projects. The first stage holds ideas without a folder; a new project starts in the second stage. Projects already in a renamed stage keep their old stage name until you move them.",
+                         footer: "Long, Short and Podcast projects. The first stage holds ideas without a folder; a new project starts in the second stage. Abandoned is for projects that never saw the light of day. Projects already in a renamed stage keep their old stage name until you move them.",
                          reset: Library.defaultStages)
             stageSection(.live, header: "Live stream stages", newPrompt: "For example, Clipped",
                          footer: "Live streams. A new stream starts in the first stage. Streams already in a renamed stage keep their old stage name until you move them.",
@@ -116,15 +116,18 @@ struct SettingsView: View {
                         LocationBadge(location: location)
                         if let account = location.account { Text(account).font(.caption).foregroundStyle(.secondary) }
                         Spacer()
-                        Text(m.mountedLocations.contains(location.key) ? "Connected" : "Not connected").font(.caption).foregroundStyle(.secondary)
+                        let hidden = m.hiddenLocations.contains(location.key)
+                        Text(hidden ? "Hidden" : m.mountedLocations.contains(location.key) ? "Connected" : "Not connected").font(.caption).foregroundStyle(.secondary)
+                        Toggle("Show", isOn: Binding(get: { !hidden }, set: { m.setHidden(!$0, for: location) })).toggleStyle(.checkbox)
+                            .help("Off keeps this drive's projects out of every list and filter, and the app never reads the drive. The records stay; turn it on again at any time.")
                         Picker("Colour", selection: Binding(get: { m.badgeColour(location) }, set: { m.setBadgeColour($0, for: location) })) {
-                            ForEach(BadgeColour.allCases) { colour in Label { Text(colour.title) } icon: { Image(systemName: "circle.fill").foregroundStyle(colour.colour) }.tag(colour) }
-                        }.labelsHidden().fixedSize()
+                            ForEach(BadgeColour.allCases) { colour in Label { Text(colour.title) } icon: { Image(nsImage: ColourDot.image(colour.colour)) }.tag(colour) }
+                        }.labelsHidden().fixedSize().disabled(hidden)
                     }
                 }
                 if m.distinctLocations.isEmpty { Text("Locations appear here once projects are registered.").foregroundStyle(.secondary) }
             } header: { Text("Drives and cloud folders") } footer: {
-                Text("Each location gets a colour badge in the project list. A filled dot means the drive or cloud folder is connected right now; the check runs every twenty seconds and never opens cloud files.")
+                Text("Each location gets a colour badge in the project list. A filled dot means the drive or cloud folder is connected right now; the check runs every twenty seconds and never opens cloud files. Turn Show off for a drive you want left alone, for example a mechanical archive drive that spins up whenever it is read.")
             }
         }.formStyle(.grouped)
     }
@@ -177,7 +180,7 @@ private struct StageSettingsRow: View {
             Menu {
                 ForEach(StageColour.allCases, id: \.self) { colour in
                     Button { m.setStageColour(colour, for: stage) } label: {
-                        Label { Text(colour.title) } icon: { Image(systemName: colour == .none ? "circle" : "circle.fill").foregroundStyle(colourValue(colour)) }
+                        Label { Text(colour.title) } icon: { Image(nsImage: ColourDot.image(colourValue(colour))) }
                     }
                 }
             } label: {

@@ -73,7 +73,7 @@ func pipelineChecks(base: URL) throws {
 func boardChecks(base: URL) throws {
     try check(PipelineKind.of(format: "Livestream") == .live && PipelineKind.of(format: "Long") == .recordings && PipelineKind.of(format: "Existing") == .recordings, "live streams have their own board, everything else is a recording")
     var library = Library()
-    try check(library.stages(for: .live) == ["Scheduled", "Streamed"] && library.stages(for: .recordings) == Library.defaultStages, "default stages per board")
+    try check(library.stages(for: .live) == Library.defaultLiveStages && library.stages(for: .recordings) == Library.defaultStages, "default stages per board")
     try check(library.colour(of: "Published") == .green && library.colour(of: "Scheduled") == .blue && library.colour(of: "Unclassified") == .none, "default stage colours, none for unknown stages")
     library.stageColours = ["Published": "red"]
     library.liveStages = ["Booked", "Streamed", "Clipped"]

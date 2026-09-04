@@ -32,7 +32,7 @@ struct ProjectList: View {
                     HStack {
                         Text(location.name).font(.caption).help(location.path)
                         Spacer()
-                        Button("Scan Again") { m.rescanLocation(location) }.font(.caption)
+                        Button("Scan Again") { m.rescanLocation(location) }.font(.caption).help("Look through this location again for projects that are not in the list yet")
                         Button { m.removeLocation(location) } label: { Image(systemName: "minus.circle") }.buttonStyle(.plain).help("Forget this location. Projects already registered stay.")
                     }
                 }
@@ -46,8 +46,8 @@ struct ProjectList: View {
             ToolbarItemGroup(placement: .primaryAction) {
                 Toggle(isOn: $m.groupByDate) { Label("Group by date", systemImage: "calendar") }.help("Group projects by when their folder was created")
                 Menu {
-                    Button("Folder of Projects or Drive…") { m.scanLocation() }
-                    Button("One Existing Project…") { m.addExisting() }
+                    Button("Folder of Projects or Drive…") { m.scanLocation() }.help("Look through a folder or drive and pick the projects to add")
+                    Button("One Existing Project…") { m.addExisting() }.help("Add a single project folder made outside the app")
                     Divider()
                     Button("Find Moved Folders") { m.relinkAll() }.help("Look on the connected drives for folders that have moved")
                 } label: { Label("Add", systemImage: "plus") }
@@ -98,14 +98,14 @@ struct ProjectActions: View {
     @EnvironmentObject var m: AppModel
     let record: ProjectRecord
     var body: some View {
-        Button(record.isPinned ? "Unpin" : "Pin") { m.togglePin(record.id) }
+        Button(record.isPinned ? "Unpin" : "Pin") { m.togglePin(record.id) }.help("Pinned projects stay at the top of the list")
         Button("Open Folder") { m.open(record) }
         Button("Reveal in Finder") { m.reveal(record) }
-        Button("Show in Pipeline") { m.pipelineSelection = record.id; m.page = .pipeline }
+        Button("Show in Pipeline") { m.pipelineSelection = record.id; m.page = .pipeline }.help("Select this project on the Pipeline board")
         Menu("Move to Stage") { ForEach(m.moveTargets(for: record), id: \.self) { stage in Button(stage) { m.setStage(stage, for: record.id) }.disabled(stage == m.effectiveStage(record)) } }
         Divider()
-        Button("Find Moved Folder") { m.relink(record) }
-        Button("Locate Folder…") { m.locate(record) }
+        Button("Find Moved Folder") { m.relink(record) }.help("Search the connected drives for a folder with this project's name")
+        Button("Locate Folder…") { m.locate(record) }.help("Point the record at the folder yourself")
         Button("Remove Folder Icons") { m.removeFolderIcons(record) }.help("Take the folder icons off so the project can be copied to LucidLink; Restore Folder Icons puts them back")
         Button("Restore Folder Icons") { m.restoreIcons(record) }.help("Put the content template's folder icons back after the project lived on a drive that cannot hold them")
         Divider()
@@ -160,17 +160,17 @@ struct ProjectInspector: View {
                 }.padding(10).background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 8))
             }
             HStack {
-                Button("Open Folder") { m.open(record) }
-                Button("Reveal in Finder") { m.reveal(record) }
+                Button("Open Folder") { m.open(record) }.help("Open the project folder in Finder")
+                Button("Reveal in Finder") { m.reveal(record) }.help("Show the project folder selected inside its parent folder")
                 Menu("More") {
-                    Button("Check Again") { m.inspectProject(record); m.refreshMounts() }
+                    Button("Check Again") { m.inspectProject(record); m.refreshMounts() }.help("Check once more whether the folder is reachable")
                     ProjectActions(record: record)
-                }.fixedSize()
+                }.fixedSize().help("Pin, move, relink and other actions for this project")
             }
             DisclosureGroup(isExpanded: $showStatus) {
                 ProjectStatusEditor(record: record).padding(.top, 6)
             } label: {
-                HStack(spacing: 8) { Text("Status").font(.headline); StageBadge(stage: m.effectiveStage(record)) }
+                HStack(spacing: 8) { Text("Details").font(.headline); StageMenu(record: record) }
             }
             if let old = record.previousPaths, !old.isEmpty {
                 DisclosureGroup("Previous locations") { Text(old.joined(separator: "\n")).font(.caption).textSelection(.enabled) }.font(.callout)

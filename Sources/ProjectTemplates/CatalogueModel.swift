@@ -6,7 +6,7 @@ extension AppModel {
     var selectedRecord: ProjectRecord? { library.projects.first { $0.id == selectedProject } }
     var filteredProjects: [ProjectRecord] {
         library.projects.filter {
-            !$0.isPlanned &&
+            !$0.isPlanned && !hiddenLocations.contains($0.location.key) &&
             (formatFilter == "All formats" || $0.format == formatFilter) &&
             (locationFilter == nil || $0.location.key == locationFilter) &&
             (stageFilter == nil || effectiveStage($0) == stageFilter) &&
@@ -16,7 +16,7 @@ extension AppModel {
     /// Projects for the current board, planned ideas included, with the same format, location and search filters.
     var pipelineProjects: [ProjectRecord] {
         library.projects.filter {
-            pipelineKind.includes(format: $0.format) &&
+            pipelineKind.includes(format: $0.format) && ($0.isPlanned || !hiddenLocations.contains($0.location.key)) &&
             (formatFilter == "All formats" || $0.format == formatFilter) &&
             (locationFilter == nil || $0.isPlanned || $0.location.key == locationFilter) &&
             (search.isEmpty || $0.searchableText.localizedCaseInsensitiveContains(search))

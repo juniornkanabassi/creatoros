@@ -116,11 +116,11 @@ public struct CustomField: Codable, Identifiable, Sendable, Hashable {
 public struct Library: Codable, Sendable {
     public static let currentSchema = 5
     public static let formats = ["Long", "Short", "Podcast", "Livestream"]
-    public static let defaultStages = ["Idea", "Writing", "Filming", "Editing", "Published"]
-    public static let defaultLiveStages = ["Scheduled", "Streamed"]
+    public static let defaultStages = ["Idea", "Writing", "Filming", "Editing", "Published", "Abandoned"]
+    public static let defaultLiveStages = ["Scheduled", "Streamed", "Abandoned"]
     /// Colours that read as progress from afar: grey for a thought, warm while it is being made, green when it is out.
     public static let defaultStageColours = ["Idea": "gray", "Writing": "yellow", "Filming": "orange", "Editing": "purple", "Published": "green",
-                                             "Scheduled": "blue", "Streamed": "green"]
+                                             "Scheduled": "blue", "Streamed": "green", "Abandoned": "red"]
     public var schema = Library.currentSchema
     public var templates: [TemplateRecord] = []
     public var projects: [ProjectRecord] = []

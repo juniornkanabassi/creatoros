@@ -37,15 +37,51 @@ struct StageChip: View {
 struct StageBadge: View {
     @EnvironmentObject var m: AppModel
     let stage: String
+    /// A chevron marks the badge as the control that changes the stage.
+    var interactive = false
     var body: some View {
         let colour = m.stageColour(stage)
         HStack(spacing: 5) {
             Circle().fill(colour).frame(width: 7, height: 7)
             Text(stage).lineLimit(1)
+            if interactive { Image(systemName: "chevron.up.chevron.down").font(.system(size: 8, weight: .semibold)) }
         }
         .font(.caption.weight(.medium)).padding(.horizontal, 7).padding(.vertical, 2)
         .background(colour.opacity(0.14), in: Capsule()).foregroundStyle(colour == .secondary ? Color.secondary : colour)
         .accessibilityLabel("Stage \(stage)")
+    }
+}
+
+/// The badge as the one control for a project's stage: click it to move the project. Replaces the separate picker.
+struct StageMenu: View {
+    @EnvironmentObject var m: AppModel
+    let record: ProjectRecord
+    var body: some View {
+        let current = m.effectiveStage(record)
+        Menu {
+            ForEach(m.moveTargets(for: record), id: \.self) { stage in
+                Button { m.setStage(stage, for: record.id) } label: { Label { Text(stage) } icon: { Image(nsImage: ColourDot.image(m.stageColour(stage))) } }
+                    .disabled(stage == current)
+            }
+        } label: { StageBadge(stage: current, interactive: true) }
+        .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
+        .help("Move this project to another stage. Finder's tag follows when the drive is connected.")
+        .accessibilityLabel("Stage \(current), change")
+    }
+}
+
+/// Menus draw SwiftUI images as templates, which loses their colour. A real coloured image keeps it.
+@MainActor enum ColourDot {
+    private static var cache: [String: NSImage] = [:]
+    static func image(_ colour: Color) -> NSImage {
+        let key = colour.description
+        if let cached = cache[key] { return cached }
+        let image = NSImage(size: NSSize(width: 12, height: 12), flipped: false) { rect in
+            NSColor(colour).setFill(); NSBezierPath(ovalIn: rect.insetBy(dx: 1, dy: 1)).fill(); return true
+        }
+        image.isTemplate = false
+        cache[key] = image
+        return image
     }
 }
 
@@ -61,24 +97,27 @@ struct ProjectFilters: View {
         HStack(spacing: 10) {
             Picker("Location", selection: $m.locationFilter) {
                 Text("All locations").tag(Optional<String>.none)
-                ForEach(m.distinctLocations, id: \.key) { location in
-                    Label { Text(location.label) } icon: { Image(systemName: "circle.fill").foregroundStyle(m.badgeColour(location).colour) }.tag(Optional(location.key))
+                ForEach(m.visibleLocations, id: \.key) { location in
+                    Label { Text(location.label) } icon: { Image(nsImage: ColourDot.image(m.badgeColour(location).colour)) }.tag(Optional(location.key))
                 }
-            }.labelsHidden().fixedSize().controlSize(.small).help("Show projects on one drive or cloud folder")
+            }.labelsHidden().fixedSize().controlSize(.small).help("Show projects on one drive or cloud folder. Drives hidden in Settings › Locations are left out.")
             if includeStage {
                 Picker("Stage", selection: $m.stageFilter) {
                     Text("All stages").tag(Optional<String>.none)
-                    ForEach(m.visibleStages, id: \.self) { Text($0).tag(Optional($0)) }
-                }.labelsHidden().fixedSize().controlSize(.small)
+                    ForEach(m.visibleStages, id: \.self) { stage in
+                        Label { Text(stage) } icon: { Image(nsImage: ColourDot.image(m.stageColour(stage))) }.tag(Optional(stage))
+                    }
+                }.labelsHidden().fixedSize().controlSize(.small).help("Show projects in one stage")
             }
             Spacer()
-            Button { m.refreshMounts() } label: { Image(systemName: "arrow.clockwise") }.controlSize(.small).help("Check which drives are connected")
+            Button { m.refreshMounts() } label: { Image(systemName: "arrow.clockwise") }.controlSize(.small).help("Check again which drives and cloud folders are connected")
         }
         }
     }
 }
 
-/// Stage, campaign, editor and notes for one project. Saves on submit and when focus leaves a field.
+/// Campaign, editor, series and notes for one project. Saves on submit and when focus leaves a field.
+/// The stage is changed from the StageMenu badge beside the project's name.
 struct ProjectStatusEditor: View {
     @EnvironmentObject var m: AppModel
     let record: ProjectRecord
@@ -88,11 +127,6 @@ struct ProjectStatusEditor: View {
     @State private var series = ""
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Picker("Stage", selection: Binding(get: { m.effectiveStage(record) }, set: { m.setStage($0, for: record.id) })) {
-                ForEach(m.moveTargets(for: record), id: \.self) { stage in
-                    Label { Text(stage) } icon: { Image(systemName: "circle.fill").foregroundStyle(m.stageColour(stage)) }.tag(stage)
-                }
-            }
             TextField("Campaign", text: $campaign, prompt: Text("None")).onSubmit(save)
             TextField("With", text: $editor, prompt: Text("Editor or collaborator")).onSubmit(save)
             TextField("Series", text: $series, prompt: Text("Separate series with commas")).onSubmit(save)
@@ -149,20 +183,22 @@ struct PipelineSidebar: View {
                                     Text(m.label(for: record.format)).font(.caption).foregroundStyle(.secondary)
                                     if record.isPlanned { StageChip(stage: "Idea only, no folder yet") } else { LocationBadge(location: record.location) }
                                 }
+                                StageMenu(record: record)
                             }
                         }
                     }
-                    Section("Status") { ProjectStatusEditor(record: record).id(record.id) }
+                    Section("Details") { ProjectStatusEditor(record: record).id(record.id) }
                     Section {
                         HStack {
                             if record.isPlanned {
-                                Button("Start Project…") { m.startPlanned(record) }.buttonStyle(.borderedProminent)
+                                Button("Start Project…") { m.startPlanned(record) }.buttonStyle(.borderedProminent).help("Fill in New Project with this idea")
                             } else {
-                                Button("Show in Projects") { m.selectedProject = record.id; m.page = .projects; m.selectProject() }
-                                Button("Open Folder") { m.open(record) }
+                                Button("Show in Projects") { m.selectedProject = record.id; m.page = .projects; m.selectProject() }.help("Open this project's files and details in Projects")
+                                Button("Open Folder") { m.open(record) }.help("Open the project folder in Finder")
                             }
                             Spacer()
                             Button(record.isPlanned ? "Delete Idea" : "Remove from List", role: .destructive) { m.removeProject(record.id) }
+                                .help(record.isPlanned ? "Delete this idea. Nothing on disk is affected." : "Forget this project. Its folder is not touched.")
                         }
                     } footer: {
                         Text(record.isPlanned ? "Starting fills in New Project with this idea. The idea becomes the project once its folder is created." : "Removing only forgets the record. The folder is not touched.")

@@ -5,9 +5,22 @@ import TemplateCore
 struct FormatIcon: View {
     let data: Data?
     var size: CGFloat = 26
+    /// Shows Finder's plain folder instead of the saved icon, for a project that will be created without icons.
+    var plain = false
+    /// Decoded once per icon; rows and cards redraw far more often than icons change.
+    @MainActor private static var cache: [Int: NSImage] = [:]
+    static func image(_ data: Data?) -> NSImage? {
+        guard let data else { return nil }
+        let key = data.hashValue
+        if let cached = cache[key] { return cached }
+        guard let image = NSImage(data: data) else { return nil }
+        cache[key] = image
+        return image
+    }
     var body: some View {
         Group {
-            if let data, let image = NSImage(data: data) { Image(nsImage: image).resizable().scaledToFit() }
+            if plain { Image(nsImage: NSWorkspace.shared.icon(for: .folder)).resizable().scaledToFit() }
+            else if let image = Self.image(data) { Image(nsImage: image).resizable().scaledToFit() }
             else { Image(systemName: "folder.fill").resizable().scaledToFit().foregroundStyle(.secondary) }
         }.frame(width: size, height: size).accessibilityHidden(true)
     }
@@ -96,9 +109,9 @@ struct CreationForm: View {
                     Text(m.destination.isEmpty ? "Not chosen for \(m.formatLabel) yet" : m.destination)
                         .foregroundStyle(m.destination.isEmpty ? .secondary : .primary).lineLimit(2).truncationMode(.middle).textSelection(.enabled)
                 }
-                Button("Choose…") { m.chooseDestination() }
-                Toggle("Plain folders, no icons", isOn: $m.plainFolders)
-                    .help("Copies the template without its Mac folder icons, for LucidLink and other drives that cannot hold them. Restore Folder Icons in Projects puts them back later.")
+                Button("Choose…") { m.chooseDestination() }.help("Choose where \(m.formatLabel) projects are created")
+                Toggle("Plain folders (no icons)", isOn: $m.plainFolders)
+                    .help("Creates the project with Finder's plain folders instead of the template's folder icons, for LucidLink and other drives that cannot hold them. The preview shows the result. Restore Folder Icons in Projects puts the icons back later.")
                     .onChange(of: m.destination) { if ProjectLocation(path: m.destination).label == "LucidLink" { m.plainFolders = true } }
             }
         }.formStyle(.grouped)
@@ -165,9 +178,9 @@ struct CreationPreview: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             HStack(spacing: 14) {
-                FormatIcon(data: m.preset.icon, size: 52)
+                FormatIcon(data: m.preset.icon, size: 52, plain: m.plainFolders)
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("PROJECT PREVIEW").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+                    Text(m.plainFolders ? "PROJECT PREVIEW · PLAIN FOLDERS" : "PROJECT PREVIEW").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
                     Text(m.preview?.outerFolderName ?? "No preview yet").font(.title3.weight(.semibold)).textSelection(.enabled).lineLimit(2)
                     Text(m.destination.isEmpty ? "Choose a destination for \(m.formatLabel) projects." : m.destination + "/" + (m.preview?.outerFolderName ?? ""))
                         .font(.caption).foregroundStyle(.secondary).lineLimit(2).truncationMode(.middle).textSelection(.enabled)
@@ -187,8 +200,8 @@ struct CreationPreview: View {
                     Spacer()
                     ViewModePicker(surface: .creationPreview)
                 }
-                FileBrowserView(dataSource: PreviewDataSource(rendering: preview), mode: m.viewMode(.creationPreview), folder: $folder, selection: $selection,
-                                reloadKey: preview.entries.hashValue)
+                FileBrowserView(dataSource: PreviewDataSource(rendering: preview, plain: m.plainFolders), mode: m.viewMode(.creationPreview), folder: $folder, selection: $selection,
+                                reloadKey: preview.entries.hashValue &+ (m.plainFolders ? 1 : 0))
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .background(.background, in: RoundedRectangle(cornerRadius: 8))
                     .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(.quaternary))
@@ -222,7 +235,7 @@ struct CreationPreview: View {
                     Button("Browse Project") {
                         if let record = m.library.projects.first(where: { $0.path == created.path }) { m.selectedProject = record.id; m.page = .projects; m.selectProject() }
                     }
-                    Button("Next Project") { m.nextProject() }.buttonStyle(.borderedProminent)
+                    Button("Next Project") { m.nextProject() }.buttonStyle(.borderedProminent).help("Clear the form for the next project, keeping the template, format and destination")
                 }
             }
             Divider()
@@ -230,6 +243,7 @@ struct CreationPreview: View {
                 Text("The original template stays untouched.").font(.caption).foregroundStyle(.secondary)
                 Spacer()
                 Button("Create Project") { m.create() }.buttonStyle(.borderedProminent).controlSize(.large).disabled(!m.canCreate).keyboardShortcut(.return, modifiers: .command)
+                    .help(m.canCreate ? "Copy the template into the destination as shown in the preview (⌘↩)" : "Fill in the fields above and choose a destination to create the project")
             }
         }.padding(20)
     }

@@ -111,14 +111,18 @@ struct MainView: View {
     @EnvironmentObject var m: AppModel
     var body: some View {
         NavigationSplitView {
+            // Icon, gap and row height scale together with the text, so a zoomed sidebar keeps Finder's proportions.
             List(selection: $m.page) {
                 ForEach(Page.allCases) { page in
-                    Label { Text(page.rawValue).font(.system(size: 15 * m.uiScale, weight: .medium)) } icon: { Image(systemName: page.systemImage).font(.system(size: 17 * m.uiScale)) }
-                        .padding(.vertical, 6).tag(page)
+                    HStack(spacing: 10 * m.uiScale) {
+                        Image(systemName: page.systemImage).font(.system(size: 17 * m.uiScale)).frame(width: 26 * m.uiScale, alignment: .center)
+                        Text(page.rawValue).font(.system(size: 15 * m.uiScale, weight: .medium))
+                    }
+                    .padding(.vertical, 6 * m.uiScale).tag(page).help(page.hint)
                 }
             }
             .listStyle(.sidebar)
-            .navigationSplitViewColumnWidth(min: 190, ideal: 210, max: 260)
+            .navigationSplitViewColumnWidth(min: 190 * m.uiScale, ideal: 215 * m.uiScale, max: 280 * m.uiScale)
             .safeAreaInset(edge: .bottom) {
                 VStack(alignment: .leading, spacing: 3) {
                     Text("Content Template").font(.caption.weight(.medium))
