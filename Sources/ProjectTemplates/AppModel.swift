@@ -54,12 +54,16 @@ struct RelinkOutcome: Identifiable {
     let id: UUID
     let name: String
     let previousPath: String
-    let kind: Kind
+    var kind: Kind
 }
 struct RelinkReport: Identifiable {
     let id = UUID()
     let checked: Int
-    let outcomes: [RelinkOutcome]
+    var outcomes: [RelinkOutcome]
+    /// Turns a row green once the project has been linked, by the pass itself or by hand while the report is open.
+    mutating func markLinked(_ id: UUID, at url: URL) {
+        if let index = outcomes.firstIndex(where: { $0.id == id }) { outcomes[index].kind = .relinked(url) }
+    }
     var relinked: [RelinkOutcome] { outcomes.filter { if case .relinked = $0.kind { return true }; return false } }
     var unresolved: [RelinkOutcome] { outcomes.filter { switch $0.kind { case .candidates, .notFound: true; default: false } } }
 }
@@ -142,6 +146,7 @@ enum BadgeColour: String, CaseIterable, Identifiable {
     @Published var relinkBatchRunning = false
     /// The result of the last Find Moved Folders pass, shown as a sheet.
     @Published var relinkReport: RelinkReport?
+    @Published var duplicatesPresented = false
     /// Drives unticked in the Locations filter: their projects stay registered but are kept out of every list, and the drive is never read.
     @Published var hiddenLocations: Set<String> { didSet { defaults.set(Array(hiddenLocations).sorted(), forKey: "hiddenLocations") } }
     var mountTimer: Timer?
@@ -642,16 +647,67 @@ enum BadgeColour: String, CaseIterable, Identifiable {
     var unavailableProjects: [ProjectRecord] {
         library.projects.filter { !$0.isPlanned && (!mountedLocations.contains($0.location.key) || !FileManager.default.fileExists(atPath: $0.path)) }
     }
-    /// Roots worth searching when a folder has moved: every saved location plus each known drive's archive root.
+    /// Roots worth searching when a folder has moved: every saved location (by bookmark, or by path when the bookmark
+    /// cannot be resolved, as happens on a network filespace), each format's destination, and every folder that already
+    /// holds a registered project or once did. Those are the places Junior keeps things; unticked drives are left out.
     var relinkRoots: [URL] {
+        let fm = FileManager.default
         var roots: [URL] = []
-        for location in library.locations ?? [] { if let url = try? location.resolve(), FileManager.default.fileExists(atPath: url.path) { roots.append(url) } }
+        for location in library.locations ?? [] {
+            if let url = try? location.resolve(), fm.fileExists(atPath: url.path) { roots.append(url) }
+            else if fm.fileExists(atPath: location.path) { roots.append(URL(fileURLWithPath: location.path)) }
+        }
         for preset in library.presets where !preset.destination.isEmpty {
             let url = URL(fileURLWithPath: preset.destination)
-            if FileManager.default.fileExists(atPath: url.path) { roots.append(url) }
+            if fm.fileExists(atPath: url.path) { roots.append(url) }
         }
+        var parents = Set<String>()
+        for record in library.projects where !record.isPlanned {
+            for path in [record.path] + (record.previousPaths ?? []) {
+                let parent = (path as NSString).deletingLastPathComponent
+                let location = ProjectLocation(path: parent)
+                guard !parent.isEmpty, !hiddenLocations.contains(location.key), mountedLocations.contains(location.key) else { continue }
+                parents.insert(parent)
+            }
+        }
+        for parent in parents.sorted() where fm.fileExists(atPath: parent) { roots.append(URL(fileURLWithPath: parent)) }
         var seen = Set<String>()
         return roots.filter { seen.insert($0.path).inserted && !hiddenLocations.contains(ProjectLocation(path: $0.path).key) }
+    }
+    /// Registered projects that share a name, usually a copy made for an editor or a move that was really a copy.
+    /// The likely live one sits under a configured destination; failing that, the newest folder.
+    var duplicateGroups: [[ProjectRecord]] {
+        var groups: [String: [ProjectRecord]] = [:]
+        for record in library.projects where !record.isPlanned && !hiddenLocations.contains(record.location.key) {
+            groups[record.name.trimmingCharacters(in: .whitespaces).lowercased(), default: []].append(record)
+        }
+        return groups.values.filter { $0.count > 1 }.map { $0.sorted { $0.effectiveDate > $1.effectiveDate } }
+            .sorted { $0[0].name.localizedStandardCompare($1[0].name) == .orderedAscending }
+    }
+    func likelyLive(_ record: ProjectRecord, among group: [ProjectRecord]) -> Bool {
+        let destinations = library.presets.map(\.destination).filter { !$0.isEmpty }
+        let onDestination = group.filter { candidate in destinations.contains { candidate.path.hasPrefix($0 + "/") } }
+        if !onDestination.isEmpty { return onDestination.contains { $0.id == record.id } }
+        return group.first?.id == record.id
+    }
+    /// The refresh button: drives, the selected project, and the search, all checked again.
+    func refreshEverything() {
+        refreshMounts()
+        if let record = selectedRecord { inspectProject(record, findMoved: true) }
+        if let record = library.projects.first(where: { $0.id == pipelineSelection }) { inspectProject(record) }
+        scheduleDeepSearch()
+    }
+    /// Command-F: puts the cursor in the search field of the front window, the way every Mac app does.
+    static func focusSearchField() {
+        guard let window = NSApp.keyWindow else { return }
+        func find(in view: NSView) -> NSSearchField? {
+            if let field = view as? NSSearchField { return field }
+            for child in view.subviews { if let field = find(in: child) { return field } }
+            return nil
+        }
+        var field = window.contentView.flatMap(find(in:))
+        if field == nil { for item in window.toolbar?.items ?? [] { if let view = item.view, let found = find(in: view) { field = found; break } } }
+        if let field { window.makeFirstResponder(field) }
     }
     /// Offline originals may be copies, so offer candidates instead of silently redirecting them.
     func relink(_ record: ProjectRecord, quietly: Bool = false) {
@@ -693,7 +749,7 @@ enum BadgeColour: String, CaseIterable, Identifiable {
             try mutate { lib in if let i = lib.projects.firstIndex(where: { $0.id == record.id }) { lib.projects[i] = updated } }
             relinkCandidates[record.id] = nil
             if selectedProject == record.id { inspectProject(updated) }
-            if let report = relinkReport { relinkReport = RelinkReport(checked: report.checked, outcomes: report.outcomes.filter { $0.id != record.id }) }
+            relinkReport?.markLinked(record.id, at: url)
         }
     }
     /// Checks every project on the ticked drives whose folder is missing, relinks the certain ones, and reports the rest,

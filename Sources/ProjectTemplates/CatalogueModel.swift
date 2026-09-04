@@ -106,6 +106,8 @@ extension AppModel {
             var updated = record; try updated.relocate(to: url)
             try mutate { lib in if let i = lib.projects.firstIndex(where: { $0.id == record.id }) { lib.projects[i] = updated } }
             inspectProject(updated)
+            relinkCandidates[record.id] = nil
+            relinkReport?.markLinked(record.id, at: url)
         }
     }
     func open(_ record: ProjectRecord) {

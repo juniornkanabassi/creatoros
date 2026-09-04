@@ -157,7 +157,8 @@ struct ProjectFilters: View {
                     Label(shownStages == stages.count ? "All stages" : "\(shownStages) of \(stages.count) stages", systemImage: "circle.lefthalf.filled")
                 }.controlSize(.small).fixedSize().help("Tick the stages to show, for example only what is still being written")
             }
-            Button { m.refreshMounts() } label: { Image(systemName: "arrow.clockwise") }.controlSize(.small).help("Check again which drives and cloud folders are connected")
+            Button { m.refreshEverything() } label: { Image(systemName: "arrow.clockwise") }.controlSize(.small)
+                .help("Refresh: check which drives are connected, check the selected project's folder again, and rerun the search")
         }
         }
     }
@@ -175,6 +176,7 @@ struct ProjectStatusEditor: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             TextField("Campaign", text: $campaign, prompt: Text("Campaign, if any")).onSubmit(save)
+                .accessibilityLabel("Campaign")
             TextField("With", text: $editor, prompt: Text("Editor or collaborator")).onSubmit(save)
             TextField("Series", text: $series, prompt: Text("Series, separated by commas")).onSubmit(save)
             TextField("Notes", text: $notes, prompt: Text("Notes"), axis: .vertical).lineLimit(2...5).onSubmit(save)
@@ -189,6 +191,7 @@ struct ProjectStatusEditor: View {
                 }
             }
         }
+        .labelsHidden()
         .onAppear { campaign = record.campaign ?? ""; editor = record.editor ?? ""; notes = record.notes ?? ""; series = (record.series ?? []).joined(separator: ", ") }
         .onChange(of: campaign) { scheduleSave() }.onChange(of: editor) { scheduleSave() }.onChange(of: notes) { scheduleSave() }
         .onChange(of: series) { scheduleSave() }
@@ -223,14 +226,14 @@ struct PipelineSidebar: View {
                     Section {
                         HStack(spacing: 10) {
                             FormatIcon(data: m.library.presets.first { $0.format == record.format }?.icon, size: 30)
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(record.isPlanned ? record.name : record.title).font(.headline).lineLimit(3)
-                                HStack(spacing: 6) {
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text(record.isPlanned ? record.name : record.title).font(.headline).fixedSize(horizontal: false, vertical: true)
+                                FlowLayout(spacing: 6) {
                                     if let number = record.number { Text(number).font(.caption.monospacedDigit()).foregroundStyle(.secondary) }
                                     Text(m.label(for: record.format)).font(.caption).foregroundStyle(.secondary)
                                     if record.isPlanned { StageChip(stage: "Idea only, no folder yet") } else { LocationBadge(location: record.location) }
+                                    StageMenu(record: record)
                                 }
-                                StageMenu(record: record)
                             }
                         }
                     }
@@ -357,9 +360,11 @@ struct ProjectCard: View {
         }
         .overlay(RoundedRectangle(cornerRadius: 9).strokeBorder(selected ? Color.accentColor : Color.primary.opacity(0.08), lineWidth: selected ? 2 : 1))
         .contentShape(Rectangle())
-        .gesture(TapGesture(count: 2).onEnded { if !record.isPlanned { m.selectedProject = record.id; m.page = .projects; m.selectProject() } })
-        .simultaneousGesture(TapGesture().onEnded { m.pipelineSelection = record.id })
+        // Double-click opens the project in Projects; a single click selects it. The double-tap is registered first so it wins.
+        .onTapGesture(count: 2) { if !record.isPlanned { m.selectedProject = record.id; m.page = .projects; m.selectProject() } else { m.startPlanned(record) } }
+        .onTapGesture { m.pipelineSelection = record.id }
         .draggable(record.id.uuidString)
+        .help(record.isPlanned ? "Double-click to start this idea as a project" : "Double-click to open in Projects")
         .contextMenu {
             Menu("Move to") { ForEach(m.moveTargets(for: record), id: \.self) { stage in Button(stage) { m.setStage(stage, for: record.id) }.disabled(stage == m.effectiveStage(record)) } }
             if record.isPlanned { Button("Start Project…") { m.startPlanned(record) } }

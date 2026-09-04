@@ -7,6 +7,13 @@ struct ProjectList: View {
     var body: some View {
         VStack(spacing: 0) {
             ProjectFilters().padding(.horizontal, 16).padding(.vertical, 10)
+            let duplicates = m.duplicateGroups
+            if !duplicates.isEmpty {
+                Button { m.duplicatesPresented = true } label: {
+                    Label("\(duplicates.count) names appear more than once", systemImage: "doc.on.doc").font(.caption)
+                }.buttonStyle(.plain).foregroundStyle(.orange).padding(.horizontal, 16).padding(.bottom, 6)
+                    .help("Projects registered under the same name in more than one place. Open the list to see which is likely the live one.")
+            }
             List(selection: $m.selectedProject) {
                 if !m.pinnedProjects.isEmpty {
                     Section { ForEach(m.pinnedProjects) { ProjectRow(record: $0).tag($0.id) } } header: { Label("Pinned", systemImage: "pin.fill") }
@@ -46,9 +53,9 @@ struct ProjectList: View {
             ToolbarItemGroup(placement: .primaryAction) {
                 Button { m.newProjectPresented = true } label: { Label("New Project", systemImage: "folder.badge.plus") }.help("Create a project from a content template (⌘N)")
                 Button { m.relinkAll() } label: {
-                    if m.relinkBatchRunning { ProgressView().controlSize(.small).frame(width: 18) } else { Label("Find Moved Folders", systemImage: "arrow.triangle.2.circlepath") }
+                    if m.relinkBatchRunning { ProgressView().controlSize(.small).frame(width: 18) } else { Label("Find Missing Projects", systemImage: "arrow.triangle.2.circlepath") }
                 }
-                    .help("Look on every ticked, connected drive for project folders that have moved, and relink the ones found. Projects that cannot be matched with certainty are listed for you to choose. (⌘⇧R)")
+                    .help("Check every project on the ticked drives, relink the ones that moved to a place you already use, and list the rest for you to locate. (⌘⇧R)")
                     .disabled(m.relinkBatchRunning)
                 Toggle(isOn: $m.groupByDate) { Label("Group by date", systemImage: "calendar") }.help("Group projects by when their folder was created")
                 Menu {
@@ -58,7 +65,8 @@ struct ProjectList: View {
             }
         }
         .sheet(isPresented: $m.discoveryPresented) { DiscoveryView() }
-        .sheet(item: $m.relinkReport) { report in RelinkReportSheet(report: report) }
+        .sheet(item: $m.relinkReport) { _ in RelinkReportSheet() }
+        .sheet(isPresented: $m.duplicatesPresented) { DuplicatesSheet() }
         .onAppear { m.refreshMounts() }
     }
 }
@@ -73,7 +81,7 @@ struct ProjectRow: View {
             VStack(alignment: .leading, spacing: 4) {
                 HStack(spacing: 6) {
                     if record.isPinned { Image(systemName: "pin.fill").font(.caption2).foregroundStyle(.secondary) }
-                    Text(record.name).font(.headline).lineLimit(2)
+                    Text(record.name).font(.headline).fixedSize(horizontal: false, vertical: true)
                 }
                 HStack(spacing: 6) {
                     LocationBadge(location: record.location)
@@ -169,7 +177,7 @@ struct ProjectInspector: View {
             HStack {
                 Button("Open in Finder") { m.open(record) }.help("Open the project folder in Finder, showing what is inside it")
                 Menu("More") {
-                    Button("Check Again") { m.inspectProject(record); m.refreshMounts() }.help("Check once more whether the folder is reachable")
+                    Button("Check Folder Again") { m.inspectProject(record, findMoved: true); m.refreshMounts() }.help("Look again whether this folder is at its path, and if it is missing, search its own drive for it")
                     ProjectActions(record: record)
                 }.fixedSize().help("Pin, move, relink and other actions for this project")
             }
@@ -192,50 +200,64 @@ struct ProjectInspector: View {
     }
 }
 
-/// The outcome of Find Moved Folders, like an editor's offline-media report: what was relinked, what needs a choice.
+/// The outcome of Find Missing Projects, like an editor's offline-media list: every project that was missing, with a
+/// green tick once it is linked (by the pass or by hand while the sheet is open), orange when there is a choice to make,
+/// red while it is still missing. Rows stay put so the change from red to green is visible.
 struct RelinkReportSheet: View {
     @EnvironmentObject var m: AppModel
-    let report: RelinkReport
+    var report: RelinkReport? { m.relinkReport }
     var body: some View {
+        let report = report ?? RelinkReport(checked: 0, outcomes: [])
+        let linked = report.relinked.count, open = report.unresolved.count
         VStack(alignment: .leading, spacing: 14) {
             if report.outcomes.isEmpty {
-                ContentUnavailableView("Everything is where the list says it is", systemImage: "checkmark.circle",
-                                       description: Text("All \(report.checked) projects on the ticked drives were found at their recorded paths. Nothing needed relinking."))
+                ContentUnavailableView("Nothing is missing", systemImage: "checkmark.circle",
+                                       description: Text("All \(report.checked) projects on the ticked drives are where the list says. Nothing needed relinking."))
                     .frame(maxWidth: .infinity, minHeight: 220)
             } else {
-                Text("Find Moved Folders").font(.title2.weight(.semibold))
-                Text("\(report.checked) projects checked on the ticked drives. \(report.relinked.count) relinked automatically, \(report.unresolved.count) need a choice.").foregroundStyle(.secondary)
-                List {
-                    if !report.relinked.isEmpty { Section("Relinked") { ForEach(report.relinked) { relinkedRow($0) } } }
-                    if !report.unresolved.isEmpty { Section("Still missing") { ForEach(report.unresolved) { unresolvedRow($0) } } }
-                }
+                Text("Missing Projects").font(.title2.weight(.semibold))
+                HStack(spacing: 14) {
+                    Text("\(report.checked) checked").foregroundStyle(.secondary)
+                    Label("\(linked) linked", systemImage: "checkmark.circle.fill").foregroundStyle(.green)
+                    Label("\(open) still missing", systemImage: open == 0 ? "checkmark.circle.fill" : "xmark.circle.fill").foregroundStyle(open == 0 ? .green : .red)
+                }.font(.callout)
+                List { ForEach(report.outcomes) { row($0) } }
+                if open == 0 { Label("Everything is linked again.", systemImage: "checkmark.seal.fill").foregroundStyle(.green) }
             }
             HStack { Spacer(); Button("Done") { m.relinkReport = nil }.keyboardShortcut(.defaultAction) }
-        }.padding(24).frame(width: 720, height: report.outcomes.isEmpty ? 340 : 560)
+        }.padding(24).frame(width: 760, height: report.outcomes.isEmpty ? 340 : 580)
     }
     func record(_ outcome: RelinkOutcome) -> ProjectRecord? { m.library.projects.first { $0.id == outcome.id } }
-    @ViewBuilder func relinkedRow(_ outcome: RelinkOutcome) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Text(outcome.name).font(.headline)
-            if case .relinked(let url) = outcome.kind { Text(url.path).font(.caption).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle) }
-        }
-    }
-    @ViewBuilder func unresolvedRow(_ outcome: RelinkOutcome) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text(outcome.name).font(.headline)
-            Text("Was at " + outcome.previousPath).font(.caption).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
-            if case .candidates(let urls) = outcome.kind {
-                ForEach(urls, id: \.path) { url in candidateRow(outcome, url: url) }
-                Text(urls.count > 1 ? "More than one folder has this name, so none was chosen for you." : "The original still exists, so this may be a copy rather than a move.")
-                    .font(.caption).foregroundStyle(.secondary)
-            } else {
-                HStack {
-                    Text("Not found on any ticked drive.").font(.caption).foregroundStyle(.secondary)
-                    Spacer()
-                    Button("Locate Folder…") { if let record = record(outcome) { m.locate(record) } }.controlSize(.small)
+    @ViewBuilder func row(_ outcome: RelinkOutcome) -> some View {
+        HStack(alignment: .top, spacing: 10) {
+            statusMark(outcome.kind).frame(width: 22)
+            VStack(alignment: .leading, spacing: 5) {
+                Text(outcome.name).font(.headline)
+                switch outcome.kind {
+                case .relinked(let url):
+                    Text("Linked · " + url.path).font(.caption).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
+                case .candidates(let urls):
+                    Text("Was at " + outcome.previousPath).font(.caption).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
+                    ForEach(urls, id: \.path) { url in candidateRow(outcome, url: url) }
+                    Text(urls.count > 1 ? "More than one folder has this name, so none was chosen for you." : "The original still exists, so this may be a copy rather than a move.")
+                        .font(.caption).foregroundStyle(.secondary)
+                case .notFound, .stillThere:
+                    Text("Was at " + outcome.previousPath).font(.caption).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
+                    HStack {
+                        Text("Missing: not found in any place you use on the ticked drives.").font(.caption).foregroundStyle(.red)
+                        Spacer()
+                        Button("Locate Folder…") { if let record = record(outcome) { m.locate(record) } }.controlSize(.small)
+                    }
                 }
             }
-        }.padding(.vertical, 2)
+        }.padding(.vertical, 3)
+    }
+    @ViewBuilder func statusMark(_ kind: RelinkOutcome.Kind) -> some View {
+        switch kind {
+        case .relinked: Image(systemName: "checkmark.circle.fill").foregroundStyle(.green).font(.title3).help("Linked")
+        case .candidates: Image(systemName: "questionmark.circle.fill").foregroundStyle(.orange).font(.title3).help("Choose the right folder")
+        case .notFound, .stillThere: Image(systemName: "xmark.circle.fill").foregroundStyle(.red).font(.title3).help("Missing")
+        }
     }
     func candidateRow(_ outcome: RelinkOutcome, url: URL) -> some View {
         HStack {
@@ -243,6 +265,45 @@ struct RelinkReportSheet: View {
             Spacer()
             Button("Use This Folder") { if let record = record(outcome) { m.relink(record, to: url) } }.controlSize(.small)
         }
+    }
+}
+
+/// Projects registered under one name in several places. Nothing on disk is touched; the list only forgets a copy.
+struct DuplicatesSheet: View {
+    @EnvironmentObject var m: AppModel
+    var body: some View {
+        let groups = m.duplicateGroups
+        VStack(alignment: .leading, spacing: 14) {
+            Text("Duplicates").font(.title2.weight(.semibold))
+            Text("The same project name is registered in more than one place. The copy under a format's destination is marked as the likely live one; otherwise the newest folder is. Removing a copy from the list never touches its files.").foregroundStyle(.secondary)
+            if groups.isEmpty {
+                ContentUnavailableView("No duplicates", systemImage: "checkmark.circle", description: Text("Every registered project name appears once.")).frame(maxWidth: .infinity, minHeight: 160)
+            } else {
+                List {
+                    ForEach(Array(groups.enumerated()), id: \.offset) { _, group in
+                        Section(group[0].name) {
+                            ForEach(group) { record in
+                                HStack(alignment: .top, spacing: 10) {
+                                    VStack(alignment: .leading, spacing: 4) {
+                                        HStack(spacing: 6) {
+                                            LocationBadge(location: record.location)
+                                            StageBadge(stage: m.effectiveStage(record))
+                                            if m.likelyLive(record, among: group) { Label("Likely live", systemImage: "star.fill").font(.caption.weight(.semibold)).foregroundStyle(.green) }
+                                        }
+                                        Text(record.path).font(.caption).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle).textSelection(.enabled)
+                                        Text("Folder from " + record.effectiveDate.formatted(date: .abbreviated, time: .omitted)).font(.caption2).foregroundStyle(.tertiary)
+                                    }
+                                    Spacer()
+                                    Button("Show") { m.selectedProject = record.id; m.page = .projects; m.selectProject(); m.duplicatesPresented = false }.controlSize(.small)
+                                    Button("Remove from List") { m.removeRecord(record) }.controlSize(.small).help("Forget this copy. Its folder stays where it is.")
+                                }.padding(.vertical, 2)
+                            }
+                        }
+                    }
+                }
+            }
+            HStack { Spacer(); Button("Done") { m.duplicatesPresented = false }.keyboardShortcut(.defaultAction) }
+        }.padding(24).frame(width: 760, height: 560)
     }
 }
 

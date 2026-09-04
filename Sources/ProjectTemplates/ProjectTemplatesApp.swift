@@ -27,7 +27,11 @@ import TemplateCore
             CommandGroup(replacing: .newItem) {
                 Button("New Project…") { model.newProjectPresented = true }.keyboardShortcut("n")
                 Divider()
-                Button("Find Moved Folders") { model.relinkAll() }.keyboardShortcut("r", modifiers: [.command, .shift]).disabled(model.relinkBatchRunning)
+                Button("Find Missing Projects") { model.relinkAll() }.keyboardShortcut("r", modifiers: [.command, .shift]).disabled(model.relinkBatchRunning)
+                Button("Duplicates…") { model.duplicatesPresented = true }.disabled(model.duplicateGroups.isEmpty)
+            }
+            CommandGroup(after: .textEditing) {
+                Button("Find") { AppModel.focusSearchField() }.keyboardShortcut("f")
             }
             CommandGroup(before: .sidebar) {
                 ForEach(BrowserViewMode.allCases) { mode in
@@ -134,7 +138,7 @@ struct MainView: View {
                 }.frame(maxWidth: .infinity, alignment: .leading).padding(14)
             }
         } content: {
-            ZoomedInterface(scale: m.uiScale, minimumWidth: 380) {
+            ZoomedInterface(scale: m.uiScale, minimumWidth: 300) {
             Group {
                 switch m.page {
                 case .pipeline: PipelineSidebar()
@@ -143,9 +147,9 @@ struct MainView: View {
                 }
             }
             }
-            .navigationSplitViewColumnWidth(min: 380, ideal: 440, max: 560)
+            .navigationSplitViewColumnWidth(min: 360 * m.uiScale, ideal: 440 * m.uiScale, max: 600 * m.uiScale)
         } detail: {
-            ZoomedInterface(scale: m.uiScale, minimumWidth: 420) {
+            ZoomedInterface(scale: m.uiScale, minimumWidth: 360) {
             VStack(spacing: 0) {
                 Group {
                     switch m.page {
@@ -165,7 +169,7 @@ struct MainView: View {
                 }
             }
             }
-            .navigationSplitViewColumnWidth(min: 420, ideal: 640)
+            .navigationSplitViewColumnWidth(min: 420 * m.uiScale, ideal: 640 * m.uiScale)
         }
         .navigationTitle(m.page.rawValue)
         .disabled(!m.storeUsable)
