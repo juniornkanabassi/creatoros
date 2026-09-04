@@ -24,7 +24,11 @@ import TemplateCore
         }
         .defaultSize(width: 1280, height: 820)
         .commands {
-            CommandGroup(replacing: .newItem) { Button("New Project") { model.page = .newProject }.keyboardShortcut("n") }
+            CommandGroup(replacing: .newItem) {
+                Button("New Project…") { model.newProjectPresented = true }.keyboardShortcut("n")
+                Divider()
+                Button("Find Moved Folders") { model.relinkAll() }.keyboardShortcut("r", modifiers: [.command, .shift]).disabled(model.relinkBatchRunning)
+            }
             CommandGroup(before: .sidebar) {
                 ForEach(BrowserViewMode.allCases) { mode in
                     Toggle(mode.menuTitle, isOn: Binding(get: { model.activeViewMode == mode }, set: { if $0 { model.setActiveViewMode(mode) } }))
@@ -44,10 +48,10 @@ import TemplateCore
                 }
             }
         }
+        // Settings is a standard window at standard size. It is not zoomed: the AppKit tab view inside a scaled
+        // subtree drew in one place and took clicks in another, which is why nothing in Settings responded when zoomed.
         Settings {
-            ZoomedInterface(scale: model.uiScale, minimumWidth: 600) {
-                SettingsView().environmentObject(model)
-            }.frame(width: 600 * model.uiScale, height: 520 * model.uiScale)
+            SettingsView().environmentObject(model).frame(width: 640, height: 560)
         }
     }
 }
@@ -133,7 +137,6 @@ struct MainView: View {
             ZoomedInterface(scale: m.uiScale, minimumWidth: 380) {
             Group {
                 switch m.page {
-                case .newProject: CreationForm()
                 case .pipeline: PipelineSidebar()
                 case .projects: ProjectList()
                 case .templates: TemplateSetList()
@@ -146,7 +149,6 @@ struct MainView: View {
             VStack(spacing: 0) {
                 Group {
                     switch m.page {
-                    case .newProject: CreationPreview()
                     case .pipeline: PipelineBoard()
                     case .projects: ProjectDetail()
                     case .templates: TemplateSetDetail()
@@ -170,6 +172,7 @@ struct MainView: View {
         .alert("Content Template", isPresented: Binding(get: { m.error != nil }, set: { if !$0 { m.error = nil } })) {
             Button("OK") { m.error = nil }
         } message: { Text(m.error ?? "") }
+        .sheet(isPresented: $m.newProjectPresented) { NewProjectSheet() }
         .sheet(isPresented: $m.importPresented) { ImportSheet() }
         .sheet(item: $m.newSetPrompt) { _ in NewSetSheet() }
         .sheet(item: $m.templateToBrowse) { record in

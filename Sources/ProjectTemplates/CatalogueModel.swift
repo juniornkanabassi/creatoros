@@ -8,9 +8,8 @@ extension AppModel {
         library.projects.filter {
             !$0.isPlanned && !hiddenLocations.contains($0.location.key) &&
             (formatFilter == "All formats" || $0.format == formatFilter) &&
-            (locationFilter == nil || $0.location.key == locationFilter) &&
-            (stageFilter == nil || effectiveStage($0) == stageFilter) &&
-            (search.isEmpty || $0.searchableText.localizedCaseInsensitiveContains(search))
+            !excludedStages.contains(effectiveStage($0)) &&
+            (search.isEmpty || $0.searchableText.localizedCaseInsensitiveContains(search) || deepMatches.contains($0.id))
         }.sorted { $0.name.localizedStandardCompare($1.name) == .orderedDescending }
     }
     /// Projects for the current board, planned ideas included, with the same format, location and search filters.
@@ -18,8 +17,7 @@ extension AppModel {
         library.projects.filter {
             pipelineKind.includes(format: $0.format) && ($0.isPlanned || !hiddenLocations.contains($0.location.key)) &&
             (formatFilter == "All formats" || $0.format == formatFilter) &&
-            (locationFilter == nil || $0.isPlanned || $0.location.key == locationFilter) &&
-            (search.isEmpty || $0.searchableText.localizedCaseInsensitiveContains(search))
+            (search.isEmpty || $0.searchableText.localizedCaseInsensitiveContains(search) || deepMatches.contains($0.id))
         }
     }
     /// A folder's existence is not evidence that its content was published.
@@ -117,7 +115,6 @@ extension AppModel {
             if !NSWorkspace.shared.open(url) { throw AppFailure("Finder could not open this folder.") }
         }
     }
-    func reveal(_ record: ProjectRecord) { attempt { NSWorkspace.shared.activateFileViewerSelecting([try record.resolve()]) } }
     func removeRecord(_ record: ProjectRecord) {
         attempt { try mutate { $0.projects.removeAll { $0.id == record.id } } }
         if selectedProject == record.id { selectedProject = nil }

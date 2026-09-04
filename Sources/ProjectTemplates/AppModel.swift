@@ -2,12 +2,12 @@ import SwiftUI
 import AppKit
 import TemplateCore
 
+/// The three places in the app. New Project is a sheet over any of them, opened with Command-N.
 enum Page: String, CaseIterable, Identifiable {
-    case newProject = "New Project", pipeline = "Pipeline", projects = "Projects", templates = "Templates"
+    case projects = "Projects", pipeline = "Pipeline", templates = "Templates"
     var id: String { rawValue }
     var systemImage: String {
         switch self {
-        case .newProject: "folder.badge.plus"
         case .pipeline: "rectangle.3.group"
         case .projects: "externaldrive"
         case .templates: "square.stack.3d.up"
@@ -15,7 +15,6 @@ enum Page: String, CaseIterable, Identifiable {
     }
     var hint: String {
         switch self {
-        case .newProject: "Create a project folder from a content template"
         case .pipeline: "Move recordings and streams through their stages"
         case .projects: "Browse every project, wherever it lives"
         case .templates: "The content templates and the folders each format copies"
@@ -92,7 +91,7 @@ enum BadgeColour: String, CaseIterable, Identifiable {
     @Published var importPlan: CopyPlan?
     @Published var importPresented = false
     @Published var pendingAssignment: PendingAssignment?
-    @Published var search = ""
+    @Published var search = "" { didSet { scheduleDeepSearch() } }
     @Published var storeUsable = true
     @Published var selectedProject: UUID?
     @Published var inspections: [UUID: ProjectInspection] = [:]
@@ -100,8 +99,12 @@ enum BadgeColour: String, CaseIterable, Identifiable {
     @Published var discoveryPresented = false
     @Published var discoverySelection = Set<UUID>()
     @Published var formatFilter = "All formats"
-    @Published var locationFilter: String? { didSet { defaults.set(locationFilter, forKey: "locationFilter") } }
-    @Published var stageFilter: String?
+    /// Stages unticked in the Stages filter. Empty means every stage shows.
+    @Published var excludedStages: Set<String> { didSet { defaults.set(Array(excludedStages).sorted(), forKey: "excludedStages") } }
+    /// New Project is a sheet; this opens it.
+    @Published var newProjectPresented = false
+    /// Projects whose documents matched the search text, found by the deep search off the main thread.
+    @Published var deepMatches: Set<UUID> = []
     @Published var mountedLocations: Set<String> = []
     @Published var locationColours: [String: String] = [:]
     @Published var editingIcon = false
@@ -121,7 +124,7 @@ enum BadgeColour: String, CaseIterable, Identifiable {
     @Published var relinkCandidates: [UUID: [URL]] = [:]
     @Published var relinking: Set<UUID> = []
     @Published var relinkBatchRunning = false
-    /// Drives the app leaves alone: their projects stay registered but are kept out of every list, and the drive is never read.
+    /// Drives unticked in the Locations filter: their projects stay registered but are kept out of every list, and the drive is never read.
     @Published var hiddenLocations: Set<String> { didSet { defaults.set(Array(hiddenLocations).sorted(), forKey: "hiddenLocations") } }
     var mountTimer: Timer?
     private var checkingMounts = false
@@ -141,11 +144,11 @@ enum BadgeColour: String, CaseIterable, Identifiable {
             store = LibraryStore(root: URL(fileURLWithPath: arguments[i + 1]))
             defaults = UserDefaults(suiteName: "local.projecttemplates.test." + Data(arguments[i + 1].utf8).base64EncodedString())!
         } else { store = LibraryStore(); defaults = .standard }
-        page = Page(rawValue: defaults.string(forKey: "page") ?? "") ?? .newProject
+        page = Page(rawValue: defaults.string(forKey: "page") ?? "") ?? .projects
         format = defaults.string(forKey: "format") ?? "Short"
         selection = defaults.string(forKey: "selection").flatMap(TemplateSelection.init(stored:))
-        locationFilter = defaults.string(forKey: "locationFilter")
         hiddenLocations = Set(defaults.stringArray(forKey: "hiddenLocations") ?? [])
+        excludedStages = Set(defaults.stringArray(forKey: "excludedStages") ?? [])
         zoomLevel = defaults.object(forKey: "zoomLevel") as? Int ?? 0
         groupByDate = defaults.object(forKey: "groupByDate") as? Bool ?? true
         pipelineKind = PipelineKind(rawValue: defaults.string(forKey: "pipelineKind") ?? "") ?? .recordings
@@ -415,7 +418,7 @@ enum BadgeColour: String, CaseIterable, Identifiable {
             refresh()
         }
     }
-    func useForNewProject(_ choice: TemplateSelection) { selection = choice; page = .newProject; changeSelection() }
+    func useForNewProject(_ choice: TemplateSelection) { selection = choice; changeSelection(); newProjectPresented = true }
     func browseTemplate(_ record: TemplateRecord) { templateToBrowse = record }
     func finishedBrowsingTemplate() {
         if let record = templateToBrowse { invalidateStructure(record.id) }
@@ -559,9 +562,32 @@ enum BadgeColour: String, CaseIterable, Identifiable {
     /// Locations that take part in lists and filters.
     var visibleLocations: [ProjectLocation] { distinctLocations.filter { !hiddenLocations.contains($0.key) } }
     func setHidden(_ hidden: Bool, for location: ProjectLocation) {
-        if hidden { hiddenLocations.insert(location.key); if locationFilter == location.key { locationFilter = nil } }
-        else { hiddenLocations.remove(location.key) }
+        if hidden { hiddenLocations.insert(location.key) } else { hiddenLocations.remove(location.key) }
         refreshMounts()
+        scheduleDeepSearch()
+    }
+    func setExcluded(_ excluded: Bool, stage: String) {
+        if excluded { excludedStages.insert(stage) } else { excludedStages.remove(stage) }
+    }
+
+    // MARK: Deep search
+
+    private var deepSearchTask: Task<Void, Never>?
+    /// Looks inside the documents of visible, connected projects for the search text, a moment after typing stops.
+    /// Hidden drives are never read. Results only add to the name matches, never remove them.
+    func scheduleDeepSearch() {
+        deepSearchTask?.cancel()
+        let query = search.trimmingCharacters(in: .whitespaces)
+        guard query.count >= 3 else { deepMatches = []; return }
+        let candidates = library.projects.filter { !$0.isPlanned && !hiddenLocations.contains($0.location.key) && mountedLocations.contains($0.location.key) }
+            .map { DeepSearch.Candidate(id: $0.id, path: $0.path) }
+        deepSearchTask = Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(450))
+            guard !Task.isCancelled else { return }
+            let found = await DeepSearch.shared.matches(for: query, in: candidates)
+            guard !Task.isCancelled, let self, self.search.trimmingCharacters(in: .whitespaces) == query else { return }
+            self.deepMatches = found
+        }
     }
     func badgeColour(_ location: ProjectLocation) -> BadgeColour {
         BadgeColour(rawValue: locationColours[location.key] ?? defaults.string(forKey: "locationColour." + location.key) ?? location.defaultColour) ?? .gray
@@ -607,7 +633,7 @@ enum BadgeColour: String, CaseIterable, Identifiable {
             if FileManager.default.fileExists(atPath: url.path) { roots.append(url) }
         }
         var seen = Set<String>()
-        return roots.filter { seen.insert($0.path).inserted }
+        return roots.filter { seen.insert($0.path).inserted && !hiddenLocations.contains(ProjectLocation(path: $0.path).key) }
     }
     /// Offline originals may be copies, so offer candidates instead of silently redirecting them.
     func relink(_ record: ProjectRecord, quietly: Bool = false) {
@@ -649,7 +675,8 @@ enum BadgeColour: String, CaseIterable, Identifiable {
     func relinkAll() {
         guard !relinkBatchRunning else { return }
         relinkBatchRunning = true
-        let records = library.projects.filter { !$0.isPlanned }
+        // Only ticked drives take part, in both directions: their records are checked and their roots are searched.
+        let records = library.projects.filter { !$0.isPlanned && !hiddenLocations.contains($0.location.key) }
         Task {
             defer { relinkBatchRunning = false }
             let missing = await Task.detached { records.filter { !FileManager.default.fileExists(atPath: $0.path) } }.value
@@ -698,7 +725,7 @@ enum BadgeColour: String, CaseIterable, Identifiable {
         campaign = record.campaign ?? ""
         startingFrom = record.id
         created = nil
-        page = .newProject
+        newProjectPresented = true
         changeFormat()
     }
     func setStages(_ stages: [String], for kind: PipelineKind = .recordings) {

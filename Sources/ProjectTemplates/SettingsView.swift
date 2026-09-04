@@ -112,22 +112,25 @@ struct SettingsView: View {
         Form {
             Section {
                 ForEach(m.distinctLocations, id: \.key) { location in
-                    HStack {
-                        LocationBadge(location: location)
-                        if let account = location.account { Text(account).font(.caption).foregroundStyle(.secondary) }
-                        Spacer()
-                        let hidden = m.hiddenLocations.contains(location.key)
-                        Text(hidden ? "Hidden" : m.mountedLocations.contains(location.key) ? "Connected" : "Not connected").font(.caption).foregroundStyle(.secondary)
-                        Toggle("Show", isOn: Binding(get: { !hidden }, set: { m.setHidden(!$0, for: location) })).toggleStyle(.checkbox)
-                            .help("Off keeps this drive's projects out of every list and filter, and the app never reads the drive. The records stay; turn it on again at any time.")
-                        Picker("Colour", selection: Binding(get: { m.badgeColour(location) }, set: { m.setBadgeColour($0, for: location) })) {
-                            ForEach(BadgeColour.allCases) { colour in Label { Text(colour.title) } icon: { Image(nsImage: ColourDot.image(colour.colour)) }.tag(colour) }
-                        }.labelsHidden().fixedSize().disabled(hidden)
+                    let hidden = m.hiddenLocations.contains(location.key)
+                    LabeledContent {
+                        HStack(spacing: 14) {
+                            Text(hidden ? "Unticked in Projects" : m.mountedLocations.contains(location.key) ? "Connected" : "Not connected")
+                                .font(.callout).foregroundStyle(.secondary).frame(width: 130, alignment: .trailing)
+                            Picker("Colour", selection: Binding(get: { m.badgeColour(location) }, set: { m.setBadgeColour($0, for: location) })) {
+                                ForEach(BadgeColour.allCases) { colour in Label { Text(colour.title) } icon: { Image(nsImage: ColourDot.image(colour.colour)) }.tag(colour) }
+                            }.labelsHidden().frame(width: 120).help("The colour of this location's badge in lists and on cards")
+                        }
+                    } label: {
+                        HStack(spacing: 8) {
+                            LocationBadge(location: location)
+                            if let account = location.account { Text(account).font(.caption).foregroundStyle(.secondary).lineLimit(1) }
+                        }
                     }
                 }
                 if m.distinctLocations.isEmpty { Text("Locations appear here once projects are registered.").foregroundStyle(.secondary) }
             } header: { Text("Drives and cloud folders") } footer: {
-                Text("Each location gets a colour badge in the project list. A filled dot means the drive or cloud folder is connected right now; the check runs every twenty seconds and never opens cloud files. Turn Show off for a drive you want left alone, for example a mechanical archive drive that spins up whenever it is read.")
+                Text("Each location gets a colour badge in the project list. A filled dot means the drive or cloud folder is connected right now; the check runs every twenty seconds and never opens cloud files. Which drives are shown is the Locations filter on Projects and Pipeline: an unticked drive is never read, so a mechanical archive drive can stay unticked on normal days.")
             }
         }.formStyle(.grouped)
     }

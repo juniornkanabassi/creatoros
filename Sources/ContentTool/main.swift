@@ -112,7 +112,7 @@ func probe(_ folder: URL) {
 
 let args = CommandLine.arguments.dropFirst()
 func option(_ name: String) -> String? { guard let i = args.firstIndex(of: name), args.indices.contains(i + 1) else { return nil }; return args[i + 1] }
-guard let command = args.first else { print("usage: ContentTool audit|create|probe …"); exit(2) }
+guard let command = args.first else { print("usage: ContentTool audit|create|probe|restore-icons|strip-icons|register-location …"); exit(2) }
 
 switch command {
 case "audit":
@@ -209,6 +209,27 @@ case "create":
     }
     report("Files whose size differs from the template", sizeProblems)
     print(sizeProblems.isEmpty && final2.findings.isEmpty ? "Test project generated completely." : "Test project generated with the notes above.")
+case "register-location":
+    // register-location <root> --library <data directory>: discover the projects under root and add them to the library,
+    // recording the root as a saved location. Run only while the app is closed; it never moves or renames anything.
+    let rest = Array(args.dropFirst())
+    guard let rootPath = rest.first, !rootPath.hasPrefix("--") else { print("usage: ContentTool register-location <root> --library <data directory>"); exit(2) }
+    let root = URL(fileURLWithPath: rootPath)
+    guard let libraryIndex = args.firstIndex(of: "--library"), args.indices.contains(libraryIndex + 1) else { print("--library <data directory> is required"); exit(2) }
+    let store = LibraryStore(root: URL(fileURLWithPath: args[libraryIndex + 1]))
+    do {
+        var library = try store.load()
+        let result = try Catalogue.discover(root: root)
+        let before = library.projects.count
+        library.projects = Catalogue.merge(result.projects, into: library.projects)
+        var locations = library.locations ?? []
+        if let index = locations.firstIndex(where: { $0.path == result.location.path }) { locations[index] = result.location } else { locations.append(result.location) }
+        library.locations = locations
+        try store.save(library)
+        print("Found \(result.projects.count) projects under \(root.path); library went from \(before) to \(library.projects.count) records.")
+        for record in result.projects { print("  \(record.format)  \(record.name)") }
+        for note in result.notes { print("  note: \(note)") }
+    } catch { print("Failed: \(error.localizedDescription)"); exit(1) }
 case "restore-icons":
     guard let projectPath = option("--project"), let setName = option("--set") else { print("restore-icons needs --project and --set"); exit(2) }
     let project = URL(fileURLWithPath: projectPath)

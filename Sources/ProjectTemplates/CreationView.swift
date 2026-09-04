@@ -57,7 +57,31 @@ struct FormatButtons: View {
     }
 }
 
-/// The content column of New Project.
+/// New Project as a sheet over any page: the form on the left, the live preview on the right, Create at the bottom.
+/// Opened with Command-N, the toolbar button on Projects, or Start Project on an idea.
+struct NewProjectSheet: View {
+    @EnvironmentObject var m: AppModel
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack {
+                Text("New Project").font(.title2.weight(.semibold))
+                Spacer()
+                Button("Close") { m.newProjectPresented = false }.keyboardShortcut(.cancelAction).help("Close without creating anything. What you typed stays for next time.")
+            }.padding(.horizontal, 20).padding(.vertical, 14)
+            Divider()
+            ZoomedInterface(scale: m.uiScale, minimumWidth: 900) {
+                HSplitView {
+                    CreationForm().frame(minWidth: 380, idealWidth: 430, maxWidth: 520)
+                    CreationPreview().frame(minWidth: 480, maxWidth: .infinity)
+                }
+            }
+        }
+        .frame(width: 1280, height: 800)
+        .onAppear { m.refresh() }
+    }
+}
+
+/// The form side of New Project.
 struct CreationForm: View {
     @EnvironmentObject var m: AppModel
     var body: some View {
@@ -234,7 +258,8 @@ struct CreationPreview: View {
                     Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([created]) }
                     Button("Browse Project") {
                         if let record = m.library.projects.first(where: { $0.path == created.path }) { m.selectedProject = record.id; m.page = .projects; m.selectProject() }
-                    }
+                        m.newProjectPresented = false
+                    }.help("Close this sheet and show the new project in Projects")
                     Button("Next Project") { m.nextProject() }.buttonStyle(.borderedProminent).help("Clear the form for the next project, keeping the template, format and destination")
                 }
             }

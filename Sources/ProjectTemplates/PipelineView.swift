@@ -58,13 +58,15 @@ struct StageMenu: View {
     let record: ProjectRecord
     var body: some View {
         let current = m.effectiveStage(record)
+        // A Menu label on macOS keeps only its text, so the pill is the button style itself: tinted with the stage colour.
         Menu {
             ForEach(m.moveTargets(for: record), id: \.self) { stage in
                 Button { m.setStage(stage, for: record.id) } label: { Label { Text(stage) } icon: { Image(nsImage: ColourDot.image(m.stageColour(stage))) } }
                     .disabled(stage == current)
             }
-        } label: { StageBadge(stage: current, interactive: true) }
-        .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
+        } label: { Text(current).font(.caption.weight(.semibold)) }
+        .menuStyle(.button).buttonStyle(.borderedProminent).controlSize(.small)
+        .tint(m.stageColour(current) == .secondary ? Color.gray : m.stageColour(current)).fixedSize()
         .help("Move this project to another stage. Finder's tag follows when the drive is connected.")
         .accessibilityLabel("Stage \(current), change")
     }
@@ -95,19 +97,34 @@ struct ProjectFilters: View {
         VStack(alignment: .leading, spacing: 8) {
         if kind != .live { FormatButtons(selection: $m.formatFilter, includeAll: true, kind: kind).help("Filter by the format the project was created as.") }
         HStack(spacing: 10) {
-            Picker("Location", selection: $m.locationFilter) {
-                Text("All locations").tag(Optional<String>.none)
-                ForEach(m.visibleLocations, id: \.key) { location in
-                    Label { Text(location.label) } icon: { Image(nsImage: ColourDot.image(m.badgeColour(location).colour)) }.tag(Optional(location.key))
-                }
-            }.labelsHidden().fixedSize().controlSize(.small).help("Show projects on one drive or cloud folder. Drives hidden in Settings › Locations are left out.")
-            if includeStage {
-                Picker("Stage", selection: $m.stageFilter) {
-                    Text("All stages").tag(Optional<String>.none)
-                    ForEach(m.visibleStages, id: \.self) { stage in
-                        Label { Text(stage) } icon: { Image(nsImage: ColourDot.image(m.stageColour(stage))) }.tag(Optional(stage))
+            let locations = m.distinctLocations
+            let shownLocations = locations.filter { !m.hiddenLocations.contains($0.key) }.count
+            Menu {
+                ForEach(locations, id: \.key) { location in
+                    Toggle(isOn: Binding(get: { !m.hiddenLocations.contains(location.key) }, set: { m.setHidden(!$0, for: location) })) {
+                        Label { Text(location.label + (location.account.map { " · " + $0 } ?? "")) } icon: { Image(nsImage: ColourDot.image(m.badgeColour(location).colour)) }
                     }
-                }.labelsHidden().fixedSize().controlSize(.small).help("Show projects in one stage")
+                }
+                Divider()
+                Button("Show All") { for location in locations { m.setHidden(false, for: location) } }.disabled(m.hiddenLocations.isEmpty)
+            } label: {
+                Label(shownLocations == locations.count ? "All locations" : "\(shownLocations) of \(locations.count) locations", systemImage: "externaldrive")
+            }.controlSize(.small).fixedSize()
+                .help("Tick the drives and cloud folders to show. An unticked drive is never read, so a slow archive drive can stay unticked on normal days.")
+            if includeStage {
+                let stages = m.visibleStages
+                let shownStages = stages.filter { !m.excludedStages.contains($0) }.count
+                Menu {
+                    ForEach(stages, id: \.self) { stage in
+                        Toggle(isOn: Binding(get: { !m.excludedStages.contains(stage) }, set: { m.setExcluded(!$0, stage: stage) })) {
+                            Label { Text(stage) } icon: { Image(nsImage: ColourDot.image(m.stageColour(stage))) }
+                        }
+                    }
+                    Divider()
+                    Button("Show All") { m.excludedStages = [] }.disabled(m.excludedStages.isEmpty)
+                } label: {
+                    Label(shownStages == stages.count ? "All stages" : "\(shownStages) of \(stages.count) stages", systemImage: "circle.lefthalf.filled")
+                }.controlSize(.small).fixedSize().help("Tick the stages to show, for example only what is still being written")
             }
             Spacer()
             Button { m.refreshMounts() } label: { Image(systemName: "arrow.clockwise") }.controlSize(.small).help("Check again which drives and cloud folders are connected")
@@ -127,10 +144,10 @@ struct ProjectStatusEditor: View {
     @State private var series = ""
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            TextField("Campaign", text: $campaign, prompt: Text("None")).onSubmit(save)
+            TextField("Campaign", text: $campaign, prompt: Text("Campaign, if any")).onSubmit(save)
             TextField("With", text: $editor, prompt: Text("Editor or collaborator")).onSubmit(save)
-            TextField("Series", text: $series, prompt: Text("Separate series with commas")).onSubmit(save)
-            TextField("Notes", text: $notes, prompt: Text("Short note"), axis: .vertical).lineLimit(2...5).onSubmit(save)
+            TextField("Series", text: $series, prompt: Text("Series, separated by commas")).onSubmit(save)
+            TextField("Notes", text: $notes, prompt: Text("Notes"), axis: .vertical).lineLimit(2...5).onSubmit(save)
             if let link = record.notionURL, let url = URL(string: link) {
                 Link(destination: url) { Label("Open in Notion", systemImage: "arrow.up.right.square") }.font(.callout)
             }
@@ -194,7 +211,7 @@ struct PipelineSidebar: View {
                                 Button("Start Project…") { m.startPlanned(record) }.buttonStyle(.borderedProminent).help("Fill in New Project with this idea")
                             } else {
                                 Button("Show in Projects") { m.selectedProject = record.id; m.page = .projects; m.selectProject() }.help("Open this project's files and details in Projects")
-                                Button("Open Folder") { m.open(record) }.help("Open the project folder in Finder")
+                                Button("Open in Finder") { m.open(record) }.help("Open the project folder in Finder")
                             }
                             Spacer()
                             Button(record.isPlanned ? "Delete Idea" : "Remove from List", role: .destructive) { m.removeProject(record.id) }
@@ -220,6 +237,7 @@ struct PipelineSidebar: View {
                     .disabled(m.pipelineKind == .live)
             }
         }
+        .searchable(text: $m.search, placement: .toolbar, prompt: "Search projects, notes and documents")
         .sheet(isPresented: $m.newIdeaPresented) { NewIdeaSheet() }
         .onAppear { m.refreshMounts() }
     }
@@ -315,7 +333,7 @@ struct ProjectCard: View {
         .contextMenu {
             Menu("Move to") { ForEach(m.moveTargets(for: record), id: \.self) { stage in Button(stage) { m.setStage(stage, for: record.id) }.disabled(stage == m.effectiveStage(record)) } }
             if record.isPlanned { Button("Start Project…") { m.startPlanned(record) } }
-            else { Button("Show in Projects") { m.selectedProject = record.id; m.page = .projects; m.selectProject() }; Button("Open Folder") { m.open(record) } }
+            else { Button("Show in Projects") { m.selectedProject = record.id; m.page = .projects; m.selectProject() }; Button("Open in Finder") { m.open(record) } }
             Divider()
             Button(record.isPlanned ? "Delete Idea" : "Remove from List", role: .destructive) { m.removeProject(record.id) }
         }

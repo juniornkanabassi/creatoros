@@ -41,16 +41,18 @@ struct ProjectList: View {
                 Text("\(m.filteredProjects.count) projects · \((m.library.locations ?? []).count) saved locations").font(.caption).foregroundStyle(.secondary)
             }.padding(.horizontal, 16).padding(.vertical, 8)
         }
-        .searchable(text: $m.search, placement: .toolbar, prompt: "Search projects, notes and previous locations")
+        .searchable(text: $m.search, placement: .toolbar, prompt: "Search projects, notes and documents")
         .toolbar {
             ToolbarItemGroup(placement: .primaryAction) {
+                Button { m.newProjectPresented = true } label: { Label("New Project", systemImage: "folder.badge.plus") }.help("Create a project from a content template (⌘N)")
+                Button { m.relinkAll() } label: { Label("Find Moved Folders", systemImage: "arrow.triangle.2.circlepath") }
+                    .help("Look on every ticked, connected drive for project folders that have moved, and relink the ones found. Projects that cannot be matched with certainty are listed for you to choose.")
+                    .disabled(m.relinkBatchRunning)
                 Toggle(isOn: $m.groupByDate) { Label("Group by date", systemImage: "calendar") }.help("Group projects by when their folder was created")
                 Menu {
                     Button("Folder of Projects or Drive…") { m.scanLocation() }.help("Look through a folder or drive and pick the projects to add")
                     Button("One Existing Project…") { m.addExisting() }.help("Add a single project folder made outside the app")
-                    Divider()
-                    Button("Find Moved Folders") { m.relinkAll() }.help("Look on the connected drives for folders that have moved")
-                } label: { Label("Add", systemImage: "plus") }
+                } label: { Label("Add Existing", systemImage: "plus") }.help("Register projects that already exist on a drive")
             }
         }
         .sheet(isPresented: $m.discoveryPresented) { DiscoveryView() }
@@ -99,8 +101,7 @@ struct ProjectActions: View {
     let record: ProjectRecord
     var body: some View {
         Button(record.isPinned ? "Unpin" : "Pin") { m.togglePin(record.id) }.help("Pinned projects stay at the top of the list")
-        Button("Open Folder") { m.open(record) }
-        Button("Reveal in Finder") { m.reveal(record) }
+        Button("Open in Finder") { m.open(record) }
         Button("Show in Pipeline") { m.pipelineSelection = record.id; m.page = .pipeline }.help("Select this project on the Pipeline board")
         Menu("Move to Stage") { ForEach(m.moveTargets(for: record), id: \.self) { stage in Button(stage) { m.setStage(stage, for: record.id) }.disabled(stage == m.effectiveStage(record)) } }
         Divider()
@@ -129,7 +130,7 @@ struct ProjectInspector: View {
     @EnvironmentObject var m: AppModel
     let record: ProjectRecord
     var inspection: ProjectInspection? { m.inspections[record.id] }
-    @State private var showStatus = true
+    @State private var showStatus = false
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 12) {
@@ -160,8 +161,7 @@ struct ProjectInspector: View {
                 }.padding(10).background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 8))
             }
             HStack {
-                Button("Open Folder") { m.open(record) }.help("Open the project folder in Finder")
-                Button("Reveal in Finder") { m.reveal(record) }.help("Show the project folder selected inside its parent folder")
+                Button("Open in Finder") { m.open(record) }.help("Open the project folder in Finder, showing what is inside it")
                 Menu("More") {
                     Button("Check Again") { m.inspectProject(record); m.refreshMounts() }.help("Check once more whether the folder is reachable")
                     ProjectActions(record: record)
@@ -180,7 +180,7 @@ struct ProjectInspector: View {
             } else if inspection != nil {
                 ContentUnavailableView("Folder unavailable", systemImage: "externaldrive.badge.xmark",
                                        description: Text("Reconnect the drive, or use Find Moved Folder if it lives somewhere else now. The record stays in your list."))
-                    .frame(maxHeight: .infinity)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else { Spacer() }
         }.padding(20)
     }

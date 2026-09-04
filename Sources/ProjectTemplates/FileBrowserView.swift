@@ -108,6 +108,9 @@ struct FileBrowserView: View {
     @State private var token = Cancellation()
     @State private var generation = 0
     @FocusState private var focusedColumn: Int?
+    /// Column view widths by folder path; a divider drag sets one, a double-click fits it to the longest name and back.
+    @State private var columnWidths: [String: CGFloat] = [:]
+    static let defaultColumnWidth: CGFloat = 230
 
     var columnPaths: [String] {
         guard !folder.isEmpty else { return [""] }
@@ -231,8 +234,9 @@ struct FileBrowserView: View {
                 HStack(spacing: 0) {
                     ForEach(Array(paths.enumerated()), id: \.element) { index, path in
                         column(index: index, path: path, isLast: index == paths.count - 1)
-                            .frame(width: 230).id(path)
-                        Divider()
+                            .frame(width: columnWidths[path] ?? Self.defaultColumnWidth).id(path)
+                        ColumnDivider(width: Binding(get: { columnWidths[path] ?? Self.defaultColumnWidth }, set: { columnWidths[path] = $0 }),
+                                      fitted: { fittedWidth(for: path) }, defaultWidth: Self.defaultColumnWidth)
                     }
                 }
             }
@@ -275,8 +279,38 @@ struct FileBrowserView: View {
         .overlay { if loading.contains(path) { ProgressView() } else if items.isEmpty { emptyLabel } }
     }
 
+    /// The width that shows every name in a column in full: icon, gap, text, chevron and padding.
+    func fittedWidth(for path: String) -> CGFloat {
+        let font = NSFont.systemFont(ofSize: NSFont.systemFontSize * m.uiScale)
+        let widest = nodes(in: path).map { ($0.name as NSString).size(withAttributes: [.font: font]).width }.max() ?? 0
+        return max(Self.defaultColumnWidth, (widest + 20 * m.uiScale + 8 + 24 + 28).rounded(.up))
+    }
     var emptyLabel: some View {
         Text(filter.isEmpty ? "Empty folder" : "No matches").font(.callout).foregroundStyle(.secondary)
+    }
+}
+
+/// The line between two columns in column view: drag it to resize the column on its left, double-click it to fit
+/// that column to its longest name, double-click again to return to the default width. Finder's behaviour.
+struct ColumnDivider: View {
+    @Binding var width: CGFloat
+    let fitted: () -> CGFloat
+    let defaultWidth: CGFloat
+    @State private var startWidth: CGFloat?
+    @State private var isFitted = false
+    var body: some View {
+        Rectangle().fill(Color(nsColor: .separatorColor)).frame(width: 1)
+            .padding(.horizontal, 3).contentShape(Rectangle())
+            .onHover { inside in if inside { NSCursor.resizeLeftRight.push() } else { NSCursor.pop() } }
+            .gesture(DragGesture(minimumDistance: 1).onChanged { value in
+                if startWidth == nil { startWidth = width }
+                width = min(max((startWidth ?? width) + value.translation.width, 120), 900); isFitted = false
+            }.onEnded { _ in startWidth = nil })
+            .onTapGesture(count: 2) {
+                if isFitted { width = defaultWidth; isFitted = false } else { width = fitted(); isFitted = true }
+            }
+            .help("Drag to resize. Double-click to fit the longest name, double-click again for the default width.")
+            .accessibilityLabel("Column divider")
     }
 }
 
