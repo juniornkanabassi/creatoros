@@ -94,10 +94,13 @@ struct NewProjectSheet: View {
                 Button("Close") { m.newProjectPresented = false }.keyboardShortcut(.cancelAction).help("Close without creating anything. What you typed stays for next time.")
             }.padding(.horizontal, 20).padding(.vertical, 14)
             Divider()
+            // A plain HStack, not HSplitView: an AppKit split view inside the zoom transform draws in one place and
+            // takes clicks in another, which left the whole sheet dead at any zoom other than Actual Size.
             ZoomedInterface(scale: m.uiScale, minimumWidth: 900) {
-                HSplitView {
-                    CreationForm().frame(minWidth: 380, idealWidth: 430, maxWidth: 520)
-                    CreationPreview().frame(minWidth: 480, maxWidth: .infinity)
+                HStack(spacing: 0) {
+                    CreationForm().frame(width: 440)
+                    Divider()
+                    CreationPreview().frame(maxWidth: .infinity)
                 }
             }
         }
