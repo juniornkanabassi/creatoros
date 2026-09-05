@@ -136,7 +136,7 @@ struct FileBrowserView: View {
                 }
             }
         }
-        .task(id: reloadKey) { loaded = [:]; failure = nil; generation += 1; ensureLoaded() }
+        .task(id: reloadKey) { reloadAll() }
         .onChange(of: folder) { ensureLoaded() }
         .onChange(of: mode) { ensureLoaded() }
         .onDisappear { token.cancel() }
@@ -145,6 +145,16 @@ struct FileBrowserView: View {
     // MARK: Loading
 
     func ensureLoaded() { for path in (mode == .column ? columnPaths : [folder]) where loaded[path] == nil { load(path) } }
+    /// Reads every folder again, including subfolders that are expanded in the list view; a refresh that only re-read
+    /// the top level left an expanded folder empty, so a file dropped into it never appeared. Loads that were still in
+    /// flight are forgotten rather than left blocking the next read.
+    func reloadAll() {
+        let wanted = Set(loaded.keys).union(mode == .column ? columnPaths : [folder])
+        loading = []; failure = nil; generation += 1
+        // The old listing stays on screen until the new one replaces it, so expanded folders and the selection keep
+        // their places instead of collapsing while the drive answers.
+        for path in wanted { load(path) }
+    }
     func load(_ path: String) {
         guard !loading.contains(path) else { return }
         let source = dataSource

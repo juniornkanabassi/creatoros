@@ -123,6 +123,8 @@ enum BadgeColour: String, CaseIterable, Identifiable {
     @Published var excludedStages: Set<String> { didSet { defaults.set(Array(excludedStages).sorted(), forKey: "excludedStages") } }
     /// New Project is a sheet; this opens it.
     @Published var newProjectPresented = false
+    /// Bumped by Refresh Project (⌘R) and the filters' Refresh; every open file browser reads its folders again.
+    @Published var browserRefresh = 0
     /// Projects whose documents matched the search text, found by the deep search off the main thread.
     @Published var deepMatches: Set<UUID> = []
     @Published var mountedLocations: Set<String> = []
@@ -482,9 +484,13 @@ enum BadgeColour: String, CaseIterable, Identifiable {
                     lib.projects.insert(record, at: 0)
                 }
                 self.tagFolder(record)
-                self.startingFrom = nil
-                self.numberIsAutomatic = true
                 self.refreshMounts()
+                // The sheet closes and Projects shows the new folder, selected, with its files; the form is cleared so
+                // the next ⌘N starts on the following number.
+                self.search = ""
+                self.selectedProject = record.id; self.page = .projects; self.selectProject()
+                self.newProjectPresented = false
+                self.nextProject()
             } catch { self.error = "The project exists at \(url.path), but history could not be saved. Do not create it again. Use Add Existing Project to recover. \(error.localizedDescription)" }
         } failure: { message in
             if message.contains("changed"), let payloadID { self.invalidateStructure(payloadID); self.refresh() }
@@ -692,7 +698,16 @@ enum BadgeColour: String, CaseIterable, Identifiable {
     }
     /// The refresh button: drives, the selected project, and the search, all checked again.
     func refreshEverything() {
-        refreshMounts()
+        refreshMounts(); browserRefresh += 1
+        if let record = selectedRecord { inspectProject(record, findMoved: true) }
+        if let record = library.projects.first(where: { $0.id == pipelineSelection }) { inspectProject(record) }
+        scheduleDeepSearch()
+    }
+    /// Command-R: reads the selected project's folder again so files added since it was last shown appear, checks the
+    /// folder is still there, and reruns the search. On purpose not automatic: the folders live on drives that should
+    /// not be woken for every glance.
+    func refreshProject() {
+        browserRefresh += 1
         if let record = selectedRecord { inspectProject(record, findMoved: true) }
         if let record = library.projects.first(where: { $0.id == pipelineSelection }) { inspectProject(record) }
         scheduleDeepSearch()

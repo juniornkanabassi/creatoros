@@ -27,6 +27,7 @@ import TemplateCore
             CommandGroup(replacing: .newItem) {
                 Button("New Project…") { model.newProjectPresented = true }.keyboardShortcut("n")
                 Divider()
+                Button("Refresh Project") { model.refreshProject() }.keyboardShortcut("r").disabled(model.selectedProject == nil && model.pipelineSelection == nil)
                 Button("Find Missing Projects") { model.relinkAll() }.keyboardShortcut("r", modifiers: [.command, .shift]).disabled(model.relinkBatchRunning)
                 Button("Duplicates…") { model.duplicatesPresented = true }.disabled(model.duplicateGroups.isEmpty)
             }

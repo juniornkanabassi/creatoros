@@ -71,6 +71,7 @@ struct FolderBrowserHost: View {
             }
         }
         .task(id: refreshCount) { resolve() }
+        .onChange(of: m.browserRefresh) { refreshCount += 1 }
         .onAppear { m.activate(surface) }
         .onDisappear { m.deactivate(surface); token.cancel() }
         .alert("Could not open file", isPresented: Binding(get: { openingError != nil }, set: { if !$0 { openingError = nil } })) { Button("OK") {} } message: { Text(openingError ?? "") }
@@ -100,12 +101,14 @@ struct FolderBrowserHost: View {
     func resolve() {
         token.cancel(); token = Cancellation(); generation += 1
         let current = generation; let resolver = resolveRoot
-        root = nil; failure = nil
+        // On a refresh the browser stays on screen while the folder is checked again; clearing the root would rebuild
+        // it and lose every expanded folder. The root is only replaced when it resolves somewhere else.
+        failure = nil
         Task {
             do {
                 let url = try await Task.detached(priority: .userInitiated) { try resolver() }.value
                 guard current == generation else { return }
-                root = url
+                if root != url { root = url }
                 if projectFilesOnly { loadDocuments() }
             } catch { guard current == generation else { return }; failure = error.localizedDescription }
         }
