@@ -17,7 +17,7 @@ zsh build.sh
 
 `CoreChecks` prints `RESULT n checks passed` and keeps its disposable fixtures under the temporary directory it prints. The optional `--master` argument runs a read-only import and creation against a real template and verifies every byte and every folder icon afterwards.
 
-`build.sh` builds release, assembles `Content Template.app` in a fresh temporary folder, strips FinderInfo the file provider may have attached, signs ad hoc, verifies strictly and writes `../Outputs/Content Template <version>.zip` with `ditto`. It refuses to overwrite an existing archive; set `CONTENT_TEMPLATE_OUTPUT_ROOT` for a separate iteration. Extract into a normal local Applications folder, never inside JuniorOS, whose provider re-attaches metadata that breaks the signature.
+`build.sh` builds release, assembles `Content Template.app` in a fresh temporary folder, strips FinderInfo the file provider may have attached, signs ad hoc, verifies strictly and writes `../Outputs/Content Template <version>.zip` with `ditto`. It refuses to overwrite an existing archive; set `CONTENT_TEMPLATE_OUTPUT_ROOT` for a separate iteration. Install a verified archive with `zsh install.sh` or `zsh install.sh "/path/to/Content Template 0.11.0.zip"`. The installer refuses to replace a running app, checks the bundle identifier, version and signature, and restores the previous app if final verification fails. Set `CONTENT_TEMPLATE_INSTALL_ROOT=/tmp/test-Applications` for a disposable dry run. It never touches the library.
 
 For interface testing launch with `--data-directory <disposable folder>`; copy the real `library.json` and `Templates/` there first if a realistic library is wanted. Never point a test at a production destination or at the original templates.
 
