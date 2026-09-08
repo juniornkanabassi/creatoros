@@ -15,6 +15,7 @@ struct OutlineBrowser: NSViewRepresentable {
     /// The interface zoom. AppKit views sit outside SwiftUI's scale effect, so text, rows and icons are scaled here.
     var scale: CGFloat = 1
     var onReveal: ((FileBrowserNode) -> Void)? = nil
+    var dragURL: ((FileBrowserNode) -> URL?)? = nil
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
 
@@ -28,6 +29,8 @@ struct OutlineBrowser: NSViewRepresentable {
         outline.autoresizesOutlineColumn = false
         outline.columnAutoresizingStyle = .noColumnAutoresizing
         outline.focusRingType = .none
+        outline.setDraggingSourceOperationMask(.copy, forLocal: false)
+        outline.setDraggingSourceOperationMask(.copy, forLocal: true)
         for spec in ColumnSpec.all {
             let column = NSTableColumn(identifier: spec.identifier)
             column.title = spec.title; column.width = spec.width; column.minWidth = spec.minWidth; column.maxWidth = 2000
@@ -97,6 +100,10 @@ struct OutlineBrowser: NSViewRepresentable {
         func outlineView(_ outlineView: NSOutlineView, numberOfChildrenOfItem item: Any?) -> Int { children(of: item).count }
         func outlineView(_ outlineView: NSOutlineView, child index: Int, ofItem item: Any?) -> Any { children(of: item)[index].id }
         func outlineView(_ outlineView: NSOutlineView, isItemExpandable item: Any) -> Bool { node(item)?.browsable ?? false }
+        func outlineView(_ outlineView: NSOutlineView, pasteboardWriterForItem item: Any) -> (any NSPasteboardWriting)? {
+            guard let node = node(item), !node.directory, let url = parent.dragURL?(node) else { return nil }
+            return url as NSURL
+        }
         func outlineViewItemWillExpand(_ notification: Notification) {
             guard let id = notification.userInfo?["NSObject"] as? String, parent.nodes[id] == nil else { return }
             parent.onExpand(id)

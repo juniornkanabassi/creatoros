@@ -104,6 +104,7 @@ struct FileBrowserView: View {
     var onActivate: (FileBrowserNode) -> Void = { _ in }
     /// Shows the item in Finder. Nil for previews, which have no real files yet.
     var onReveal: ((FileBrowserNode) -> Void)? = nil
+    var dragURL: ((FileBrowserNode) -> URL?)? = nil
     @State private var loaded: [String: [FileBrowserNode]] = [:]
     @State private var loading: Set<String> = []
     @State private var failure: String?
@@ -193,7 +194,7 @@ struct FileBrowserView: View {
     /// still steps into it, and double-clicking a file opens it under the same rules as the other views.
     func listView(path: String) -> some View {
         let items = nodes(in: path)
-        return OutlineBrowser(nodes: loaded, root: path, filter: filter, selection: $selection, onExpand: { load($0) }, onActivate: { activate($0) }, scale: m.uiScale, onReveal: onReveal)
+        return OutlineBrowser(nodes: loaded, root: path, filter: filter, selection: $selection, onExpand: { load($0) }, onActivate: { activate($0) }, scale: m.uiScale, onReveal: onReveal, dragURL: dragURL)
             .overlay { if loading.contains(path) && loaded[path] == nil { ProgressView() } else if items.isEmpty && loaded[path] != nil { emptyLabel } }
     }
 
@@ -222,6 +223,7 @@ struct FileBrowserView: View {
                     .help(node.subtitle)
                     .accessibilityElement(children: .combine).accessibilityLabel(node.name).accessibilityHint(node.subtitle)
                     .accessibilityAddTraits(selection == node.id ? .isSelected : [])
+                    .modifier(BrowserFileDrag(enabled: dragURL != nil && !node.directory, url: { dragURL?(node) }))
                 }
             }.padding(10)
         }
@@ -274,6 +276,7 @@ struct FileBrowserView: View {
                     BrowserRow(node: node, artworkSize: 20, compact: true)
                     if node.browsable { Image(systemName: "chevron.right").font(.caption2).foregroundStyle(.tertiary) }
                 }.tag(node.id)
+                    .modifier(BrowserFileDrag(enabled: dragURL != nil && !node.directory, url: { dragURL?(node) }))
             }
         }
         .listStyle(.plain)
@@ -307,6 +310,18 @@ struct FileBrowserView: View {
     var emptyLabel: some View {
         Text(filter.isEmpty ? "Empty folder" : "No matches").font(.callout).foregroundStyle(.secondary)
     }
+}
+
+/// NSURL provides a native file URL that Finder and browser upload targets can read.
+struct BrowserFileDrag: ViewModifier {
+    let enabled: Bool
+    let url: () -> URL?
+    @ViewBuilder func body(content: Content) -> some View {
+        if enabled {
+            content.onDrag { url().map(Self.provider) ?? NSItemProvider() }
+        } else { content }
+    }
+    static func provider(_ url: URL) -> NSItemProvider { NSItemProvider(object: url as NSURL) }
 }
 
 /// The line between two columns in column view: drag it to resize the column on its left, double-click it to fit

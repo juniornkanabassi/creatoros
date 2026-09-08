@@ -163,6 +163,7 @@ do {
     try rejects("source mutation invalidates preview") { _ = try CreationEngine.create(plan: largePlan, destination: destination, name: "Stale plan") }
     try catalogueChecks(base: base)
     try browserChecks(base: base)
+    try browserTransferChecks(base: base)
     try setChecks(base: base)
     try previewChecks(base: base)
     try pipelineChecks(base: base)

@@ -1,9 +1,40 @@
 import Foundation
 import TemplateCore
+import AppKit
+import UniformTypeIdentifiers
 
 @main struct DurableSaveCheck {
     @MainActor static func main() async throws {
         let model = AppModel()
+        let dragFile = model.runtime.root.appendingPathComponent("Drop [été] 50%.txt")
+        try Data("native provider".utf8).write(to: dragFile)
+        let outgoing = BrowserFileDrag.provider(try BrowserTransfer.dragURL(root: model.runtime.root, relative: dragFile.lastPathComponent))
+        let incoming = try await BrowserDropURLs.load([outgoing])
+        precondition(incoming == [dragFile])
+        func provider(_ data: Data) -> NSItemProvider {
+            let item = NSItemProvider()
+            item.registerDataRepresentation(forTypeIdentifier: UTType.fileURL.identifier, visibility: .all) { completion in
+                completion(data, nil); return nil
+            }
+            return item
+        }
+        for rejected in [[], Array(repeating: outgoing, count: 101),
+                         [NSItemProvider(object: "plain text" as NSString)],
+                         [provider(Data("https://example.com/file.txt".utf8))],
+                         [provider(Data("not a file URL".utf8))]] {
+            do { _ = try await BrowserDropURLs.load(rejected); fatalError("invalid providers accepted") }
+            catch {}
+        }
+        let cancelled = Cancellation(); cancelled.cancel()
+        do { _ = try await BrowserDropURLs.load([outgoing], cancellation: cancelled); fatalError("cancelled drop accepted") }
+        catch is CancellationError {} catch { fatalError("wrong cancellation error: \(error)") }
+        let stalled = NSItemProvider()
+        stalled.registerDataRepresentation(forTypeIdentifier: UTType.fileURL.identifier, visibility: .all) { _ in Progress(totalUnitCount: 1) }
+        let waiting = Cancellation()
+        Task { try await Task.sleep(for: .milliseconds(100)); waiting.cancel() }
+        do { _ = try await BrowserDropURLs.load([stalled], cancellation: waiting); fatalError("stalled provider ignored cancellation") }
+        catch is CancellationError {} catch { fatalError("wrong stalled-provider error: \(error)") }
+        print("PASS native file providers: real outgoing NSURL roundtrip preserves Unicode, brackets and percent; empty, 101, text, network and malformed inputs rejected; cancellation respected")
         precondition(model.storeUsable)
         try await model.commitDurably {
             $0.projects.append(ProjectRecord(planned: "Saved idea", format: "Short", stage: "Idea"))
