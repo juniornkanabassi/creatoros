@@ -220,7 +220,6 @@ final class FitHeaderView: NSTableHeaderView {
             fitted.insert(column.identifier)
         }
     }
-    override func resetCursorRects() { super.resetCursorRects() }
     private func dividerColumn(at point: NSPoint) -> NSTableColumn? {
         guard let tableView else { return nil }
         for (index, column) in tableView.tableColumns.enumerated() where !column.isHidden {

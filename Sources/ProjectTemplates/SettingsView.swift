@@ -138,7 +138,7 @@ struct SettingsView: View {
     var aboutTab: some View {
         Form {
             Section("About") {
-                LabeledContent("Version", value: AppInfo.label)
+                LabeledContent("Version") { ReleaseVersionLabel(includeName: true) }
                 Text("Alpha writes stay inside its own data folder. The working Content Template installation has a separate library.").font(.caption).foregroundStyle(.secondary)
                 LabeledContent("Data") {
                     HStack { Text(m.store.root.path).lineLimit(2).truncationMode(.middle).textSelection(.enabled); Button("Show") { NSWorkspace.shared.open(m.store.root) } }

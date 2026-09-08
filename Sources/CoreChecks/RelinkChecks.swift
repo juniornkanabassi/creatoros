@@ -2,6 +2,16 @@ import Foundation
 import TemplateCore
 
 func relinkChecks(base: URL) throws {
+    try check(!Relinker.allowsRoot(path: "/Volumes/Archive/projects", hiddenLocations: ["volume:Archive"]), "hidden relink roots are rejected before filesystem access")
+    try check(!Relinker.allowsRoot(path: "/Volumes/Archive/projects", hiddenLocations: [], locationKey: "local"), "quiet relink rejects other drives before filesystem access")
+    try check(Relinker.allowsRoot(path: base.path, hiddenLocations: [], locationKey: "local"), "quiet relink allows its visible local drive")
+    try check(Relinker.allowsRoot(path: "/Volumes/Archive/projects", hiddenLocations: []), "full relink allows visible roots on other drives")
+    try check(!Relinker.allowsRoot(path: "", hiddenLocations: []), "empty relink roots are rejected")
+    try check(Relinker.canAutomaticallyRelink(candidateCount: 1, originalMounted: true, originalMissing: true, candidateAlreadyRegistered: false), "one unregistered match can relink a missing folder on a connected original drive")
+    try check(!Relinker.canAutomaticallyRelink(candidateCount: 1, originalMounted: false, originalMissing: true, candidateAlreadyRegistered: false), "an offline original requires a choice even with one candidate")
+    try check(!Relinker.canAutomaticallyRelink(candidateCount: 2, originalMounted: true, originalMissing: true, candidateAlreadyRegistered: false), "multiple candidates require a choice")
+    try check(!Relinker.canAutomaticallyRelink(candidateCount: 1, originalMounted: true, originalMissing: false, candidateAlreadyRegistered: false), "an existing original is never automatically relinked")
+    try check(!Relinker.canAutomaticallyRelink(candidateCount: 1, originalMounted: true, originalMissing: true, candidateAlreadyRegistered: true), "an already registered candidate requires a choice")
     let fm = FileManager.default
     let oldRoot = base.appendingPathComponent("Relink/Old drive/01 Video Project Archive/01 Recordings/01 Longs")
     let folder = oldRoot.appendingPathComponent("231 — Long — Moved project")

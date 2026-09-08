@@ -188,24 +188,6 @@ public enum Catalogue {
                 status: offline ? "Drive unavailable · \(record.volumeName ?? drive). Reconnect it to browse this project." : "Folder unavailable or access needs attention. Use Locate Folder. \(error.localizedDescription)", root: nil)
         }
     }
-    public static func inspect(_ record: ProjectRecord, cancellation: Cancellation = Cancellation()) -> ProjectInspection {
-        do {
-            try cancellation.check()
-            let url = try record.resolve()
-            let v = try url.resourceValues(forKeys: [.isDirectoryKey, .volumeUUIDStringKey])
-            guard v.isDirectory == true else { throw AppFailure("Stored location is no longer a folder.") }
-            if let expected = record.volumeID, let actual = v.volumeUUIDString, expected != actual {
-                return ProjectInspection(record: record, available: false, status: "A different drive is mounted here. Use Locate Folder.", root: nil)
-            }
-            let result = try indexExports(record, root: url.resolvingSymlinksInPath(), cancellation: cancellation)
-            return ProjectInspection(record: result, available: true, status: "Available · index refreshed", root: url)
-        } catch {
-            let drive = record.volumePath ?? ""
-            let offline = drive.hasPrefix("/Volumes/") && !FileManager.default.fileExists(atPath: drive)
-            return ProjectInspection(record: record, available: false,
-                status: offline ? "Drive unavailable · \(record.volumeName ?? drive). Reconnect it to play these exports." : "Folder unavailable or access needs attention. Use Locate Folder. \(error.localizedDescription)", root: nil)
-        }
-    }
     public static func merge(_ found: [ProjectRecord], into existing: [ProjectRecord]) -> [ProjectRecord] {
         var result = existing
         for new in found {

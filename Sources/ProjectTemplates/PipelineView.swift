@@ -37,14 +37,11 @@ struct StageChip: View {
 struct StageBadge: View {
     @EnvironmentObject var m: AppModel
     let stage: String
-    /// A chevron marks the badge as the control that changes the stage.
-    var interactive = false
     var body: some View {
         let colour = m.stageColour(stage)
         HStack(spacing: 5) {
             Circle().fill(colour).frame(width: 7, height: 7)
             Text(stage).lineLimit(1)
-            if interactive { Image(systemName: "chevron.up.chevron.down").font(.system(size: 8, weight: .semibold)) }
         }
         .font(.caption.weight(.medium)).padding(.horizontal, 7).padding(.vertical, 2)
         .background(colour.opacity(0.14), in: Capsule()).foregroundStyle(colour == .secondary ? Color.secondary : colour)

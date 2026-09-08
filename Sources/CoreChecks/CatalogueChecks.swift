@@ -48,12 +48,13 @@ func catalogueChecks(base: URL) throws {
     try record.relocate(to: moved)
     try check(record.id == id && record.previousPaths?.contains(where: { $0.hasSuffix(root.lastPathComponent) }) == true, "locating moved folder preserves identity and records old path")
     try check(record.finalExportPath == "Review Deliveries/custom.mov", "relative final reference survives relocation")
-    let inspected = Catalogue.inspect(record)
-    try check(inspected.available && inspected.record.exports?.count == 2, "relocated project resolves and refreshes exports")
+    let inspected = Catalogue.availability(record)
+    let refreshed = try Catalogue.indexExports(record, root: record.resolve())
+    try check(inspected.available && refreshed.exports?.count == 2, "relocated project resolves and refreshes exports")
     record.bookmark = nil; record.path = "/Volumes/ProjectTemplates-Unmounted-Fixture/project"
     record.volumePath = "/Volumes/ProjectTemplates-Unmounted-Fixture"
     record.volumeName = "Test offline drive"
-    let offline = Catalogue.inspect(record)
+    let offline = Catalogue.availability(record)
     try check(!offline.available && offline.status.contains("Drive unavailable"), "offline drive has an explicit reconnect state")
     try check(offline.record.exports == record.exports && offline.record.finalExportPath == record.finalExportPath, "offline inspection preserves cached exports and final")
     try check(offline.record.markedFinals == record.markedFinals, "offline inspection preserves multiple finals")

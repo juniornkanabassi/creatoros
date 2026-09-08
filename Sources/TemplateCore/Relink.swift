@@ -2,6 +2,16 @@ import Foundation
 
 /// Finds a moved project folder the way an editor relinks media: same name, likely places first, then a bounded search.
 public enum Relinker {
+    /// Check before resolving bookmarks or touching a root, including quiet searches scoped to one drive.
+    public static func allowsRoot(path: String, hiddenLocations: Set<String>, locationKey: String? = nil) -> Bool {
+        let key = ProjectLocation(path: path).key
+        return !path.isEmpty && !hiddenLocations.contains(key) && (locationKey == nil || key == locationKey)
+    }
+
+    public static func canAutomaticallyRelink(candidateCount: Int, originalMounted: Bool, originalMissing: Bool, candidateAlreadyRegistered: Bool) -> Bool {
+        candidateCount == 1 && originalMounted && originalMissing && !candidateAlreadyRegistered
+    }
+
     /// Folders that exist right now and carry the record's name. Never scans whole drives; depth and visits are capped.
     public static func candidates(for record: ProjectRecord, roots: [URL], cancellation: Cancellation = Cancellation()) -> [URL] {
         guard !record.isPlanned else { return [] }

@@ -168,7 +168,10 @@ struct MainView: View {
             .safeAreaInset(edge: .bottom) {
                 VStack(alignment: .leading, spacing: 3) {
                     Text(AppInfo.name).font(.caption.weight(.medium))
-                    Text("\(AppInfo.version) \(AppInfo.channel) · local and offline").font(.caption2).foregroundStyle(.secondary)
+                    HStack(spacing: 3) {
+                        ReleaseVersionLabel(size: 11)
+                        Text("· local and offline")
+                    }.font(.caption2).foregroundStyle(.secondary)
                 }.frame(maxWidth: .infinity, alignment: .leading).padding(14)
             }
         } content: {
