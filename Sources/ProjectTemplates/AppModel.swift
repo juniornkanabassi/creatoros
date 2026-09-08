@@ -313,8 +313,16 @@ enum BadgeColour: String, CaseIterable, Identifiable {
         guard storeUsable else { throw AppFailure("The library is unavailable. The existing records have been retained.") }
         var next = library
         try change(&next)
+        do { try runtime.requireWritable(store.file) }
+        catch { storeUsable = false; throw error }
         try runtime.validate(next)
-        try store.save(next)
+        do {
+            try runtime.requireWritable(store.file)
+            try store.save(next)
+        } catch {
+            storeUsable = false
+            throw error
+        }
         library = next
         if numberIsAutomatic && created == nil { number = suggestedNumber }
     }
@@ -578,7 +586,7 @@ enum BadgeColour: String, CaseIterable, Identifiable {
                 self.newProjectPresented = false
                 self.nextProject()
                 if record.ideaWorkspace != nil { self.workspaceCleanup = record }
-            } catch { self.error = "The project exists at \(url.path), but history could not be saved. Do not create it again. Use Add Existing Project to recover. \(error.localizedDescription)" }
+            } catch { self.error = "The project exists at \(url.path), but history could not be saved. Do not create it again. Resolve the storage issue, restart the app, then use Add Existing Project to recover. \(error.localizedDescription)" }
             }
         } failure: { message in
             if message.contains("changed") {

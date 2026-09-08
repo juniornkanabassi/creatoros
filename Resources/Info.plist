@@ -10,7 +10,7 @@
 <key>CFBundleShortVersionString</key><string>0.12.2</string>
 <key>CreatorOSChannel</key><string>α</string>
 <key>NSHumanReadableCopyright</key><string>© 2026 Junior Nkana Bassi. All rights reserved.</string>
-<key>CFBundleVersion</key><string>1</string>
+<key>CFBundleVersion</key><string>2</string>
 <key>LSMinimumSystemVersion</key><string>14.0</string>
 <key>NSHighResolutionCapable</key><true/>
 <key>NSPrincipalClass</key><string>NSApplication</string>
