@@ -40,7 +40,7 @@ public enum PreviewRenderer {
     static let placeholders = [ProjectFields.numberPlaceholder, ProjectFields.titlePlaceholder, ProjectFields.formatPlaceholder]
 
     /// Renders names in memory from a structural scan. Never reads the disk, never throws, never writes.
-    public static func render(structure: CopyPlan, fields: ProjectFields) -> PreviewRendering {
+    public static func render(structure: CopyPlan, fields: ProjectFields, renamingPaths: Set<String>? = nil) -> PreviewRendering {
         let named = fields.previewName()
         var entries: [PreviewEntry] = []; var issues = named.issues
         var outputs: [String: String] = [:]; var seen = Set<String>()
@@ -49,11 +49,12 @@ public enum PreviewRenderer {
             let parent = (entry.source as NSString).deletingLastPathComponent
             let parentOutput = parent.isEmpty ? "" : (outputs[parent] ?? parent)
             var renamed = name; var issue: String?
-            if !entry.metadata && !entry.opaque {
+            let substitutes = !entry.metadata && !entry.opaque && (renamingPaths?.contains(entry.source) ?? true)
+            if substitutes {
                 do { renamed = try Naming.substitute(name, tokens: named.tokens, final: named.name) }
                 catch { issue = error.localizedDescription }
             }
-            let placeholder = placeholders.contains { renamed.contains($0) }
+            let placeholder = substitutes && placeholders.contains { renamed.contains($0) }
             if issue == nil, renamed != name, !placeholder {
                 do { try Naming.validate(renamed) } catch { issue = error.localizedDescription }
             }

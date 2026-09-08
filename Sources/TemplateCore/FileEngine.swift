@@ -1,6 +1,7 @@
 import Foundation
 import AppKit
 import Darwin
+import CryptoKit
 
 public enum ImportMode: String, Codable, CaseIterable, Sendable {
     case full, structure
@@ -43,6 +44,13 @@ public struct CopyPlan: Sendable {
     public var visible: [Entry] { entries.filter { !$0.metadata } }
     /// The same plan without Finder icon support files, for destinations that cannot hold them.
     public var withoutIconFiles: CopyPlan { CopyPlan(root: root, entries: visible, excluded: excluded + entries.filter(\.metadata).map(\.output)) }
+    /// Compare a reviewed plan with a fresh scan before copying, including added or removed entries and renamed outputs.
+    public func sameInventory(as other: CopyPlan) -> Bool {
+        root == other.root && entries.count == other.entries.count && zip(entries, other.entries).allSatisfy {
+            $0.source == $1.source && $0.output == $1.output && $0.directory == $1.directory &&
+            $0.bytes == $1.bytes && $0.modified == $1.modified && $0.metadata == $1.metadata && $0.opaque == $1.opaque
+        }
+    }
 }
 
 public enum TemplateReader {
@@ -101,13 +109,14 @@ public enum TemplateReader {
 
     /// Derives the executable plan from a structural scan (fields nil) without touching the disk again.
     /// Produces exactly what scan(root, fields:) would, entry for entry, so a cached structure can be reused per keystroke.
-    public static func plan(from structure: CopyPlan, fields: ProjectFields) throws -> CopyPlan {
+    public static func plan(from structure: CopyPlan, fields: ProjectFields, renamingPaths: Set<String>? = nil) throws -> CopyPlan {
         var entries: [Entry] = []; var names = Set<String>(); var outputs: [String: String] = [:]
         for entry in structure.entries {
             let name = (entry.source as NSString).lastPathComponent
             let parent = (entry.source as NSString).deletingLastPathComponent
             let parentOutput = parent.isEmpty ? "" : (outputs[parent] ?? parent)
-            let renamed = try rename(name, metadata: entry.metadata, opaque: entry.opaque, fields: fields)
+            let renamed = try rename(name, metadata: entry.metadata, opaque: entry.opaque,
+                                     fields: renamingPaths.map { $0.contains(entry.source) } ?? true ? fields : nil)
             let out = parentOutput.isEmpty ? renamed : parentOutput + "/" + renamed
             guard names.insert(Naming.key(out)).inserted else { throw AppFailure("Case or Unicode name collision: \(out)") }
             if entry.directory { outputs[entry.source] = out }
@@ -269,11 +278,73 @@ public extension IconService {
 public enum CreationEngine {
     public typealias Progress = @Sendable (Double, String) -> Void
 
+    /// Both corrected copies and idea promotion verify staged bytes before their exclusive commit.
+    public static func verifyCopiedBytes(plan: CopyPlan, at stage: URL, cancellation: Cancellation = Cancellation(),
+                                         allowingExtraPaths: Set<String> = []) throws {
+        var expected: [String: Bool] = [:]
+        for entry in plan.entries {
+            guard expected.updateValue(entry.directory, forKey: entry.output) == nil else { throw AppFailure("Duplicate output in verification plan.") }
+        }
+        var seen = Set<String>(), enumerationError: Error?
+        func components(_ url: URL) -> [String] {
+            var path = url.standardizedFileURL.path
+            if path == "/var" || path.hasPrefix("/var/") || path == "/tmp" || path.hasPrefix("/tmp/") { path = "/private" + path }
+            return (path as NSString).pathComponents
+        }
+        let stageComponents = components(stage)
+        let keys: Set<URLResourceKey> = [.isDirectoryKey, .isRegularFileKey, .isSymbolicLinkKey]
+        let stageValues = try stage.resourceValues(forKeys: keys)
+        guard stageValues.isDirectory == true, stageValues.isSymbolicLink != true,
+              stageComponents == components(stage.resolvingSymlinksInPath()) else { throw AppFailure("The staging folder changed during verification.") }
+        guard let walker = FileManager.default.enumerator(at: stage, includingPropertiesForKeys: Array(keys), options: [], errorHandler: { _, error in
+            enumerationError = error; return false
+        }) else { throw AppFailure("Cannot enumerate the staged copy for verification.") }
+        for case let url as URL in walker {
+            try cancellation.check()
+            let pathComponents = components(url)
+            guard pathComponents.starts(with: stageComponents) else { throw AppFailure("A staged path escaped during verification.") }
+            let relative = pathComponents.dropFirst(stageComponents.count).joined(separator: "/")
+            let values = try url.resourceValues(forKeys: keys)
+            guard values.isSymbolicLink != true, values.isDirectory == true || values.isRegularFile == true else { throw AppFailure("Unsupported staged entry: \(relative)") }
+            if let directory = expected[relative] {
+                guard directory == (values.isDirectory == true) else { throw AppFailure("Staged entry type changed: \(relative)") }
+                seen.insert(relative)
+            } else {
+                guard allowingExtraPaths.contains(relative), values.isRegularFile == true else { throw AppFailure("Unexpected staged entry: \(relative)") }
+            }
+        }
+        if let enumerationError { throw enumerationError }
+        guard seen == Set(expected.keys) else { throw AppFailure("Files or empty folders are missing from the staged copy.") }
+        func digest(_ url: URL) throws -> SHA256.Digest {
+            try cancellation.check()
+            guard components(url) == components(url.resolvingSymlinksInPath()) else { throw AppFailure("A file path changed during copy verification.") }
+            let descriptor = Darwin.open(url.path, O_RDONLY | O_NOFOLLOW | O_NONBLOCK)
+            guard descriptor >= 0 else { throw AppFailure("Cannot verify \(url.lastPathComponent).") }
+            let handle = FileHandle(fileDescriptor: descriptor, closeOnDealloc: true)
+            defer { try? handle.close() }
+            var info = stat()
+            guard fstat(descriptor, &info) == 0, info.st_mode & S_IFMT == S_IFREG else { throw AppFailure("Expected an ordinary file during verification.") }
+            var hash = SHA256()
+            while true {
+                try cancellation.check()
+                guard let bytes = try handle.read(upToCount: 1_048_576), !bytes.isEmpty else { break }
+                hash.update(data: bytes)
+            }
+            return hash.finalize()
+        }
+        for entry in plan.entries where !entry.directory {
+            let source = plan.root.appendingPathComponent(entry.source), target = stage.appendingPathComponent(entry.output)
+            guard source.standardizedFileURL.path.hasPrefix(plan.root.path + "/"), target.standardizedFileURL.path.hasPrefix(stage.path + "/"),
+                  try digest(source) == digest(target) else { throw AppFailure("Copied bytes could not be verified: \(entry.source). Nothing was committed.") }
+        }
+    }
+
     /// Makes an independent, allowlisted-metadata copy into a new destination. Never merges.
     /// `finderMetadata: false` copies plain files and folders only: no FinderInfo, resource forks or preset icon,
     /// for filesystems such as LucidLink that reject the `Icon\r` support file. Default behaviour is unchanged.
     public static func create(plan: CopyPlan, destination: URL, name: String, icon: Data? = nil, finderMetadata: Bool = true,
-                              cancellation: Cancellation = Cancellation(), progress: Progress = { _, _ in }) throws -> URL {
+                              cancellation: Cancellation = Cancellation(), progress: Progress = { _, _ in },
+                              strictExclusiveCommit: Bool = false, prepareCommit: ((URL) throws -> Void)? = nil) throws -> URL {
         try Naming.validate(name)
         try cancellation.check()
         let fm = FileManager.default
@@ -346,11 +417,13 @@ public enum CreationEngine {
         }
         try cancellation.check()
         progress(1, "Finalising")
+        try prepareCommit?(stage)
+        try cancellation.check()
         // RENAME_EXCL prevents a late destination race from replacing another project's folder.
         if renamex_np(stage.path, final.path, UInt32(RENAME_EXCL)) != 0 {
             // SMB mounts such as LucidLink do not support the exclusive rename (ENOTSUP). Re-check the destination
             // and use a plain rename; the check-then-rename window is the best that filesystem allows.
-            guard errno == ENOTSUP, !fm.fileExists(atPath: final.path), rename(stage.path, final.path) == 0 else {
+            guard !strictExclusiveCommit, errno == ENOTSUP, !fm.fileExists(atPath: final.path), rename(stage.path, final.path) == 0 else {
                 throw AppFailure("Could not finalise without replacing an existing path: \(String(cString: strerror(errno))). Nothing was overwritten.")
             }
         }

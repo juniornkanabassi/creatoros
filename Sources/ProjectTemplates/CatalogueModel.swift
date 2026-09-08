@@ -65,6 +65,7 @@ extension AppModel {
     }
     func scanLocation(_ url: URL? = nil) {
         guard let url = url ?? folderPanel(title: "Choose a folder containing projects") else { return }
+        do { try runtime.requireWritable(url) } catch { self.error = error.localizedDescription; return }
         run("Looking for projects without moving files") { token, progress in
             try Catalogue.discover(root: url, cancellation: token, progress: progress)
         } completion: { result in
@@ -93,6 +94,7 @@ extension AppModel {
     }
     func addExisting() {
         guard let url = folderPanel(title: "Add an existing project") else { return }
+        do { try runtime.requireWritable(url) } catch { self.error = error.localizedDescription; return }
         run("Registering existing project") { token, _ in
             let record = try ProjectRecord(url: url, format: Catalogue.inferredFormat(url))
             return try Catalogue.indexExports(record, root: url.resolvingSymlinksInPath(), cancellation: token)
@@ -116,10 +118,6 @@ extension AppModel {
             guard FileManager.default.fileExists(atPath: url.path) else { throw AppFailure("Folder is unavailable. Its drive may be disconnected, access may be denied, or the folder may have moved. Use Locate Folder.") }
             if !NSWorkspace.shared.open(url) { throw AppFailure("Finder could not open this folder.") }
         }
-    }
-    func removeRecord(_ record: ProjectRecord) {
-        attempt { try mutate { $0.projects.removeAll { $0.id == record.id } } }
-        if selectedProject == record.id { selectedProject = nil }
     }
     func removeLocation(_ location: CatalogueLocation) {
         attempt { try mutate { $0.locations = ($0.locations ?? []).filter { $0.id != location.id } } }

@@ -82,7 +82,7 @@ func boardChecks(base: URL) throws {
     let store = LibraryStore(root: base.appendingPathComponent("Board library"))
     try store.save(library)
     let back = try store.load()
-    try check(back.liveStageList == ["Booked", "Streamed", "Clipped"] && back.colour(of: "Published") == .red && back.finderTags == false && back.schema == 5, "live stages, colours and the Finder switch persist in schema 5")
+    try check(back.liveStageList == ["Booked", "Streamed", "Clipped"] && back.colour(of: "Published") == .red && back.finderTags == false && back.schema == Library.currentSchema, "live stages, colours and the Finder switch persist in the current schema")
     for colour in StageColour.allCases { try check(StageColour(finderIndex: colour.finderIndex) == colour, "Finder colour index round-trips for \(colour.rawValue)") }
 
     let folder = base.appendingPathComponent("Board/231 — Livestream — Lille vs PSG")

@@ -1,6 +1,8 @@
-# Content Template
+# CreatorOS
 
-Native SwiftUI/AppKit Mac app that creates correctly named, correctly iconed project folders from reusable templates and tracks them through the content pipeline. Installed and current source: 0.11.0 build 1, the code tagged `v0.11.0`; git is the authority on the version. Current archive: `../Outputs/Content Template 0.11.0.zip`. The bundle identifier `local.projecttemplates.mac`, executable name and data folder `~/Library/Application Support/Project Templates/` never change so saved data is not stranded.
+Native SwiftUI/AppKit Mac app that creates correctly named project folders from reusable content templates and tracks them through the content pipeline. Current source targets **CreatorOS 0.12.0 α**, under validation, not an installed or final release. The usable baseline remains **Content Template 0.11.0**, tagged `v0.11.0`, installed separately at `/Applications/Content Template.app`.
+
+Alpha uses `local.creatoros.alpha`, `CreatorOS Alpha.app` and `~/Library/Application Support/CreatorOS Alpha/`. Stable retains `local.projecttemplates.mac` and `~/Library/Application Support/Project Templates/`. Both keep the internal executable name `ProjectTemplates`; that is not a user-facing product name. Alpha must never upgrade or write the stable library. See the cumulative acceptance checklist before installation.
 
 Read `../00 Project State/ARCHITECTURE-ESSENTIALS.md` before changing code. The full design is `../00 Project State/ARCHITECTURE.md` and the product statement is `../00 Project State/PRD.md`.
 
@@ -17,15 +19,18 @@ zsh build.sh
 
 `CoreChecks` prints `RESULT n checks passed` and keeps its disposable fixtures under the temporary directory it prints. The optional `--master` argument runs a read-only import and creation against a real template and verifies every byte and every folder icon afterwards.
 
-`build.sh` builds release, assembles `Content Template.app` in a fresh temporary folder, strips FinderInfo the file provider may have attached, signs ad hoc, verifies strictly and writes `../Outputs/Content Template <version>.zip` with `ditto`. It refuses to overwrite an existing archive; set `CONTENT_TEMPLATE_OUTPUT_ROOT` for a separate iteration. Install a verified archive with `zsh install.sh` or `zsh install.sh "/path/to/Content Template 0.11.0.zip"`. The installer refuses to replace a running app, checks the bundle identifier, version and signature, and restores the previous app if final verification fails. Set `CONTENT_TEMPLATE_INSTALL_ROOT=/tmp/test-Applications` for a disposable dry run. It never touches the library.
+`build.sh` builds release, assembles `CreatorOS Alpha.app` in a fresh temporary folder, strips bundle-root FinderInfo, signs ad hoc, verifies strictly and writes `../Outputs/CreatorOS Alpha 0.12.0 α.zip`. It refuses archive overwrite; set `CONTENT_TEMPLATE_OUTPUT_ROOT` for a separate iteration. After the acceptance gate passes, `zsh install.sh` installs only the expected alpha identifier/version, refuses a running target and restores the prior alpha if final verification fails. Set `CONTENT_TEMPLATE_INSTALL_ROOT=/tmp/test-Applications` for a disposable dry run. Stable app and library are not installation targets.
 
-For interface testing launch with `--data-directory <disposable folder>`; copy the real `library.json` and `Templates/` there first if a realistic library is wanted. Never point a test at a production destination or at the original templates.
+For interface testing launch with `--data-directory <dedicated disposable temporary folder>`. Alpha rejects production references and starts empty; create synthetic fixtures inside its isolated root. Do not copy the real library: its destinations and bookmarks still reference production data. The optional test-only `--display-name 'Prompter XL'` positions the test window when a disposable data directory is supplied.
 
 ## Source layout
 
 ```
 Sources/TemplateCore/     engine, no UI
-  Library.swift           JSON store, schema 5, upgrade backups
+  Library.swift           JSON store, schema 6, upgrade backups
+  AppRuntime.swift        alpha writable-root and stored-reference isolation
+  Compatibility.swift     shared audit, explicit corrected-copy proposal and manifest
+  IdeaWorkspace.swift     owned workspaces, verified promotion and recoverable Trash
   Pipelines.swift         Recordings and Live boards, stage colours, Finder tags
   TemplateSets.swift      content template sets and per-format variants
   Naming.swift            fields, tokens, the shared substitution rule, validation
@@ -47,7 +52,7 @@ Sources/ProjectTemplates/ the app
   SettingsView.swift      Settings window
   ProjectTemplatesApp.swift scene, menus, main split view, import sheet
 Sources/CoreChecks/       assertion suite
-Scripts/render-icon.swift original app icon drawing; build-icon.sh regenerates the ICNS
+Scripts/render-icon.swift historical app icon drawing; build-icon.sh converts Resources/AppIcon.png to ICNS
 Scripts/configure-library.swift one-time personal setup (Notion stages and default destinations), run with the app closed
 Scripts/notion-backup.py  offline Notion export backup utility with its tests; not part of the app
 Resources/                Info.plist, AppIcon
@@ -77,7 +82,7 @@ Resources/                Info.plist, AppIcon
 
 ## Data
 
-`library.json` schema 5. Loads schema 1 to 5, refuses newer. The first save over an older file keeps `library-before-schema-5.json` next to it. Retained export records stay unused; see `../00 Project State/Deferred features.md`. Interface state lives in `UserDefaults`; a `--data-directory` run uses its own defaults suite.
+Alpha `library.json` uses schema 6 with optional owned idea workspace references. It loads schemas 1–6 and refuses newer; upgrades retain a backup. Stable 0.11.0 understands only up to schema 5, so alpha and stable storage must stay separate. Retained export records stay unused; see `../00 Project State/Deferred features.md`. Interface state lives in isolated `UserDefaults`; a `--data-directory` run uses its own defaults suite.
 
 ## Personal setup and Notion backup utilities
 

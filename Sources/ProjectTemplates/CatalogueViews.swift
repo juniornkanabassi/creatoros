@@ -120,8 +120,10 @@ struct ProjectActions: View {
         Button("Locate Folder…") { m.locate(record) }.help("Point the record at the folder yourself")
         Button("Remove Folder Icons") { m.removeFolderIcons(record) }.help("Take the folder icons off so the project can be copied to LucidLink; Restore Folder Icons puts them back")
         Button("Restore Folder Icons") { m.restoreIcons(record) }.help("Put the content template's folder icons back after the project lived on a drive that cannot hold them")
+        Button("Check LucidLink Compatibility…") { m.checkCompatibility(record) }.disabled(m.busy)
+        if record.ideaWorkspace != nil { Button("Review Old Idea Workspace…") { m.workspaceCleanup = record } }
         Divider()
-        Button("Remove from List", role: .destructive) { m.removeRecord(record) }
+        Button("Remove from List", role: .destructive) { m.removeProject(record.id) }
     }
 }
 
@@ -295,7 +297,7 @@ struct DuplicatesSheet: View {
                                     }
                                     Spacer()
                                     Button("Show") { m.selectedProject = record.id; m.page = .projects; m.selectProject(); m.duplicatesPresented = false }.controlSize(.small)
-                                    Button("Remove from List") { m.removeRecord(record) }.controlSize(.small).help("Forget this copy. Its folder stays where it is.")
+                                    Button("Remove from List") { m.removeProject(record.id) }.controlSize(.small).help("Forget this copy. Its folder stays where it is.")
                                 }.padding(.vertical, 2)
                             }
                         }

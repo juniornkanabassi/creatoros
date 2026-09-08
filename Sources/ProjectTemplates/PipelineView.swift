@@ -231,7 +231,7 @@ struct PipelineSidebar: View {
                                 FlowLayout(spacing: 6) {
                                     if let number = record.number { Text(number).font(.caption.monospacedDigit()).foregroundStyle(.secondary) }
                                     Text(m.label(for: record.format)).font(.caption).foregroundStyle(.secondary)
-                                    if record.isPlanned { StageChip(stage: "Idea only, no folder yet") } else { LocationBadge(location: record.location) }
+                                    if record.isPlanned { StageChip(stage: record.ideaWorkspace == nil ? "Idea only, no folder yet" : "Idea workspace") } else { LocationBadge(location: record.location) }
                                     StageMenu(record: record)
                                 }
                             }
@@ -242,13 +242,15 @@ struct PipelineSidebar: View {
                         HStack {
                             if record.isPlanned {
                                 Button("Start Project…") { m.startPlanned(record) }.buttonStyle(.borderedProminent).help("Fill in New Project with this idea")
+                                if record.ideaWorkspace == nil { Button("Create Workspace…") { m.workspacePrompt = record } }
+                                else { Button("Browse Workspace…") { m.workspaceToBrowse = record } }
                             } else {
                                 Button("Show in Projects") { m.selectedProject = record.id; m.page = .projects; m.selectProject() }.help("Open this project's files and details in Projects")
                                 Button("Open in Finder") { m.open(record) }.help("Open the project folder in Finder")
                             }
                             Spacer()
-                            Button(record.isPlanned ? "Delete Idea" : "Remove from List", role: .destructive) { m.removeProject(record.id) }
-                                .help(record.isPlanned ? "Delete this idea. Nothing on disk is affected." : "Forget this project. Its folder is not touched.")
+                            Button(record.isPlanned ? "Bin Idea…" : "Remove from List", role: .destructive) { if record.isPlanned { m.requestBinIdea(record) } else { m.removeProject(record.id) } }
+                                .help(record.isPlanned ? "Review this idea and its owned workspace before putting it in the Bin." : "Forget this project. Its folder is not touched.")
                         }
                     } footer: {
                         Text(record.isPlanned ? "Starting fills in New Project with this idea. The idea becomes the project once its folder is created." : "Removing only forgets the record. The folder is not touched.")
@@ -367,10 +369,14 @@ struct ProjectCard: View {
         .help(record.isPlanned ? "Double-click to start this idea as a project" : "Double-click to open in Projects")
         .contextMenu {
             Menu("Move to") { ForEach(m.moveTargets(for: record), id: \.self) { stage in Button(stage) { m.setStage(stage, for: record.id) }.disabled(stage == m.effectiveStage(record)) } }
-            if record.isPlanned { Button("Start Project…") { m.startPlanned(record) } }
+            if record.isPlanned {
+                Button("Start Project…") { m.startPlanned(record) }
+                if record.ideaWorkspace == nil { Button("Create Workspace…") { m.workspacePrompt = record } }
+                else { Button("Browse Workspace…") { m.workspaceToBrowse = record } }
+            }
             else { Button("Show in Projects") { m.selectedProject = record.id; m.page = .projects; m.selectProject() }; Button("Open in Finder") { m.open(record) } }
             Divider()
-            Button(record.isPlanned ? "Delete Idea" : "Remove from List", role: .destructive) { m.removeProject(record.id) }
+            Button(record.isPlanned ? "Bin Idea…" : "Remove from List", role: .destructive) { if record.isPlanned { m.requestBinIdea(record) } else { m.removeProject(record.id) } }
         }
         .accessibilityElement(children: .combine)
         .accessibilityLabel("\(record.name), \(record.stage ?? "")")

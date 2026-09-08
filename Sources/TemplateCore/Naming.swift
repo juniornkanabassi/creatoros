@@ -77,19 +77,36 @@ public struct ProjectFields: Sendable {
 }
 
 public enum Naming {
-    public static func validate(_ name: String) throws {
-        let forbidden = CharacterSet(charactersIn: "<>:\"/\\|?*").union(.controlCharacters)
-        guard !name.isEmpty, name != ".", name != "..", name.rangeOfCharacter(from: forbidden) == nil else {
-            throw AppFailure("Invalid name ‘\(name)’. Remove path separators, control characters or <>:\"/\\|?*.")
-        }
-        guard !name.hasSuffix(" "), !name.hasSuffix("."), name.utf8.count <= 255 else {
-            throw AppFailure("Invalid name ‘\(name)’. Remove trailing dots/spaces or shorten it to 255 UTF-8 bytes.")
-        }
+    private static let forbidden = CharacterSet(charactersIn: "<>:\"/\\|?*").union(.controlCharacters)
+    private static let reserved = Set(["CON", "PRN", "AUX", "NUL", "CONIN$", "CONOUT$"] +
+        (1...9).flatMap { ["COM\($0)", "LPT\($0)"] } + ["COM¹", "COM²", "COM³", "LPT¹", "LPT²", "LPT³"])
+    private static func reservedName(_ name: String) -> Bool {
         let stem = name.split(separator: ".", omittingEmptySubsequences: false)[0]
             .trimmingCharacters(in: .whitespaces).uppercased()
-        let reserved = ["CON", "PRN", "AUX", "NUL", "CONIN$", "CONOUT$"] +
-            (1...9).flatMap { ["COM\($0)", "LPT\($0)"] } + ["COM¹", "COM²", "COM³", "LPT¹", "LPT²", "LPT³"]
-        guard !reserved.contains(stem) else { throw AppFailure("‘\(name)’ is a reserved Windows device name. Choose another name.") }
+        return reserved.contains(stem)
+    }
+    /// One component validator for generated names and audits of existing names. Unicode punctuation is valid.
+    public static func problems(_ name: String) -> [String] {
+        var issues: [String] = []
+        if name.isEmpty || name == "." || name == ".." { issues.append("empty or relative path component") }
+        if name.rangeOfCharacter(from: forbidden) != nil { issues.append("path separator, control character or Windows-invalid <>:\"/\\|?*") }
+        if name.hasSuffix(" ") || name.hasSuffix(".") { issues.append("trailing space or dot") }
+        if name.utf8.count > 255 { issues.append("longer than 255 UTF-8 bytes") }
+        if !name.isEmpty && reservedName(name) { issues.append("reserved Windows device name") }
+        return issues
+    }
+    public static func validate(_ name: String) throws {
+        let issues = problems(name)
+        guard issues.isEmpty else { throw AppFailure("Invalid name ‘\(name)’: \(issues.joined(separator: "; ")).") }
+    }
+    public static func corrected(_ name: String) -> String {
+        var clean = String(name.unicodeScalars.map { forbidden.contains($0) ? "-" : Character($0) })
+        while clean.hasSuffix(" ") || clean.hasSuffix(".") { clean.removeLast() }
+        if clean.isEmpty { clean = "_" }
+        if reservedName(clean) { clean = "_" + clean }
+        while clean.utf8.count > 255 { clean.removeLast() }
+        while clean.hasSuffix(" ") || clean.hasSuffix(".") { clean.removeLast() }
+        return clean.isEmpty ? "_" : clean
     }
 
     public static func key(_ path: String) -> String {

@@ -1,4 +1,6 @@
 // ContentTool: the app's own engine from the command line, for controlled tests and audits.
+// This CreatorOS Alpha build only writes inside its alpha data root (or a disposable --library root).
+// Production operations remain with the preserved stable Content Template build.
 //
 //   ContentTool audit <folder>
 //       Windows-compatibility audit of every name under the folder. Nothing is changed.
@@ -17,62 +19,33 @@ import AppKit
 import TemplateCore
 import Darwin
 
-struct Finding: Codable { let path: String; let problem: String; let corrected: String? }
+/// Legacy --fix-names is deliberately confined to the project just created by this process.
+/// Existing projects use corrected-copy, which retains the original and writes a rename manifest.
+func fixGeneratedCopy(_ created: URL) throws -> [CompatibilityFinding] {
+    let audit = try Compatibility.scan(created)
+    guard audit.isComplete, audit.collisions.isEmpty else { throw AppFailure("Generated copy needs manual attention: incomplete audit or corrected-name collision.") }
+    var changed: [CompatibilityFinding] = []
+    for finding in audit.findings.sorted(by: { $0.path.components(separatedBy: "/").count > $1.path.components(separatedBy: "/").count }) {
+        guard let corrected = finding.corrected else { throw AppFailure("Package-internal correction is unsupported.") }
+        let parts = finding.path.components(separatedBy: "/")
+        guard parts.first == created.lastPathComponent, parts.count > 1 else { throw AppFailure("Unexpected generated root correction.") }
+        let source = parts.dropFirst().reduce(created) { $0.appendingPathComponent($1) }
+        let target = source.deletingLastPathComponent().appendingPathComponent(corrected)
+        // Exclusive rename refuses a late collision even on a case-sensitive volume.
+        guard renamex_np(source.path, target.path, UInt32(RENAME_EXCL)) == 0 else { throw AppFailure("Cannot safely correct \(finding.path): \(errnoText())") }
+        changed.append(finding)
+    }
+    return changed
+}
 
-enum Audit {
-    static let invalid = CharacterSet(charactersIn: "\\/:*?\"<>|")
-    static let reserved = Set(["CON", "PRN", "AUX", "NUL", "CONIN$", "CONOUT$"] + (1...9).flatMap { ["COM\($0)", "LPT\($0)"] })
-    static let windowsLimit = 260
-    /// Problems with one component. Icon\r files are reported separately as expected icon support files.
-    static func problems(_ name: String) -> [String] {
-        if name == "Icon\r" { return [] }
-        var out: [String] = []
-        if name.hasSuffix(" ") { out.append("trailing space") }
-        if name.hasSuffix(".") { out.append("trailing period") }
-        if let r = name.rangeOfCharacter(from: invalid) { out.append("Windows-invalid character \(name[r])") }
-        if name.rangeOfCharacter(from: .controlCharacters) != nil { out.append("control character") }
-        let stem = name.split(separator: ".", omittingEmptySubsequences: false)[0].trimmingCharacters(in: .whitespaces).uppercased()
-        if reserved.contains(stem) { out.append("reserved Windows name \(stem)") }
-        if name.utf8.count > 255 { out.append("longer than 255 bytes") }
-        return out
-    }
-    static func corrected(_ name: String) -> String {
-        var clean = String(name.unicodeScalars.map { invalid.contains($0) || CharacterSet.controlCharacters.contains($0) ? "-" : Character($0) })
-        while clean.hasSuffix(" ") || clean.hasSuffix(".") { clean.removeLast() }
-        let stem = clean.split(separator: ".", omittingEmptySubsequences: false)[0].trimmingCharacters(in: .whitespaces).uppercased()
-        if reserved.contains(stem) { clean = "_" + clean }
-        return clean.isEmpty ? "_" : clean
-    }
-    /// Walks everything, hidden files included. Returns findings, icon files, long paths and the count of entries.
-    static func run(_ root: URL, base: String = "C:\\Projects\\") -> (findings: [Finding], iconFiles: [String], longPaths: [String], entries: Int) {
-        var findings: [Finding] = [], icons: [String] = [], long: [String] = [], count = 0
-        let root = root.resolvingSymlinksInPath()
-        let enumerator = FileManager.default.enumerator(at: root, includingPropertiesForKeys: [.isDirectoryKey], options: [])!
-        for case let url as URL in enumerator {
-            count += 1
-            let relative = String(url.resolvingSymlinksInPath().path.dropFirst(root.deletingLastPathComponent().path.count + 1))
-            let name = url.lastPathComponent
-            if name == "Icon\r" { icons.append(relative.replacingOccurrences(of: "\r", with: "\\r")); continue }
-            for problem in problems(name) { findings.append(Finding(path: relative, problem: problem, corrected: nil)) }
-            if (base + relative.replacingOccurrences(of: "/", with: "\\")).utf16.count > windowsLimit { long.append(relative) }
-        }
-        return (findings, icons, long, count)
-    }
-    /// Renames offending ordinary entries in place, deepest first, never an Icon\r file. Returns what changed.
-    static func fix(_ root: URL) throws -> [Finding] {
-        var urls: [URL] = []
-        for case let url as URL in FileManager.default.enumerator(at: root, includingPropertiesForKeys: nil, options: [])! { urls.append(url) }
-        var changed: [Finding] = []
-        for url in urls.sorted(by: { $0.pathComponents.count > $1.pathComponents.count }) {
-            let name = url.lastPathComponent
-            guard name != "Icon\r", !problems(name).isEmpty else { continue }
-            let target = url.deletingLastPathComponent().appendingPathComponent(corrected(name))
-            guard !FileManager.default.fileExists(atPath: target.path) else { changed.append(Finding(path: url.path, problem: problems(name).joined(separator: ", "), corrected: "not renamed: \(target.lastPathComponent) already exists")); continue }
-            try FileManager.default.moveItem(at: url, to: target)
-            changed.append(Finding(path: String(url.path.dropFirst(root.deletingLastPathComponent().path.count + 1)), problem: problems(name).joined(separator: ", "), corrected: target.lastPathComponent))
-        }
-        return changed
-    }
+func reportAudit(_ result: CompatibilityReport) {
+    report("Name problems", result.findings.map { "\($0.path): \($0.problem)" })
+    report("Finder icon support (omitted by corrected-copy)", result.iconFiles)
+    report(result.pathLengthAssumption, result.longPaths)
+    report("Document packages", result.packages)
+    report("Collisions after correction", result.collisions)
+    report("Skipped entries — audit incomplete", result.skipped)
+    report("Read errors or unsafe content", result.errors)
 }
 
 func errnoText() -> String { "errno \(errno) (\(String(cString: strerror(errno))))" }
@@ -89,7 +62,8 @@ func fsType(_ url: URL) -> String {
     return "\(type) from \(from)"
 }
 
-func probe(_ folder: URL) {
+func probe(_ folder: URL, runtime: AppRuntime) throws {
+    try runtime.requireWritable(folder)
     let temp = folder.appendingPathComponent(".content-template-probe-" + UUID().uuidString)
     var lines: [String] = []
     guard (try? FileManager.default.createDirectory(at: temp, withIntermediateDirectories: false)) != nil else { report("Probe", ["cannot create a temporary folder: \(errnoText())"]); return }
@@ -112,31 +86,56 @@ func probe(_ folder: URL) {
 
 let args = CommandLine.arguments.dropFirst()
 func option(_ name: String) -> String? { guard let i = args.firstIndex(of: name), args.indices.contains(i + 1) else { return nil }; return args[i + 1] }
-guard let command = args.first else { print("usage: ContentTool audit|create|probe|restore-icons|strip-icons|register-location …"); exit(2) }
+func alphaRuntime() throws -> AppRuntime {
+    if let library = option("--library"), let data = option("--data-directory"), library != data {
+        throw AppFailure("Use one alpha data root; --library and --data-directory disagree.")
+    }
+    return try AppRuntime(root: (option("--library") ?? option("--data-directory")).map { URL(fileURLWithPath: $0) } ?? AppRuntime.alphaRoot)
+}
+guard let command = args.first else { print("usage: ContentTool audit|corrected-copy|create|probe|restore-icons|strip-icons|register-location …"); exit(2) }
 
+do {
 switch command {
 case "audit":
     guard let path = args.dropFirst().first else { print("audit needs a folder"); exit(2) }
-    let result = Audit.run(URL(fileURLWithPath: path))
+    let result = try Compatibility.scan(URL(fileURLWithPath: path))
     print("# Audit of \(path)\n\(result.entries) entries checked.\n")
-    report("Name problems", result.findings.map { "\($0.path): \($0.problem)" })
-    report("Expected icon support files (Icon\\r, kept)", result.iconFiles)
-    report("Paths over \(Audit.windowsLimit) characters under C:\\Projects\\", result.longPaths)
+    reportAudit(result)
+    if !result.isComplete || !result.collisions.isEmpty { exit(1) }
+case "corrected-copy":
+    guard let path = args.dropFirst().first, let destination = option("--destination") else {
+        print("corrected-copy <source> --destination <existing parent folder> [--name <new folder>] [--confirm]"); exit(2)
+    }
+    let audit = try Compatibility.scan(URL(fileURLWithPath: path))
+    reportAudit(audit)
+    let proposal = try Compatibility.proposal(audit)
+    report("Repair preview", proposal.renames.map { "\($0.from) → \($0.to)" })
+    print("Original preserved; Finder icons omitted. Renamed media may require manual relinking in Premiere, OBS or Watchtower.")
+    guard args.contains("--confirm") else { print("Preview only. Repeat with --confirm to create this corrected copy."); exit(0) }
+    let runtime = try alphaRuntime()
+    let destinationURL = URL(fileURLWithPath: destination)
+    try runtime.requireWritable(destinationURL)
+    let output = try Compatibility.copy(proposal, destination: destinationURL, name: option("--name"))
+    print("Created \(output.path); rename manifest saved inside.")
 case "probe":
     guard let path = args.dropFirst().first else { print("probe needs a folder"); exit(2) }
-    probe(URL(fileURLWithPath: path))
+    try probe(URL(fileURLWithPath: path), runtime: alphaRuntime())
 case "create":
     guard let setName = option("--set"), let format = option("--format"), let number = option("--number"), let title = option("--title"), let destinationPath = option("--destination") else {
         print("create needs --set --format --number --title --destination"); exit(2)
     }
-    let store = LibraryStore(root: option("--library").map { URL(fileURLWithPath: $0) })
+    let runtime = try alphaRuntime()
+    let store = LibraryStore(root: runtime.root)
     let library = try store.load()
+    try runtime.validate(library)
     guard let set = library.sets.first(where: { $0.name == setName }) else { print("No set called \(setName). Sets: \(library.sets.map(\.name))"); exit(1) }
     guard let record = library.resolve(setID: set.id, format: format) else { print("\(format) is not set up in \(setName)."); exit(1) }
     let payload = store.payload(record)
     let fields = ProjectFields(number: number, format: format, title: title)
     let name = try fields.finalName()
     let destination = URL(fileURLWithPath: destinationPath)
+    try runtime.requireWritable(destination)
+    try runtime.requireWritable(payload)
     let final = destination.appendingPathComponent(name)
     print("# Create \(name)\n")
     var pre: [String] = []
@@ -147,7 +146,7 @@ case "create":
     pre.append("template payload: \(record.name) (\(record.mode.title)) at \(payload.path)")
     report("Preflight", pre)
     guard isDir, mounted(destination), !FileManager.default.fileExists(atPath: final.path) else { print("Stopped before creating anything."); exit(1) }
-    let before = Audit.run(payload)
+    let before = try Compatibility.scan(payload)
     report("Template audit before (\(before.entries) entries, not modified)", before.findings.map { "\($0.path): \($0.problem)" } + before.longPaths.map { "long path: " + $0 })
     print("Template icon support files: \(before.iconFiles.count)\n")
     let noIcons = args.contains("--no-icons")
@@ -159,23 +158,24 @@ case "create":
     do {
         created = try CreationEngine.create(plan: plan, destination: destination, name: name, icon: noIcons ? nil : icon, finderMetadata: !noIcons, progress: { fraction, item in
             if fraction >= 1 { print("  \(item)") }
-        })
+        }, strictExclusiveCommit: true)
     } catch {
         print("## Creation failed\n- \(error.localizedDescription)\n- \(errnoText())")
         let stages = (try? FileManager.default.contentsOfDirectory(atPath: destination.path))?.filter { $0.hasPrefix(".project-templates-") } ?? []
         print("- partial folder left behind: \(FileManager.default.fileExists(atPath: final.path) ? "yes, \(final.path)" : stages.isEmpty ? "no" : "staging remains: \(stages)")\n")
-        probe(destination)
+        try probe(destination, runtime: runtime)
         exit(1)
     }
     print("## Created\n- \(created.path)\n")
-    let after = Audit.run(created)
-    var corrections: [Finding] = []
-    if args.contains("--fix-names"), !after.findings.isEmpty { corrections = try Audit.fix(created) }
-    let final2 = Audit.run(created)
+    let after = try Compatibility.scan(created)
+    var corrections: [CompatibilityFinding] = []
+    if args.contains("--fix-names"), !after.findings.isEmpty { corrections = try fixGeneratedCopy(created) }
+    let final2 = try Compatibility.scan(created)
     report("Generated project audit (\(final2.entries) entries)", final2.findings.map { "\($0.path): \($0.problem)" })
     report("Names corrected in the generated project only", corrections.map { "\($0.path) → \($0.corrected ?? "")  (\($0.problem))" })
     report("Expected icon support files (kept)", final2.iconFiles)
-    report("Paths over \(Audit.windowsLimit) characters under C:\\Projects\\", final2.longPaths)
+    report(final2.pathLengthAssumption, final2.longPaths)
+    report("Incomplete audit", final2.errors + final2.skipped + final2.collisions)
     // Icon verification: every folder that had a custom icon in the template must have one now, plus the outer folder.
     var iconLines: [String] = []
     for entry in plan.entries where entry.directory && !noIcons {
@@ -192,7 +192,10 @@ case "create":
     let outerFork = ((try? IconService.attribute("com.apple.ResourceFork", at: created.appendingPathComponent("Icon\r"))) ?? nil)?.count ?? 0
     if noIcons {
         var leftovers: [String] = []
-        for case let url as URL in FileManager.default.enumerator(at: created, includingPropertiesForKeys: nil, options: [])! {
+        guard let iconWalker = FileManager.default.enumerator(at: created, includingPropertiesForKeys: nil, options: [], errorHandler: { url, error in
+            leftovers.append("Cannot inspect \(url.path): \(error.localizedDescription)"); return false
+        }) else { throw AppFailure("Cannot verify the generated copy's metadata.") }
+        for case let url as URL in iconWalker {
             if url.lastPathComponent == "Icon\r" { leftovers.append("Icon file at \(url.deletingLastPathComponent().lastPathComponent)") }
             if let info = (try? IconService.attribute("com.apple.FinderInfo", at: url)) ?? nil, info.count >= 10, info[8] & 0x04 != 0 { leftovers.append("custom-icon flag on \(url.lastPathComponent)") }
         }
@@ -208,7 +211,7 @@ case "create":
         if Int64(size) != entry.bytes { sizeProblems.append("\(entry.output): \(size) bytes, expected \(entry.bytes)") }
     }
     report("Files whose size differs from the template", sizeProblems)
-    print(sizeProblems.isEmpty && final2.findings.isEmpty ? "Test project generated completely." : "Test project generated with the notes above.")
+    print(sizeProblems.isEmpty && final2.findings.isEmpty && final2.isComplete && final2.collisions.isEmpty ? "Test project generated completely." : "Test project generated with the notes above.")
 case "register-location":
     // register-location <root> --library <data directory>: discover the projects under root and add them to the library,
     // recording the root as a saved location. Run only while the app is closed; it never moves or renames anything.
@@ -216,15 +219,19 @@ case "register-location":
     guard let rootPath = rest.first, !rootPath.hasPrefix("--") else { print("usage: ContentTool register-location <root> --library <data directory>"); exit(2) }
     let root = URL(fileURLWithPath: rootPath)
     guard let libraryIndex = args.firstIndex(of: "--library"), args.indices.contains(libraryIndex + 1) else { print("--library <data directory> is required"); exit(2) }
-    let store = LibraryStore(root: URL(fileURLWithPath: args[libraryIndex + 1]))
+    let runtime = try alphaRuntime()
+    try runtime.requireWritable(root)
+    let store = LibraryStore(root: runtime.root)
     do {
         var library = try store.load()
+        try runtime.validate(library)
         let result = try Catalogue.discover(root: root)
         let before = library.projects.count
         library.projects = Catalogue.merge(result.projects, into: library.projects)
         var locations = library.locations ?? []
         if let index = locations.firstIndex(where: { $0.path == result.location.path }) { locations[index] = result.location } else { locations.append(result.location) }
         library.locations = locations
+        try runtime.validate(library)
         try store.save(library)
         print("Found \(result.projects.count) projects under \(root.path); library went from \(before) to \(library.projects.count) records.")
         for record in result.projects { print("  \(record.format)  \(record.name)") }
@@ -233,8 +240,12 @@ case "register-location":
 case "restore-icons":
     guard let projectPath = option("--project"), let setName = option("--set") else { print("restore-icons needs --project and --set"); exit(2) }
     let project = URL(fileURLWithPath: projectPath)
-    let store = LibraryStore(root: option("--library").map { URL(fileURLWithPath: $0) })
+    let runtime = try alphaRuntime()
+    try runtime.requireWritable(project)
+    _ = try TemplateReader.scan(project) // Refuse linked descendants before restoring metadata.
+    let store = LibraryStore(root: runtime.root)
     let library = try store.load()
+    try runtime.validate(library)
     guard let set = library.sets.first(where: { $0.name == setName }) else { print("No set called \(setName)."); exit(1) }
     let name = project.lastPathComponent
     let parts = name.components(separatedBy: " — ")
@@ -253,7 +264,10 @@ case "restore-icons":
     print(result.summary)
 case "strip-icons":
     guard let projectPath = option("--project") else { print("strip-icons needs --project"); exit(2) }
-    let result = try IconService.strip(project: URL(fileURLWithPath: projectPath))
+    let runtime = try alphaRuntime()
+    let project = URL(fileURLWithPath: projectPath)
+    try runtime.requireWritable(project)
+    let result = try IconService.strip(project: project)
     print("# Strip icons from \(URL(fileURLWithPath: projectPath).lastPathComponent)\n")
     report("Icon files removed", result.iconFilesRemoved)
     report("Folders cleared of icon metadata", result.foldersCleared)
@@ -261,4 +275,8 @@ case "strip-icons":
     print(result.summary)
 default:
     print("unknown command \(command)"); exit(2)
+}
+} catch {
+    fputs("ContentTool: \(error.localizedDescription)\n", stderr)
+    exit(1)
 }

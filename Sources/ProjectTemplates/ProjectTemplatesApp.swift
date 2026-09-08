@@ -4,6 +4,7 @@ import TemplateCore
 
 @main struct ContentTemplateApp: App {
     @StateObject private var model = AppModel()
+    @NSApplicationDelegateAdaptor(CreatorOSDelegate.self) private var delegate
     init() {
         // A second launch should activate the running app, not open a second
         // writer over the same library. Test bundles use a separate identifier.
@@ -15,9 +16,10 @@ import TemplateCore
         }
     }
     var body: some Scene {
-        WindowGroup("Content Template") {
+        WindowGroup(AppInfo.label) {
             MainView().environmentObject(model).frame(minWidth: 1000, minHeight: 680)
                 .onAppear {
+                    delegate.model = model
                     NSApp.setActivationPolicy(.regular); NSApp.activate(ignoringOtherApps: true); model.refresh()
                     WindowSetup.apply(zoom: { model.zoom($0) }, reset: { model.zoomLevel = 0 })
                 }
@@ -30,6 +32,7 @@ import TemplateCore
                 Button("Refresh Project") { model.refreshProject() }.keyboardShortcut("r").disabled(model.selectedProject == nil && model.pipelineSelection == nil)
                 Button("Find Missing Projects") { model.relinkAll() }.keyboardShortcut("r", modifiers: [.command, .shift]).disabled(model.relinkBatchRunning)
                 Button("Duplicates…") { model.duplicatesPresented = true }.disabled(model.duplicateGroups.isEmpty)
+                Button("Check LucidLink Compatibility…") { model.checkCompatibility() }.disabled(model.busy)
             }
             CommandGroup(after: .textEditing) {
                 Button("Find") { AppModel.focusSearchField() }.keyboardShortcut("f")
@@ -61,6 +64,27 @@ import TemplateCore
     }
 }
 
+@MainActor final class CreatorOSDelegate: NSObject, NSApplicationDelegate {
+    weak var model: AppModel?
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        guard let model else { return .terminateNow }
+        guard !model.busy else { model.error = "Wait for the current operation to finish or cancel it before quitting."; return .terminateCancel }
+        Task {
+            // Let the existing writer finish all queued snapshots; never race it with a second synchronous writer.
+            await model.saveTaskForWorkspace()
+            if model.storeUsable { sender.reply(toApplicationShouldTerminate: true) }
+            else {
+                let alert = NSAlert()
+                alert.messageText = "The latest library changes could not be saved."
+                alert.informativeText = "Quitting may discard unsaved changes. Your existing library remains on disk."
+                alert.addButton(withTitle: "Keep Open"); alert.addButton(withTitle: "Quit Anyway")
+                sender.reply(toApplicationShouldTerminate: alert.runModal() == .alertSecondButtonReturn)
+            }
+        }
+        return .terminateLater
+    }
+}
+
 /// macOS does not scale this interface's semantic fonts with Dynamic Type.
 /// Scale layout and hit targets together, with horizontal scrolling at narrow
 /// widths rather than clipping controls or shrinking the text back down.
@@ -85,7 +109,16 @@ struct ZoomedInterface<Content: View>: View {
 /// so the View menu item is given back its Control-Command-F equivalent here.
 enum WindowSetup {
     private static var keyMonitor: Any?
+    private static var positionedTestWindow = false
     static func apply(zoom: @escaping (Int) -> Void, reset: @escaping () -> Void) {
+        let args = ProcessInfo.processInfo.arguments
+        if !positionedTestWindow, args.contains("--data-directory"), let index = args.firstIndex(of: "--display-name"), args.indices.contains(index + 1),
+           let screen = NSScreen.screens.first(where: { $0.localizedName == args[index + 1] }),
+           let window = NSApp.windows.first(where: { $0.styleMask.contains(.titled) }) {
+            let frame = screen.visibleFrame
+            window.setFrameOrigin(NSPoint(x: frame.midX - window.frame.width / 2, y: frame.midY - window.frame.height / 2))
+            positionedTestWindow = true
+        }
         for window in NSApp.windows where window.styleMask.contains(.titled) {
             window.collectionBehavior.insert(.fullScreenPrimary)
         }
@@ -134,8 +167,8 @@ struct MainView: View {
             .navigationSplitViewColumnWidth(min: 190 * m.uiScale, ideal: 215 * m.uiScale, max: 280 * m.uiScale)
             .safeAreaInset(edge: .bottom) {
                 VStack(alignment: .leading, spacing: 3) {
-                    Text("Content Template").font(.caption.weight(.medium))
-                    Text("\(AppInfo.version) · local and offline").font(.caption2).foregroundStyle(.secondary)
+                    Text(AppInfo.name).font(.caption.weight(.medium))
+                    Text("\(AppInfo.version) \(AppInfo.channel) · local and offline").font(.caption2).foregroundStyle(.secondary)
                 }.frame(maxWidth: .infinity, alignment: .leading).padding(14)
             }
         } content: {
@@ -174,11 +207,35 @@ struct MainView: View {
         }
         .navigationTitle(m.page.rawValue)
         .disabled(!m.storeUsable)
-        .alert("Content Template", isPresented: Binding(get: { m.error != nil }, set: { if !$0 { m.error = nil } })) {
+        .alert(AppInfo.name, isPresented: Binding(get: { m.error != nil }, set: { if !$0 { m.error = nil } })) {
             Button("OK") { m.error = nil }
         } message: { Text(m.error ?? "") }
         .sheet(isPresented: $m.newProjectPresented) { NewProjectSheet() }
         .sheet(isPresented: $m.importPresented) { ImportSheet() }
+        .sheet(isPresented: Binding(get: { m.compatibilityPresented && !m.newProjectPresented }, set: { m.compatibilityPresented = $0 })) { CompatibilitySheet() }
+        .sheet(item: $m.workspacePrompt) { WorkspaceSheet(record: $0) }
+        .sheet(item: $m.workspaceToBrowse) { record in
+            VStack(alignment: .leading, spacing: 12) {
+                HStack { Text(record.name).font(.title2); Spacer(); Button("Done") { m.workspaceToBrowse = nil } }
+                Text("Add attachments by opening this owned workspace in Finder. Start Project will copy this folder without merging another template.").font(.caption)
+                Button("Open Workspace in Finder") { m.attempt { let root = try IdeaWorkspaceEngine.resolve(for: record); try m.runtime.requireWritable(root); NSWorkspace.shared.open(root) } }
+                FolderBrowserHost(title: record.name, resolveRoot: { [runtime = m.runtime] in let url = try IdeaWorkspaceEngine.resolve(for: record); try runtime.requireWritable(url); return url })
+            }.padding(20).frame(width: 820, height: 640)
+        }
+        .sheet(item: $m.workspaceCleanup) { record in
+            VStack(alignment: .leading, spacing: 16) {
+                Text("Keep the old idea workspace?").font(.title2)
+                Text("The project has been saved. Its original workspace remains at \(record.ideaWorkspace?.path ?? "").").textSelection(.enabled)
+                Text("Keep Folder and Detach leaves both folders intact and removes the old workspace link from this project. You can then remove the project from the list independently.").font(.caption)
+                HStack { Button("Decide Later") { m.workspaceCleanup = nil }; Button("Keep Folder and Detach") { m.keepAndDetachWorkspace(record) }; Spacer(); Button("Review Bin Action…") { m.requestWorkspaceCleanup(record) } }.disabled(m.busy)
+            }.padding(24).frame(width: 620)
+        }
+        .confirmationDialog(m.binIdea?.isPlanned == false ? "Put the old workspace in the Bin?" : "Bin this idea?", isPresented: Binding(get: { m.binIdea != nil }, set: { if !$0 { m.binIdea = nil } }), titleVisibility: .visible) {
+            Button(m.confirmedWorkspaceURL == nil ? "Remove Idea" : "Move Owned Workspace to Bin", role: .destructive) { m.confirmBinIdea() }
+            Button("Cancel", role: .cancel) { m.binIdea = nil }
+        } message: {
+            Text(m.confirmedWorkspaceURL.map { "Only this owned workspace will be moved to Finder's recoverable Bin: \($0.path)" } ?? "This idea has no workspace. Only its library record will be removed.")
+        }
         .sheet(item: $m.newSetPrompt) { _ in NewSetSheet() }
         .sheet(item: $m.templateToBrowse) { record in
             VStack(alignment: .leading, spacing: 12) {

@@ -3,21 +3,26 @@ set -euo pipefail
 SOURCE_ROOT="${0:A:h}"
 OUTPUT_ROOT="${CONTENT_TEMPLATE_OUTPUT_ROOT:-$SOURCE_ROOT/../Outputs}"
 INSTALL_ROOT="${CONTENT_TEMPLATE_INSTALL_ROOT:-/Applications}"
-DEST="$INSTALL_ROOT/Content Template.app"
+APP_NAME=$(/usr/libexec/PlistBuddy -c 'Print CFBundleDisplayName' "$SOURCE_ROOT/Resources/Info.plist")
+APP_CHANNEL=$(/usr/libexec/PlistBuddy -c 'Print CreatorOSChannel' "$SOURCE_ROOT/Resources/Info.plist")
+DEST="$INSTALL_ROOT/$APP_NAME.app"
 ARCHIVE="${1:-}"
 EXPECTED_VERSION=$(/usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' "$SOURCE_ROOT/Resources/Info.plist")
 EXPECTED_ID=$(/usr/libexec/PlistBuddy -c 'Print CFBundleIdentifier' "$SOURCE_ROOT/Resources/Info.plist")
-if (( $# > 1 )); then print -u2 "Usage: zsh install.sh [Content Template <version>.zip]"; exit 2; fi
-if [[ -z "$ARCHIVE" ]]; then ARCHIVE="$OUTPUT_ROOT/Content Template $EXPECTED_VERSION.zip"; fi
-[[ -n "$ARCHIVE" && -f "$ARCHIVE" ]] || { print -u2 "No Content Template archive found. Pass a ZIP path or run build.sh first."; exit 1; }
-if pgrep -x ProjectTemplates >/dev/null 2>&1; then print -u2 "ProjectTemplates is running. Quit it before installing; this installer will not kill it."; exit 1; fi
+[[ "$EXPECTED_ID" == "local.creatoros.alpha" && "$APP_NAME" == "CreatorOS Alpha" ]] || { print -u2 "This installer only installs CreatorOS Alpha; the stable app is protected."; exit 1; }
+if (( $# > 1 )); then print -u2 "Usage: zsh install.sh [CreatorOS Alpha <version> α.zip]"; exit 2; fi
+if [[ -z "$ARCHIVE" ]]; then ARCHIVE="$OUTPUT_ROOT/$APP_NAME $EXPECTED_VERSION $APP_CHANNEL.zip"; fi
+[[ -n "$ARCHIVE" && -f "$ARCHIVE" ]] || { print -u2 "No CreatorOS Alpha archive found. Pass a ZIP path or run build.sh first."; exit 1; }
+for APP_PID in ${(f)$(pgrep -x ProjectTemplates || true)}; do
+  if [[ "$(ps -p "$APP_PID" -o comm=)" == "$DEST/Contents/MacOS/ProjectTemplates" ]]; then print -u2 "CreatorOS Alpha is running. Quit it before installing; this installer will not kill it."; exit 1; fi
+done
 mkdir -p "$INSTALL_ROOT"
 [[ ! -L "$DEST" ]] || { print -u2 "Refusing to replace symlink $DEST."; exit 1; }
 WORK=$(mktemp -d "$INSTALL_ROOT/.content-template-install.XXXXXX")
-STAGE="$WORK/Content Template.app"; BACKUP="$INSTALL_ROOT/.Content Template.app.previous.$RANDOM"
+STAGE="$WORK/$APP_NAME.app"; BACKUP="$INSTALL_ROOT/.$APP_NAME.app.previous.$RANDOM"
 cleanup() { rm -rf "$WORK"; }; trap cleanup EXIT
 /usr/bin/ditto -x -k --sequesterRsrc "$ARCHIVE" "$WORK"
-[[ -d "$STAGE" ]] || { print -u2 "Archive does not contain Content Template.app at its root."; exit 1; }
+[[ -d "$STAGE" ]] || { print -u2 "Archive does not contain $APP_NAME.app at its root."; exit 1; }
 ACTUAL_ID=$(/usr/libexec/PlistBuddy -c 'Print CFBundleIdentifier' "$STAGE/Contents/Info.plist")
 ACTUAL_VERSION=$(/usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' "$STAGE/Contents/Info.plist")
 [[ "$ACTUAL_ID" == "$EXPECTED_ID" ]] || { print -u2 "Bundle identifier mismatch: $ACTUAL_ID"; exit 1; }
@@ -34,4 +39,4 @@ if ! /usr/bin/codesign --verify --strict "$DEST"; then
   exit 1
 fi
 if [[ -e "$BACKUP" ]]; then /bin/rm -rf "$BACKUP"; fi
-print "Installed Content Template $ACTUAL_VERSION at $DEST"
+print "Installed $APP_NAME $ACTUAL_VERSION $APP_CHANNEL at $DEST"

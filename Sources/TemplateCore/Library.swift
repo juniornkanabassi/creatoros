@@ -39,6 +39,8 @@ public struct ProjectRecord: Codable, Identifiable, Sendable {
     public var notionURL: String?
     /// True for an idea that has no folder yet. `path` is empty and `resolve()` fails until it is started.
     public var planned: Bool?
+    /// Owned idea files remain separate from the numbered production location, including after promotion until cleanup.
+    public var ideaWorkspace: IdeaWorkspace?
     public var publishedDate: Date?
     public var pinned: Bool?
     /// The folder's own creation date on disk, captured when registered or relinked. `created` is the registration date.
@@ -59,12 +61,14 @@ public struct ProjectRecord: Codable, Identifiable, Sendable {
     public var isPlanned: Bool { planned == true || path.isEmpty }
     /// Leading digits of the folder name, for example "168" in "168 — Short — Title".
     public var number: String? {
+        guard !isPlanned else { return nil }
         guard let match = name.range(of: #"^\d+"#, options: .regularExpression) else { return nil }
         return String(name[match])
     }
     public var numberValue: Int? { number.flatMap(Int.init) }
     /// The title after the number, format and optional campaign segments.
     public var title: String {
+        if isPlanned { return name }
         let parts = name.components(separatedBy: " — ")
         if parts.count >= 3 { return parts.dropFirst(2).joined(separator: " — ") }
         if parts.count == 2 { return parts[1] }
@@ -81,6 +85,18 @@ public struct ProjectRecord: Codable, Identifiable, Sendable {
         path = replacement.path; bookmark = replacement.bookmark; name = replacement.name
         volumeName = replacement.volumeName; volumeID = replacement.volumeID; volumePath = replacement.volumePath
         if folderCreated == nil { folderCreated = replacement.folderCreated }
+    }
+    /// Preserve the entire idea record, including metadata introduced by future schemas.
+    public func promoted(to url: URL) throws -> ProjectRecord {
+        guard isPlanned else { throw AppFailure("Only a planned idea can be started.") }
+        var result = self
+        result.path = url.path
+        result.bookmark = try url.bookmarkData(options: .minimalBookmark, includingResourceValuesForKeys: nil, relativeTo: nil)
+        result.name = url.lastPathComponent
+        result.captureVolume(url)
+        result.folderCreated = try url.resourceValues(forKeys: [.creationDateKey]).creationDate
+        result.planned = false
+        return result
     }
     public var searchableText: String {
         ([name, format, path, volumeName ?? "", stage ?? "", campaign ?? "", editor ?? "", notes ?? ""] + (series ?? []) + (previousPaths ?? [])).joined(separator: " ")
@@ -114,7 +130,7 @@ public struct CustomField: Codable, Identifiable, Sendable, Hashable {
     public init(name: String, includeInName: Bool = true) { id = UUID(); self.name = name; self.includeInName = includeInName }
 }
 public struct Library: Codable, Sendable {
-    public static let currentSchema = 5
+    public static let currentSchema = 6
     public static let formats = ["Long", "Short", "Podcast", "Livestream"]
     public static let defaultStages = ["Idea", "Writing", "Filming", "Editing", "Published", "Abandoned"]
     public static let defaultLiveStages = ["Scheduled", "Streamed", "Abandoned"]

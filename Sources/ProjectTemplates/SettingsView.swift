@@ -20,7 +20,7 @@ struct SettingsView: View {
     var formatTab: some View {
         Form {
             Section {
-                Picker("Content Format", selection: $m.format) { ForEach(m.library.presets) { Text($0.label).tag($0.format) } }.onChange(of: m.format) { m.changeFormat() }
+                Picker("Content Format", selection: $m.format) { ForEach(m.library.presets) { Text($0.label).tag($0.format) } }.onChange(of: m.format) { m.changeFormat() }.disabled(m.startingFrom != nil)
                 LabeledContent("Folder icon") {
                     HStack(spacing: 12) {
                         if let data = m.preset.icon, let image = NSImage(data: data) { Image(nsImage: image).resizable().scaledToFit().frame(width: 56, height: 56) }
@@ -138,7 +138,8 @@ struct SettingsView: View {
     var aboutTab: some View {
         Form {
             Section("About") {
-                LabeledContent("Version", value: "Content Template \(AppInfo.version), development build")
+                LabeledContent("Version", value: AppInfo.label)
+                Text("Alpha writes stay inside its own data folder. The working Content Template installation has a separate library.").font(.caption).foregroundStyle(.secondary)
                 LabeledContent("Data") {
                     HStack { Text(m.store.root.path).lineLimit(2).truncationMode(.middle).textSelection(.enabled); Button("Show") { NSWorkspace.shared.open(m.store.root) } }
                 }

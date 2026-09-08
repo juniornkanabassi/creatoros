@@ -46,7 +46,7 @@ enum BrowserSurface: String, CaseIterable { case projectFiles, managedTemplate, 
 
 struct PendingAssignment: Equatable { let setID: UUID; let format: String }
 struct NewSetPrompt: Identifiable { let id = UUID(); let mappingTemplateID: UUID?; var name: String }
-struct CachedStructure { let plan: CopyPlan; let rootModified: Date? }
+struct CachedStructure { let plan: CopyPlan; let rootModified: Date?; let renamingPaths: Set<String>? }
 
 /// What Find Moved Folders concluded about one project whose folder was missing.
 struct RelinkOutcome: Identifiable {
@@ -69,7 +69,10 @@ struct RelinkReport: Identifiable {
 }
 
 enum AppInfo {
+    static var name: String { Bundle.main.object(forInfoDictionaryKey: "CFBundleDisplayName") as? String ?? "CreatorOS Alpha" }
     static var version: String { Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "development" }
+    static var channel: String { Bundle.main.object(forInfoDictionaryKey: "CreatorOSChannel") as? String ?? "α" }
+    static var label: String { "\(name) \(version) \(channel)" }
 }
 
 /// Named colours the user can pick for a location badge.
@@ -142,6 +145,14 @@ enum BadgeColour: String, CaseIterable, Identifiable {
     /// New Project: copy without folder icons, for a destination such as LucidLink that cannot hold them.
     @Published var plainFolders = false
     @Published var newIdeaPresented = false
+    @Published var compatibilityReport: CompatibilityReport?
+    @Published var compatibilityPresented = false
+    @Published var compatibilityOutput: URL?
+    @Published var workspacePrompt: ProjectRecord?
+    @Published var workspaceToBrowse: ProjectRecord?
+    @Published var workspaceCleanup: ProjectRecord?
+    @Published var binIdea: ProjectRecord?
+    @Published var confirmedWorkspaceURL: URL?
     @Published var groupByDate: Bool { didSet { defaults.set(groupByDate, forKey: "groupByDate") } }
     @Published var relinkCandidates: [UUID: [URL]] = [:]
     @Published var relinking: Set<UUID> = []
@@ -155,6 +166,7 @@ enum BadgeColour: String, CaseIterable, Identifiable {
     private var checkingMounts = false
     private var attemptedDates = Set<UUID>()
     let store: LibraryStore
+    let runtime: AppRuntime
     let defaults: UserDefaults
     var cancellation = Cancellation()
     var scanCancellation = Cancellation()
@@ -165,10 +177,16 @@ enum BadgeColour: String, CaseIterable, Identifiable {
 
     init() {
         let arguments = ProcessInfo.processInfo.arguments
-        if let i = arguments.firstIndex(of: "--data-directory"), arguments.indices.contains(i + 1) {
-            store = LibraryStore(root: URL(fileURLWithPath: arguments[i + 1]))
-            defaults = UserDefaults(suiteName: "local.projecttemplates.test." + Data(arguments[i + 1].utf8).base64EncodedString())!
-        } else { store = LibraryStore(); defaults = .standard }
+        var startupError: String?
+        var chosenRoot = AppRuntime.alphaRoot
+        if let i = arguments.firstIndex(of: "--data-directory") {
+            if arguments.indices.contains(i + 1), !arguments[i + 1].hasPrefix("--") { chosenRoot = URL(fileURLWithPath: arguments[i + 1]) }
+            else { startupError = "--data-directory requires a separate disposable folder." }
+        }
+        do { runtime = try AppRuntime(root: chosenRoot) }
+        catch { startupError = error.localizedDescription; runtime = try! AppRuntime() }
+        store = LibraryStore(root: runtime.root)
+        defaults = UserDefaults(suiteName: runtime.defaultsSuite)!
         page = Page(rawValue: defaults.string(forKey: "page") ?? "") ?? .projects
         format = defaults.string(forKey: "format") ?? "Short"
         selection = defaults.string(forKey: "selection").flatMap(TemplateSelection.init(stored:))
@@ -180,15 +198,27 @@ enum BadgeColour: String, CaseIterable, Identifiable {
         for surface in BrowserSurface.allCases {
             viewModes[surface] = BrowserViewMode(rawValue: defaults.string(forKey: "viewMode." + surface.rawValue) ?? "") ?? .list
         }
-        do { library = try store.load() }
+        do {
+            if let startupError { throw AppFailure(startupError) }
+            try runtime.requireWritable(store.file)
+            let loaded = try store.load()
+            try runtime.validate(loaded)
+            library = loaded
+            if !FileManager.default.fileExists(atPath: store.file.path) {
+                for index in library.presets.indices { library.presets[index].destination = runtime.projects.appendingPathComponent(library.presets[index].format).path }
+            }
+            try FileManager.default.createDirectory(at: runtime.ideas, withIntermediateDirectories: true)
+            for preset in library.presets where !preset.destination.isEmpty { try FileManager.default.createDirectory(atPath: preset.destination, withIntermediateDirectories: true) }
+        }
         catch { storeUsable = false; self.error = "Library could not be read. It has not been changed. \(error.localizedDescription)" }
         if !Library.formats.contains(format) { format = "Short" }
         if !selectionIsValid { selection = defaultSelection }
         destination = preset.destination
         number = suggestedNumber
-        refreshMounts()
-        mountTimer = Timer.scheduledTimer(withTimeInterval: 20, repeats: true) { [weak self] _ in Task { @MainActor in self?.refreshMounts() } }
-        NotificationCenter.default.addObserver(self, selector: #selector(flushPendingSave), name: NSApplication.willTerminateNotification, object: nil)
+        if storeUsable {
+            refreshMounts()
+            mountTimer = Timer.scheduledTimer(withTimeInterval: 20, repeats: true) { [weak self] _ in Task { @MainActor in self?.refreshMounts() } }
+        }
     }
 
     // MARK: Selection and resolution
@@ -247,18 +277,30 @@ enum BadgeColour: String, CaseIterable, Identifiable {
 
     // MARK: Persistence
 
-    func save() throws { guard storeUsable else { throw AppFailure("Library is read-only after a load error.") }; try store.save(library) }
     /// Applies a change at once and writes the library shortly after, off the main thread, so a click never waits for the disk.
     /// Changes made while a write is in flight are coalesced into the next write; a failed write stops further changes.
     func mutate(_ change: (inout Library) throws -> Void) throws {
         guard storeUsable else { throw AppFailure("Library is read-only after a load error.") }
         var next = library; try change(&next)
+        try runtime.validate(next)
         library = next
         if numberIsAutomatic && created == nil { number = suggestedNumber }
         scheduleSave()
     }
     private var pendingSave: Library?
     private var saveTask: Task<Void, Never>?
+    func saveTaskForWorkspace() async { await saveTask?.value }
+    /// Transactional operations wait for older snapshots, then save before publishing or offering cleanup.
+    func commitDurably(_ change: (inout Library) throws -> Void) async throws {
+        await saveTask?.value
+        guard storeUsable else { throw AppFailure("The library is unavailable. The existing records have been retained.") }
+        var next = library
+        try change(&next)
+        try runtime.validate(next)
+        try store.save(next)
+        library = next
+        if numberIsAutomatic && created == nil { number = suggestedNumber }
+    }
     private func scheduleSave() {
         pendingSave = library
         guard saveTask == nil else { return }
@@ -268,17 +310,12 @@ enum BadgeColour: String, CaseIterable, Identifiable {
             while let snapshot = self.pendingSave, self.storeUsable {
                 self.pendingSave = nil
                 let store = self.store
-                do { try await Task.detached(priority: .userInitiated) { try store.save(snapshot) }.value }
+                let runtime = self.runtime
+                do { try await Task.detached(priority: .userInitiated) { try runtime.requireWritable(store.file); try store.save(snapshot) }.value }
                 catch { self.storeUsable = false; self.error = "The library could not be saved, so further changes are stopped. \(error.localizedDescription)" }
             }
             self.saveTask = nil
         }
-    }
-    /// The last write happens before quitting even if the debounce has not fired.
-    @objc private func flushPendingSave() {
-        guard let snapshot = pendingSave, storeUsable else { return }
-        pendingSave = nil
-        try? store.save(snapshot)
     }
     func attempt(_ work: () throws -> Void) { do { try work() } catch { self.error = error.localizedDescription } }
 
@@ -287,11 +324,13 @@ enum BadgeColour: String, CaseIterable, Identifiable {
     func folderPanel(title: String) -> URL? {
         let panel = NSOpenPanel(); panel.title = title; panel.canChooseFiles = false
         panel.canChooseDirectories = true; panel.canCreateDirectories = true
+        panel.directoryURL = runtime.root
         return panel.runModal() == .OK ? panel.url : nil
     }
     func chooseDestination() {
         guard let url = folderPanel(title: "Choose where \(formatLabel) projects go") else { return }
         attempt {
+            try runtime.requireWritable(url)
             let bookmark = try url.bookmarkData(options: .minimalBookmark, includingResourceValuesForKeys: nil, relativeTo: nil)
             try mutate { lib in
                 if let index = lib.presets.firstIndex(where: { $0.format == format }) {
@@ -330,7 +369,8 @@ enum BadgeColour: String, CaseIterable, Identifiable {
     func refresh() {
         revision += 1; let version = revision
         refreshTask?.cancel(); scanCancellation.cancel()
-        guard let payload else {
+        let workspaceRecord = startingFrom.flatMap { id in library.projects.first { $0.id == id && $0.ideaWorkspace != nil } }
+        guard payload != nil || workspaceRecord != nil else {
             preview = nil; plan = nil
             switch variantState {
             case .missing(let setName): validation = "\(formatLabel) is not set up in \(setName) yet. Import a payload or reuse another format's payload to see the preview."
@@ -338,25 +378,37 @@ enum BadgeColour: String, CaseIterable, Identifiable {
             }
             return
         }
-        let root = store.payload(payload)
-        if let cached = structureCache[payload.id], cached.rootModified == rootModified(root) { render(cached.plan); return }
+        let sourceID = workspaceRecord?.id ?? payload!.id
+        if workspaceRecord != nil, let cached = structureCache[sourceID] {
+            render(cached.plan, renamingPaths: cached.renamingPaths); return
+        }
+        let root: URL
+        do { root = try workspaceRecord.map { try IdeaWorkspaceEngine.resolve(for: $0) } ?? store.payload(payload!) ; try runtime.requireWritable(root) }
+        catch { preview = nil; plan = nil; validation = error.localizedDescription; return }
+        if let cached = structureCache[sourceID], cached.rootModified == rootModified(root) { render(cached.plan, renamingPaths: cached.renamingPaths); return }
         preview = nil; plan = nil; validation = "Reading template…"
-        scanCancellation = Cancellation(); let token = scanCancellation; let id = payload.id
+        scanCancellation = Cancellation(); let token = scanCancellation; let id = sourceID
         refreshTask = Task {
             do {
-                let result = try await Task.detached(priority: .userInitiated) { try TemplateReader.scan(root, cancellation: token) }.value
+                let result = try await Task.detached(priority: .userInitiated) { () throws -> (structure: CopyPlan, renamingPaths: Set<String>?) in
+                    if let workspaceRecord {
+                        let scanned = try IdeaWorkspaceEngine.scan(for: workspaceRecord, cancellation: token)
+                        return (scanned.structure, scanned.renamingPaths)
+                    }
+                    return (try TemplateReader.scan(root, cancellation: token), nil)
+                }.value
                 guard revision == version else { return }
-                structureCache[id] = CachedStructure(plan: result, rootModified: rootModified(root))
-                render(result)
+                structureCache[id] = CachedStructure(plan: result.structure, rootModified: rootModified(root), renamingPaths: result.renamingPaths)
+                render(result.structure, renamingPaths: result.renamingPaths)
             } catch is CancellationError {
             } catch { if revision == version { validation = error.localizedDescription } }
         }
     }
-    private func render(_ structure: CopyPlan) {
-        let rendering = PreviewRenderer.render(structure: structure, fields: fields)
+    private func render(_ structure: CopyPlan, renamingPaths: Set<String>? = nil) {
+        let rendering = PreviewRenderer.render(structure: structure, fields: fields, renamingPaths: renamingPaths)
         preview = rendering; validation = ""
         guard rendering.isExecutable else { plan = nil; return }
-        do { plan = try TemplateReader.plan(from: structure, fields: fields) }
+        do { plan = try TemplateReader.plan(from: structure, fields: fields, renamingPaths: renamingPaths) }
         catch { plan = nil; validation = error.localizedDescription }
     }
 
@@ -381,8 +433,10 @@ enum BadgeColour: String, CaseIterable, Identifiable {
     func commitImport() {
         guard let importPlan else { return }
         let name = importName; let mode = importMode; let store = store; let pending = pendingAssignment
+        let runtime = runtime
         run("Importing independent template") { token, progress in
-            try store.importTemplate(plan: importPlan, name: name, mode: mode, cancellation: token, progress: progress)
+            try runtime.requireWritable(store.templates)
+            return try store.importTemplate(plan: importPlan, name: name, mode: mode, cancellation: token, progress: progress)
         } completion: { record in
             do {
                 try self.mutate { lib in
@@ -432,6 +486,7 @@ enum BadgeColour: String, CaseIterable, Identifiable {
     func removeTemplate(_ record: TemplateRecord) {
         attempt {
             let payload = store.payload(record)
+            try runtime.requireWritable(payload)
             if FileManager.default.fileExists(atPath: payload.path) { try FileManager.default.trashItem(at: payload, resultingItemURL: nil) }
             try mutate { lib in
                 lib.templates.removeAll { $0.id == record.id }
@@ -458,31 +513,45 @@ enum BadgeColour: String, CaseIterable, Identifiable {
         let icon = preset.icon; let format = format; let payloadID = payload?.id
         let campaignAtCreation = campaign
         let origin = startingFrom.flatMap { id in library.projects.first { $0.id == id } }
+        let fields = fields; let runtime = runtime
         let plain = plainFolders
         created = nil
         run(plain ? "Creating project with plain folders" : "Creating project") { token, progress in
-            try CreationEngine.create(plan: plain ? plan.withoutIconFiles : plan, destination: destination, name: name, icon: plain ? nil : icon,
+            try runtime.requireWritable(destination)
+            if let origin, origin.ideaWorkspace != nil {
+                try runtime.requireWritable(IdeaWorkspaceEngine.resolve(for: origin))
+                return try IdeaWorkspaceEngine.promote(for: origin, fields: fields, destination: destination, expectedPlan: plan, icon: plain ? nil : icon,
+                                                       finderMetadata: !plain, cancellation: token, progress: progress)
+            }
+            let fresh = try TemplateReader.scan(plan.root, fields: fields, cancellation: token)
+            guard plan.sameInventory(as: fresh) else {
+                throw AppFailure("The template changed since its preview. Review the refreshed preview before creating the project.")
+            }
+            return try CreationEngine.create(plan: plain ? plan.withoutIconFiles : plan, destination: destination, name: name, icon: plain ? nil : icon,
                                       finderMetadata: !plain, cancellation: token, progress: progress)
         } completion: { url in
             self.created = url
+            self.busy = true
+            Task {
+            defer { self.busy = false }
             do {
-                var record = try ProjectRecord(url: url, format: format)
+                var savedID: UUID?
+                try await self.commitDurably { lib in
+                let currentOrigin = origin.flatMap { previous in lib.projects.first { $0.id == previous.id } }
+                if origin != nil && currentOrigin == nil { throw AppFailure("The original idea is no longer in the library.") }
+                var record = try currentOrigin?.promoted(to: url) ?? ProjectRecord(url: url, format: format)
                 // A recording starts in its second stage because the first holds ideas; a live stream starts as Scheduled.
                 let kind = PipelineKind.of(format: format)
-                let stages = self.library.stages(for: kind)
+                let stages = lib.stages(for: kind)
                 let starting = kind == .live ? stages.first : (stages.count > 1 ? stages[1] : stages.first)
-                if let origin {
-                    record.stage = origin.stage == stages.first && kind == .recordings ? (starting ?? origin.stage) : origin.stage
-                    record.campaign = origin.campaign; record.series = origin.series; record.editor = origin.editor
-                    record.notes = origin.notes; record.notionURL = origin.notionURL
-                } else {
-                    record.stage = starting
-                    if !campaignAtCreation.isEmpty { record.campaign = campaignAtCreation }
-                }
-                try self.mutate { lib in
+                if let currentOrigin { record.stage = currentOrigin.stage == stages.first && kind == .recordings ? (starting ?? currentOrigin.stage) : currentOrigin.stage }
+                else { record.stage = starting }
+                record.campaign = campaignAtCreation.isEmpty ? nil : campaignAtCreation
                     if let origin { lib.projects.removeAll { $0.id == origin.id } }
                     lib.projects.insert(record, at: 0)
+                    savedID = record.id
                 }
+                guard let record = self.library.projects.first(where: { $0.id == savedID }) else { return }
                 self.tagFolder(record)
                 self.refreshMounts()
                 // The sheet closes and Projects shows the new folder, selected, with its files; the form is cleared so
@@ -491,9 +560,15 @@ enum BadgeColour: String, CaseIterable, Identifiable {
                 self.selectedProject = record.id; self.page = .projects; self.selectProject()
                 self.newProjectPresented = false
                 self.nextProject()
+                if record.ideaWorkspace != nil { self.workspaceCleanup = record }
             } catch { self.error = "The project exists at \(url.path), but history could not be saved. Do not create it again. Use Add Existing Project to recover. \(error.localizedDescription)" }
+            }
         } failure: { message in
-            if message.contains("changed"), let payloadID { self.invalidateStructure(payloadID); self.refresh() }
+            if message.contains("changed") {
+                if let origin, origin.ideaWorkspace != nil { self.invalidateStructure(origin.id) }
+                else if let payloadID { self.invalidateStructure(payloadID) }
+                self.refresh()
+            }
         }
     }
     /// Clears the form for the next project, moving the number on.
@@ -552,7 +627,7 @@ enum BadgeColour: String, CaseIterable, Identifiable {
     }
     /// One stat per distinct location, never per project, so it is safe to call on every appearance.
     func refreshMounts() {
-        guard !checkingMounts else { return }
+        guard storeUsable, !checkingMounts else { return }
         checkingMounts = true
         let locations = distinctLocations.filter { !hiddenLocations.contains($0.key) }
         Task.detached(priority: .utility) {
@@ -813,19 +888,31 @@ enum BadgeColour: String, CaseIterable, Identifiable {
         pipelineSelection = record.id
     }
     func removeProject(_ id: UUID) {
+        if let record = library.projects.first(where: { $0.id == id }), record.ideaWorkspace != nil {
+            if record.isPlanned { requestBinIdea(record) }
+            else { error = "Review the old idea workspace before removing this project from the list. Its recovery reference is still retained." }
+            return
+        }
         attempt { try mutate { $0.projects.removeAll { $0.id == id } } }
         if selectedProject == id { selectedProject = nil }
         if pipelineSelection == id { pipelineSelection = nil }
     }
     /// Prefills New Project from a planned idea. The idea is replaced by the real record on creation.
     func startPlanned(_ record: ProjectRecord) {
+        invalidateStructure(record.id)
         format = record.format
-        title = record.title
+        title = record.isPlanned ? record.name : record.title
         campaign = record.campaign ?? ""
         startingFrom = record.id
         created = nil
         newProjectPresented = true
         changeFormat()
+    }
+    func forgetStartingIdea() {
+        if let id = startingFrom { invalidateStructure(id) }
+        startingFrom = nil
+        preview = nil; plan = nil
+        refresh()
     }
     func setStages(_ stages: [String], for kind: PipelineKind = .recordings) {
         attempt {
@@ -849,8 +936,10 @@ enum BadgeColour: String, CaseIterable, Identifiable {
     /// Removes a project's folder icons so it can be copied to LucidLink. The template keeps them; Restore puts them back.
     func removeFolderIcons(_ record: ProjectRecord) {
         guard !record.isPlanned else { return }
+        let runtime = runtime
         run("Removing folder icons from \(record.name)") { token, _ in
-            try IconService.strip(project: try record.resolve(), cancellation: token)
+            let project = try record.resolve(); try runtime.requireWritable(project)
+            return try IconService.strip(project: project, cancellation: token)
         } completion: { report in
             self.status = report.summary
             if !report.failed.isEmpty { self.error = "Some icons could not be removed. " + report.failed.prefix(3).joined(separator: " ") }
@@ -867,8 +956,10 @@ enum BadgeColour: String, CaseIterable, Identifiable {
         let fields = ProjectFields(number: record.number ?? "", format: record.format, campaign: parts.count >= 4 ? parts[2] : "",
                                    title: parts.count >= 4 ? parts.dropFirst(3).joined(separator: " — ") : record.title)
         let root = store.payload(payload), icon = library.presets.first { $0.format == record.format }?.icon
+        let runtime = runtime
         run("Restoring folder icons from \(set.name)") { token, _ in
             let project = try record.resolve()
+            try runtime.requireWritable(project); try runtime.requireWritable(root)
             return try IconService.restore(template: root, fields: fields, onto: project, presetIcon: icon, cancellation: token)
         } completion: { report in
             self.status = report.summary
@@ -883,6 +974,7 @@ enum BadgeColour: String, CaseIterable, Identifiable {
     /// and only when the drive is connected; nothing is hydrated or searched. Failures are silent because the record is already saved.
     func tagFolder(_ record: ProjectRecord) {
         guard library.finderTagsEnabled, !record.isPlanned, let stage = record.stage, library.allStages.contains(stage) else { return }
+        guard !hiddenLocations.contains(record.location.key), (try? runtime.requireWritable(URL(fileURLWithPath: record.path))) != nil else { return }
         guard record.location.isMounted else { return }
         let colour = library.colour(of: stage), known = library.allStages, url = URL(fileURLWithPath: record.path)
         Task.detached(priority: .utility) {
@@ -894,6 +986,7 @@ enum BadgeColour: String, CaseIterable, Identifiable {
     func tagAllFolders() {
         guard !tagging else { return }
         let known = library.allStages, colours = library
+        let runtime = runtime
         let records = library.projects.filter { !$0.isPlanned && $0.stage != nil && known.contains($0.stage!) && mountedLocations.contains($0.location.key) }
         let skipped = library.projects.filter { !$0.isPlanned && $0.stage != nil && known.contains($0.stage!) }.count - records.count
         guard !records.isEmpty else { status = "No staged folders are on a connected drive."; return }
@@ -905,6 +998,7 @@ enum BadgeColour: String, CaseIterable, Identifiable {
                 status = "Tagging folder \(index + 1) of \(records.count)…"
                 let stage = record.stage!, colour = colours.colour(of: stage), url = URL(fileURLWithPath: record.path)
                 let outcome: Int = await Task.detached(priority: .utility) {
+                    guard (try? runtime.requireWritable(url)) != nil else { return 2 }
                     guard (try? url.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true else { return 1 }
                     do { try FinderTags.apply(stage: stage, colour: colour, knownStages: known, to: url); return 0 } catch { return 2 }
                 }.value

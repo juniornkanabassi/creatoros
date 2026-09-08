@@ -119,7 +119,8 @@ struct CreationForm: View {
                     HStack {
                         Label("Starting from the idea “\(origin.name)”", systemImage: "lightbulb").font(.callout)
                         Spacer()
-                        Button("Forget") { m.startingFrom = nil }.controlSize(.small)
+                        if origin.ideaWorkspace != nil { Button("Refresh Workspace") { m.invalidateStructure(origin.id); m.refresh() }.controlSize(.small).disabled(m.busy) }
+                        Button("Forget") { m.forgetStartingIdea() }.controlSize(.small)
                     }
                 }
             }
@@ -140,6 +141,7 @@ struct CreationForm: View {
             }
             Section("Content format") {
                 FormatButtons(selection: $m.format, showReadiness: m.selectedSet != nil).onChange(of: m.format) { m.changeFormat() }
+                    .disabled(m.startingFrom != nil)
             }
             Section {
                 TextField("Project Number", text: $m.number, prompt: Text(m.suggestedNumber)).onChange(of: m.number) { m.numberEdited() }
@@ -162,6 +164,7 @@ struct CreationForm: View {
                         .foregroundStyle(m.destination.isEmpty ? .secondary : .primary).lineLimit(2).truncationMode(.middle).textSelection(.enabled)
                 }
                 Button("Choose…") { m.chooseDestination() }.help("Choose where \(m.formatLabel) projects are created")
+                Text("Alpha projects stay inside \(m.runtime.root.path).").font(.caption).foregroundStyle(.secondary)
                 Toggle("Plain folders (no icons)", isOn: $m.plainFolders)
                     .help("Creates the project with Finder's plain folders instead of the template's folder icons, for LucidLink and other drives that cannot hold them. The preview shows the result. Restore Folder Icons in Projects puts the icons back later.")
                     .onChange(of: m.destination) { if ProjectLocation(path: m.destination).label == "LucidLink" { m.plainFolders = true } }
@@ -295,9 +298,14 @@ struct CreationPreview: View {
             HStack {
                 Text("The original template stays untouched.").font(.caption).foregroundStyle(.secondary)
                 Spacer()
+                Button("Check Compatibility…") { m.checkProspectiveCompatibility() }.disabled(m.plan == nil)
                 Button("Create Project") { m.create() }.buttonStyle(.borderedProminent).controlSize(.large).disabled(!m.canCreate).keyboardShortcut(.return, modifiers: .command)
                     .help(m.canCreate ? "Copy the template into the destination as shown in the preview (⌘↩)" : "Fill in the fields above and choose a destination to create the project")
             }
+            if m.startingFrom.flatMap({ id in m.library.projects.first { $0.id == id } })?.ideaWorkspace != nil {
+                Text("This project's source is the existing idea workspace. Media names may change; Premiere Pro, OBS or Watchtower references may need relinking. The old workspace is kept until you explicitly put it in the Bin.").font(.caption).foregroundStyle(.secondary)
+            }
         }.padding(20)
+            .sheet(isPresented: $m.compatibilityPresented) { CompatibilitySheet() }
     }
 }
