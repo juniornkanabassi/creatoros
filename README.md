@@ -13,6 +13,7 @@ Apple silicon Mac, Xcode 26.6 or Swift 6 command-line tools with a macOS SDK. No
 ```sh
 swift build --scratch-path /private/tmp/content-template-build
 swift run --scratch-path /private/tmp/content-template-build CoreChecks
+zsh Scripts/check-durable-save.sh /private/tmp/content-template-build/arm64-apple-macosx/debug
 swift run --scratch-path /private/tmp/content-template-build CoreChecks --master "/path/to/a/real/template"
 zsh build.sh
 ```
