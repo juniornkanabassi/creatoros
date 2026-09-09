@@ -1,6 +1,7 @@
 import SwiftUI
 import AppKit
 import TemplateCore
+import UniformTypeIdentifiers
 
 enum BrowserViewMode: String, CaseIterable, Identifiable {
     case icon, list, column
@@ -105,6 +106,7 @@ struct FileBrowserView: View {
     /// Shows the item in Finder. Nil for previews, which have no real files yet.
     var onReveal: ((FileBrowserNode) -> Void)? = nil
     var dragURL: ((FileBrowserNode) -> URL?)? = nil
+    var fileDrop = BrowserFileDrop()
     @State private var loaded: [String: [FileBrowserNode]] = [:]
     @State private var loading: Set<String> = []
     @State private var failure: String?
@@ -194,7 +196,7 @@ struct FileBrowserView: View {
     /// still steps into it, and double-clicking a file opens it under the same rules as the other views.
     func listView(path: String) -> some View {
         let items = nodes(in: path)
-        return OutlineBrowser(nodes: loaded, root: path, filter: filter, selection: $selection, onExpand: { load($0) }, onActivate: { activate($0) }, scale: m.uiScale, onReveal: onReveal, dragURL: dragURL)
+        return OutlineBrowser(nodes: loaded, root: path, filter: filter, selection: $selection, onExpand: { load($0) }, onActivate: { activate($0) }, scale: m.uiScale, onReveal: onReveal, dragURL: dragURL, fileDrop: fileDrop)
             .overlay { if loading.contains(path) && loaded[path] == nil { ProgressView() } else if items.isEmpty && loaded[path] != nil { emptyLabel } }
     }
 
@@ -322,6 +324,26 @@ struct BrowserFileDrag: ViewModifier {
         } else { content }
     }
     static func provider(_ url: URL) -> NSItemProvider { NSItemProvider(object: url as NSURL) }
+}
+
+/// Shared by the SwiftUI content area and the native outline, including empty space.
+struct BrowserFileDrop: DropDelegate {
+    var receive: (([NSItemProvider], Bool) -> Bool)? = nil
+
+    func validateDrop(info: DropInfo) -> Bool {
+        receive != nil && info.hasItemsConforming(to: [UTType.fileURL.identifier])
+    }
+    func dropUpdated(info: DropInfo) -> DropProposal? {
+        // Acceptance starts an asynchronous transfer. Copy transport keeps the source from deleting
+        // originals on drag-end; the engine alone commits filesystem moves after validation.
+        DropProposal(operation: receive == nil ? .cancel : .copy)
+    }
+    func performDrop(info: DropInfo) -> Bool {
+        receive?(info.itemProviders(for: [UTType.fileURL.identifier]), NSEvent.modifierFlags.contains(.option)) ?? false
+    }
+    static func urls(from pasteboard: NSPasteboard) -> [URL] {
+        pasteboard.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL] ?? []
+    }
 }
 
 /// The line between two columns in column view: drag it to resize the column on its left, double-click it to fit

@@ -11,6 +11,10 @@ import UniformTypeIdentifiers
         let outgoing = BrowserFileDrag.provider(try BrowserTransfer.dragURL(root: model.runtime.root, relative: dragFile.lastPathComponent))
         let incoming = try await BrowserDropURLs.load([outgoing])
         precondition(incoming == [dragFile])
+        let pasteboard = NSPasteboard.withUniqueName()
+        pasteboard.writeObjects([dragFile as NSURL])
+        precondition(BrowserFileDrop.urls(from: pasteboard) == [dragFile])
+        pasteboard.releaseGlobally()
         func provider(_ data: Data) -> NSItemProvider {
             let item = NSItemProvider()
             item.registerDataRepresentation(forTypeIdentifier: UTType.fileURL.identifier, visibility: .all) { completion in

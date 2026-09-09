@@ -23,7 +23,6 @@ struct FolderBrowserHost: View {
     @State private var refreshCount = 0
     @State private var token = Cancellation()
     @State private var generation = 0
-    @State private var dropTargeted = false
 
     var shownDocuments: [BrowserItem] { projectFiles.filter { query.isEmpty || $0.relativePath.localizedCaseInsensitiveContains(query) } }
 
@@ -51,14 +50,10 @@ struct FolderBrowserHost: View {
                 Spacer()
                 TextField(projectFilesOnly ? "Search documents" : "Search this folder", text: $query).textFieldStyle(.roundedBorder).frame(maxWidth: 220)
             }
-            if !managedTemplate && !projectFilesOnly, let root {
-                Label("Drop files to copy into \(folder.isEmpty ? title : folder)", systemImage: "square.and.arrow.down")
-                    .font(.callout).lineLimit(2).frame(maxWidth: .infinity, alignment: .leading).padding(10)
-                    .background(dropTargeted ? Color.accentColor.opacity(0.15) : Color.secondary.opacity(0.06), in: RoundedRectangle(cornerRadius: 8))
-                    .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(dropTargeted ? Color.accentColor : Color.secondary.opacity(0.4), style: StrokeStyle(lineWidth: 1, dash: [5])))
-                    .onDrop(of: [UTType.fileURL.identifier], isTargeted: $dropTargeted) { providers in receive(providers, root: root, folder: folder) }
-                    .disabled(m.busy || !m.storeUsable || failure != nil)
-                    .help("Copies up to 100 files into this open folder. Original files are kept; existing names are never replaced. Folders are not supported.")
+            if !managedTemplate && !projectFilesOnly, root != nil {
+                Label("Drop files anywhere below into \(folder.isEmpty ? title : folder). Hold Option to copy.", systemImage: "square.and.arrow.down")
+                    .font(.caption).foregroundStyle(.secondary)
+                    .help("Moves files on the same volume; copies between volumes. Option always copies. Existing names are never replaced. Up to 100 regular files; folders are not supported.")
             }
             Group {
                 if let failure {
@@ -69,13 +64,16 @@ struct FolderBrowserHost: View {
                         FileBrowserView(dataSource: FolderDataSource(root: root), mode: m.viewMode(surface), folder: $folder, selection: $selection,
                                         filter: query, reloadKey: "\(root.path)#\(refreshCount)", onActivate: { node in requestOpen(node) },
                                         onReveal: { node in NSWorkspace.shared.activateFileViewerSelecting([root.appendingPathComponent(node.id)]) },
-                                        dragURL: managedTemplate ? nil : { node in outgoing(root: root, path: node.id) })
+                                        dragURL: managedTemplate ? nil : { node in outgoing(root: root, path: node.id) },
+                                        fileDrop: fileDrop)
                     }
                 } else { ProgressView("Checking folder…").frame(maxWidth: .infinity, maxHeight: .infinity) }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .background(.background, in: RoundedRectangle(cornerRadius: 8))
             .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(.quaternary))
+            .contentShape(Rectangle())
+            .onDrop(of: [UTType.fileURL.identifier], delegate: fileDrop)
             HStack {
                 Text(selection.map { ($0 as NSString).lastPathComponent } ?? "Nothing selected").font(.caption).foregroundStyle(.secondary).lineLimit(1)
                 Spacer()
@@ -114,7 +112,15 @@ struct FolderBrowserHost: View {
         catch { m.error = error.localizedDescription; return nil }
     }
 
-    func receive(_ providers: [NSItemProvider], root: URL, folder: String) -> Bool {
+    var fileDrop: BrowserFileDrop {
+        guard !managedTemplate, !projectFilesOnly, !m.busy, m.storeUsable, failure == nil, let root else { return BrowserFileDrop() }
+        let currentFolder = folder
+        return BrowserFileDrop { providers, forceCopy in
+            receive(providers, root: root, folder: currentFolder, forceCopy: forceCopy)
+        }
+    }
+
+    func receive(_ providers: [NSItemProvider], root: URL, folder: String, forceCopy: Bool) -> Bool {
         guard !managedTemplate, !projectFilesOnly, !m.busy, m.storeUsable, failure == nil else { return false }
         guard !providers.isEmpty, providers.count <= 100,
               providers.allSatisfy({ $0.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) }) else {
@@ -128,16 +134,16 @@ struct FolderBrowserHost: View {
         m.run("Reading dropped files") { cancellation, progress in
             do {
                 let sources = try await BrowserDropURLs.load(providers, cancellation: cancellation)
-                progress(0, "Copying files into \(destination.lastPathComponent)")
-                return try BrowserTransfer.copyFiles(sources, into: destination, runtime: runtime, cancellation: cancellation) { completed, total in
-                    progress(Double(completed) / Double(total), "Copied \(completed) of \(total) files")
+                progress(0, "Transferring files into \(destination.lastPathComponent)")
+                return try BrowserTransfer.transferFiles(sources, into: destination, runtime: runtime, forceCopy: forceCopy, cancellation: cancellation) { completed, total in
+                    progress(Double(completed) / Double(total), "Transferred \(completed) of \(total) files")
                 }
             } catch is CancellationError {
-                throw AppFailure("Copy cancelled. Check the destination for any files already copied.")
+                throw AppFailure("Transfer cancelled. Check the destination for any files already transferred.")
             }
         } completion: { copied in
             if self.root == root { refreshCount += 1 }
-            m.status = "Copied \(copied.count) file\(copied.count == 1 ? "" : "s") into \(destination.lastPathComponent)"
+            m.status = "Transferred \(copied.count) file\(copied.count == 1 ? "" : "s") into \(destination.lastPathComponent)"
         } failure: { _ in
             if self.root == root { refreshCount += 1 }
         }
@@ -221,7 +227,7 @@ enum BrowserDropURLs {
             }
             let data = try loaded.lock.withLock { try loaded.result!.get() }
             guard let url = URL(dataRepresentation: data, relativeTo: nil), url.isFileURL else {
-                throw AppFailure("Only local file URLs can be copied. Web links and text are not supported.")
+                throw AppFailure("Only local file URLs can be transferred. Web links and text are not supported.")
             }
             urls.append(url)
         }

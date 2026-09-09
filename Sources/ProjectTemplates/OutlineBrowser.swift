@@ -16,6 +16,7 @@ struct OutlineBrowser: NSViewRepresentable {
     var scale: CGFloat = 1
     var onReveal: ((FileBrowserNode) -> Void)? = nil
     var dragURL: ((FileBrowserNode) -> URL?)? = nil
+    var fileDrop = BrowserFileDrop()
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
 
@@ -31,6 +32,7 @@ struct OutlineBrowser: NSViewRepresentable {
         outline.focusRingType = .none
         outline.setDraggingSourceOperationMask(.copy, forLocal: false)
         outline.setDraggingSourceOperationMask(.copy, forLocal: true)
+        outline.registerForDraggedTypes([.fileURL])
         for spec in ColumnSpec.all {
             let column = NSTableColumn(identifier: spec.identifier)
             column.title = spec.title; column.width = spec.width; column.minWidth = spec.minWidth; column.maxWidth = 2000
@@ -103,6 +105,21 @@ struct OutlineBrowser: NSViewRepresentable {
         func outlineView(_ outlineView: NSOutlineView, pasteboardWriterForItem item: Any) -> (any NSPasteboardWriting)? {
             guard let node = node(item), !node.directory, let url = parent.dragURL?(node) else { return nil }
             return url as NSURL
+        }
+        func outlineView(_ outlineView: NSOutlineView, validateDrop info: any NSDraggingInfo, proposedItem item: Any?, proposedChildIndex index: Int) -> NSDragOperation {
+            guard parent.fileDrop.receive != nil, info.draggingSourceOperationMask.contains(.copy) else { return [] }
+            let urls = BrowserFileDrop.urls(from: info.draggingPasteboard)
+            guard !urls.isEmpty, urls.count <= 100 else { return [] }
+            // Always target the open folder, never a hovered row or an expanded child.
+            outlineView.setDropItem(nil, dropChildIndex: NSOutlineViewDropOnItemIndex)
+            // The asynchronous engine owns source removal, so never request drag-source cleanup.
+            return .copy
+        }
+        func outlineView(_ outlineView: NSOutlineView, acceptDrop info: any NSDraggingInfo, item: Any?, childIndex index: Int) -> Bool {
+            guard info.draggingSourceOperationMask.contains(.copy) else { return false }
+            let forceCopy = NSEvent.modifierFlags.contains(.option)
+            let providers = BrowserFileDrop.urls(from: info.draggingPasteboard).map(BrowserFileDrag.provider)
+            return parent.fileDrop.receive?(providers, forceCopy) ?? false
         }
         func outlineViewItemWillExpand(_ notification: Notification) {
             guard let id = notification.userInfo?["NSObject"] as? String, parent.nodes[id] == nil else { return }

@@ -3,14 +3,19 @@ import Darwin
 
 public struct BrowserTransferFailure: LocalizedError {
     public let committed: [URL]
+    public let moved: [URL]
+    public var copied: [URL] { committed.filter { !moved.contains($0) } }
     public let cause: Error
     public var errorDescription: String? {
-        let result = committed.isEmpty ? "No files were copied." : "Copied: " + committed.map(\.lastPathComponent).joined(separator: ", ") + ". These copies remain."
-        return cause.localizedDescription + " " + result + " Original files were not moved or deleted."
+        let result = committed.isEmpty ? "No files were transferred." :
+            "Completed transfers remain." +
+            (copied.isEmpty ? "" : " Copied: " + copied.map(\.lastPathComponent).joined(separator: ", ") + ". Originals remain.") +
+            (moved.isEmpty ? "" : " Moved: " + moved.map(\.lastPathComponent).joined(separator: ", ") + ". These files are now in the destination.")
+        return cause.localizedDescription + " " + result
     }
 }
 
-/// Explicit browser copies only; listing a folder does not read file contents.
+/// Explicit browser transfers only; listing a folder does not read file contents.
 public enum BrowserTransfer {
     public static func dragURL(root: URL, relative: String) throws -> URL {
         _ = try ordinaryPath(root, directory: true)
@@ -19,44 +24,104 @@ public enum BrowserTransfer {
 
     public static func copyFiles(_ sources: [URL], into destination: URL, runtime: AppRuntime,
                                  cancellation: Cancellation = Cancellation(), progress: (Int, Int) -> Void = { _, _ in }) throws -> [URL] {
+        try transferFiles(sources, into: destination, runtime: runtime, forceCopy: true, cancellation: cancellation, progress: progress)
+    }
+
+    public static func shouldMove(sourceDevice: dev_t, destinationDevice: dev_t, forceCopy: Bool) -> Bool {
+        !forceCopy && sourceDevice == destinationDevice
+    }
+
+    public static func transferFiles(_ sources: [URL], into destination: URL, runtime: AppRuntime, forceCopy: Bool = false,
+                                     cancellation: Cancellation = Cancellation(), progress: (Int, Int) -> Void = { _, _ in }) throws -> [URL] {
         var committed: [URL] = []
+        var moved: [URL] = []
         do {
             try cancellation.check()
             guard !sources.isEmpty, sources.count <= 100 else { throw AppFailure("Drop between 1 and 100 files at a time.") }
             try runtime.requireWritable(destination)
             let destination = try ordinaryPath(destination, directory: true)
+            let destinationInfo = try identity(destination)
             var names = Set(try FileManager.default.contentsOfDirectory(atPath: destination.path).map(Naming.key))
             // Validate the complete batch before creating any staging files.
-            let candidates = try sources.map { source -> URL in
+            let candidates = try sources.map { source -> (url: URL, info: stat, parent: stat, move: Bool) in
                 try cancellation.check()
                 let source = try ordinaryPath(source, directory: false)
                 guard names.insert(Naming.key(source.lastPathComponent)).inserted else {
                     throw AppFailure("A file named ‘\(source.lastPathComponent)’ already exists or appears twice in this drop (including case or Unicode variants).")
                 }
-                return source
+                let info = try identity(source)
+                let parent = try identity(source.deletingLastPathComponent())
+                guard info.st_mode & mode_t(S_IFMT) == mode_t(S_IFREG),
+                      info.st_flags & UInt32(UF_IMMUTABLE | SF_IMMUTABLE | UF_APPEND | SF_APPEND) == 0 else {
+                    throw AppFailure("Unlock \(source.lastPathComponent) before transferring this ordinary file.")
+                }
+                let move = shouldMove(sourceDevice: info.st_dev, destinationDevice: destinationInfo.st_dev, forceCopy: forceCopy)
+                if move { try requireMove(source, runtime: runtime) }
+                return (source, info, parent, move)
             }
-            for source in candidates {
+            for candidate in candidates {
+                let source = candidate.url
                 try cancellation.check()
                 try runtime.requireWritable(destination)
                 _ = try ordinaryPath(destination, directory: true)
+                try verifyIdentity(destination, expected: destinationInfo)
+                _ = try ordinaryPath(source, directory: false)
+                try verifyIdentity(source, expected: candidate.info)
+                try verifyIdentity(source.deletingLastPathComponent(), expected: candidate.parent)
                 let final = destination.appendingPathComponent(source.lastPathComponent)
                 let stage = destination.appendingPathComponent(".creatoros-drop-" + UUID().uuidString)
-                try copy(source, to: stage, cancellation: cancellation)
-                defer { try? FileManager.default.removeItem(at: stage) }
+                if !candidate.move { try copy(source, to: stage, expected: candidate.info, cancellation: cancellation) }
+                defer { if !candidate.move { try? FileManager.default.removeItem(at: stage) } }
                 try cancellation.check()
                 try runtime.requireWritable(final)
+                try verifyIdentity(destination, expected: destinationInfo)
+                try verifyIdentity(source, expected: candidate.info)
+                try verifyIdentity(source.deletingLastPathComponent(), expected: candidate.parent)
+                if candidate.move { try requireMove(source, runtime: runtime) }
                 // Recheck normalised names too, including on case-sensitive volumes.
                 guard !(try FileManager.default.contentsOfDirectory(atPath: destination.path)).contains(where: {
                     Naming.key($0) == Naming.key(final.lastPathComponent)
-                }) else { throw AppFailure("A file named ‘\(final.lastPathComponent)’ appeared during the copy.") }
-                guard renamex_np(stage.path, final.path, UInt32(RENAME_EXCL)) == 0 else {
-                    throw AppFailure("Cannot finish the copy without replacing an existing file: \(String(cString: strerror(errno))).")
+                }) else { throw AppFailure("A file named ‘\(final.lastPathComponent)’ appeared during the transfer.") }
+                guard renamex_np((candidate.move ? source : stage).path, final.path, UInt32(RENAME_EXCL)) == 0 else {
+                    throw AppFailure("Cannot finish the transfer safely: \(String(cString: strerror(errno))).")
                 }
                 committed.append(final)
+                if candidate.move { moved.append(final) }
                 progress(committed.count, candidates.count)
             }
             return committed
-        } catch { throw BrowserTransferFailure(committed: committed, cause: error) }
+        } catch { throw BrowserTransferFailure(committed: committed, moved: moved, cause: error) }
+    }
+
+    private static func identity(_ url: URL) throws -> stat {
+        var info = stat()
+        guard lstat(url.path, &info) == 0 else { throw AppFailure("Cannot verify \(url.lastPathComponent).") }
+        return info
+    }
+
+    private static func verifyIdentity(_ url: URL, expected: stat) throws {
+        let current = try identity(url)
+        guard current.st_dev == expected.st_dev, current.st_ino == expected.st_ino,
+              current.st_mode & mode_t(S_IFMT) == expected.st_mode & mode_t(S_IFMT) else {
+            throw AppFailure("\(url.lastPathComponent) changed during the transfer. Please retry.")
+        }
+    }
+
+    private static func requireMove(_ source: URL, runtime: AppRuntime) throws {
+        do {
+            try runtime.requireWritable(source)
+            try runtime.requireWritable(source.deletingLastPathComponent())
+        } catch { throw AppFailure("This alpha cannot move this source outside its writable workspace. Hold Option while dropping to copy it instead.") }
+        guard source.deletingLastPathComponent() != runtime.root,
+              !Naming.key(source.path).hasPrefix(Naming.key(runtime.root.appendingPathComponent("Templates").path) + "/") else {
+            throw AppFailure("Library files and managed templates cannot be moved. Hold Option while dropping to copy instead.")
+        }
+        let parent = source.deletingLastPathComponent()
+        let info = try identity(parent)
+        guard access(parent.path, W_OK | X_OK) == 0,
+              info.st_flags & UInt32(UF_IMMUTABLE | SF_IMMUTABLE | UF_APPEND | SF_APPEND) == 0 else {
+            throw AppFailure("The source folder is read-only or locked. Hold Option while dropping to copy instead.")
+        }
     }
 
     private static func ordinaryPath(_ url: URL, directory: Bool) throws -> URL {
@@ -86,14 +151,15 @@ public enum BrowserTransfer {
         return result
     }
 
-    private static func copy(_ source: URL, to stage: URL, cancellation: Cancellation) throws {
+    private static func copy(_ source: URL, to stage: URL, expected: stat, cancellation: Cancellation) throws {
         _ = try ordinaryPath(source, directory: false)
         let inputFD = Darwin.open(source.path, O_RDONLY | O_NOFOLLOW | O_NONBLOCK)
         guard inputFD >= 0 else { throw AppFailure("Cannot read \(source.lastPathComponent). Download cloud-only files first.") }
         let input = FileHandle(fileDescriptor: inputFD, closeOnDealloc: true)
         defer { try? input.close() }
         var before = stat()
-        guard fstat(inputFD, &before) == 0, (before.st_mode & mode_t(S_IFMT)) == mode_t(S_IFREG) else { throw AppFailure("Source is no longer an ordinary file.") }
+        guard fstat(inputFD, &before) == 0, (before.st_mode & mode_t(S_IFMT)) == mode_t(S_IFREG),
+              before.st_dev == expected.st_dev, before.st_ino == expected.st_ino else { throw AppFailure("Source is no longer the same ordinary file.") }
         guard before.st_flags & UInt32(UF_IMMUTABLE | SF_IMMUTABLE | UF_APPEND | SF_APPEND) == 0 else {
             throw AppFailure("Unlock \(source.lastPathComponent) before copying it here; its locked attributes would prevent staging cleanup.")
         }

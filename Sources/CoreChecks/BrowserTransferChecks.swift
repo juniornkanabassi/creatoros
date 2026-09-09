@@ -80,4 +80,55 @@ func browserTransferChecks(base: URL) throws {
         try check(!fm.fileExists(atPath: destination.appendingPathComponent("second.txt").path), "mid-batch cancellation leaves next output absent")
     }
     try check(!children(destination).contains(where: { $0.hasPrefix(".creatoros-drop-") }), "drop leaves no staging files")
+    try check(BrowserTransfer.shouldMove(sourceDevice: 1, destinationDevice: 1, forceCopy: false), "same device selects move")
+    try check(!BrowserTransfer.shouldMove(sourceDevice: 1, destinationDevice: 2, forceCopy: false), "different device selects copy")
+    try check(!BrowserTransfer.shouldMove(sourceDevice: 1, destinationDevice: 1, forceCopy: true), "Option selects copy on same device")
+    let moveSource = area.appendingPathComponent("Inbox/move.txt")
+    try put(bytes, at: moveSource)
+    let moved = try BrowserTransfer.transferFiles([moveSource], into: destination, runtime: runtime)
+    try check(!fm.fileExists(atPath: moveSource.path) && Data(contentsOf: moved[0]) == bytes, "same-volume transfer moves original bytes")
+    let optionSource = area.appendingPathComponent("Inbox/option.txt")
+    try put(bytes, at: optionSource)
+    let optionCopy = try BrowserTransfer.transferFiles([optionSource], into: destination, runtime: runtime, forceCopy: true)
+    try check(Data(contentsOf: optionSource) == bytes && Data(contentsOf: optionCopy[0]) == bytes, "Option copy retains original bytes")
+    let externalBytes = try Data(contentsOf: fresh)
+    try rejects("same-volume source outside alpha cannot move") {
+        _ = try BrowserTransfer.transferFiles([fresh], into: destination, runtime: runtime)
+    }
+    try check(Data(contentsOf: fresh) == externalBytes, "rejected external move retains source")
+    let managed = area.appendingPathComponent("Templates/payload/managed.txt")
+    try put(bytes, at: managed)
+    try rejects("managed template source cannot move") { _ = try BrowserTransfer.transferFiles([managed], into: destination, runtime: runtime) }
+    let moveFirst = area.appendingPathComponent("Inbox/move-first.txt")
+    let moveSecond = area.appendingPathComponent("Inbox/move-second.txt")
+    try put(bytes, at: moveFirst); try put(bytes, at: moveSecond)
+    try rejects("move preflights complete batch") {
+        _ = try BrowserTransfer.transferFiles([moveFirst, optionSource], into: destination, runtime: runtime)
+    }
+    try check(Data(contentsOf: moveFirst) == bytes && Data(contentsOf: optionSource) == bytes, "move collision preserves every source")
+    let moveCancel = Cancellation()
+    do {
+        _ = try BrowserTransfer.transferFiles([moveFirst, moveSecond], into: destination, runtime: runtime, cancellation: moveCancel,
+                                              progress: { completed, _ in if completed == 1 { moveCancel.cancel() } })
+        throw AppFailure("FAILED: partial move cancellation")
+    } catch let error as BrowserTransferFailure {
+        try check(error.committed == error.moved && error.moved.count == 1 && error.copied.isEmpty && error.cause is CancellationError,
+                  "partial move cancellation distinguishes moved files")
+        try check(!fm.fileExists(atPath: moveFirst.path) && Data(contentsOf: moveSecond) == bytes && Data(contentsOf: error.moved[0]) == bytes,
+                  "partial move cancellation leaves committed move and untouched next source")
+    }
+    let replaced = area.appendingPathComponent("Inbox/replaced.txt")
+    let trigger = area.appendingPathComponent("Inbox/trigger.txt")
+    try put(bytes, at: replaced); try put(bytes, at: trigger)
+    do {
+        _ = try BrowserTransfer.transferFiles([trigger, replaced], into: destination, runtime: runtime, progress: { completed, _ in
+            if completed == 1 {
+                try! fm.moveItem(at: replaced, to: replaced.appendingPathExtension("old"))
+                try! put(Data("replacement".utf8), at: replaced)
+            }
+        })
+        throw AppFailure("FAILED: replaced source identity")
+    } catch let error as BrowserTransferFailure {
+        try check(error.moved.count == 1 && Data(contentsOf: replaced) == Data("replacement".utf8), "source replacement fails without moving replacement")
+    }
 }
