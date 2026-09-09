@@ -318,12 +318,45 @@ struct FileBrowserView: View {
 struct BrowserFileDrag: ViewModifier {
     let enabled: Bool
     let url: () -> URL?
+    @State private var source = BrowserDragSourceView()
     @ViewBuilder func body(content: Content) -> some View {
         if enabled {
-            content.onDrag { url().map(Self.provider) ?? NSItemProvider() }
+            content.background(BrowserDragAnchor(source: source).allowsHitTesting(false))
+                .simultaneousGesture(DragGesture(minimumDistance: 5).onChanged { _ in
+                    source.begin(url: url)
+                })
         } else { content }
     }
+    static let operations: NSDragOperation = [.copy, .move]
     static func provider(_ url: URL) -> NSItemProvider { NSItemProvider(object: url as NSURL) }
+}
+
+private struct BrowserDragAnchor: NSViewRepresentable {
+    let source: BrowserDragSourceView
+    func makeNSView(context: Context) -> BrowserDragSourceView { source }
+    func updateNSView(_ nsView: BrowserDragSourceView, context: Context) {}
+}
+
+/// SwiftUI owns hit testing and click/selection gestures, including when zoomed.
+/// AppKit supplies file drag negotiation; Finder performs its own moves.
+final class BrowserDragSourceView: NSView, NSDraggingSource {
+    private var dragging = false
+    func begin(url: () -> URL?) {
+        guard !dragging, let event = NSApp.currentEvent, event.type == .leftMouseDragged,
+              event.window == window, let url = url() else { return }
+        let item = NSDraggingItem(pasteboardWriter: url as NSURL)
+        let point = convert(event.locationInWindow, from: nil)
+        item.setDraggingFrame(NSRect(x: point.x - 24, y: point.y - 24, width: 48, height: 48),
+                              contents: NSWorkspace.shared.icon(forFile: url.path))
+        dragging = true
+        beginDraggingSession(with: [item], event: event, source: self)
+    }
+    func draggingSession(_ session: NSDraggingSession, sourceOperationMaskFor context: NSDraggingContext) -> NSDragOperation {
+        BrowserFileDrag.operations
+    }
+    func draggingSession(_ session: NSDraggingSession, endedAt screenPoint: NSPoint, operation: NSDragOperation) {
+        dragging = false
+    }
 }
 
 /// Shared by the SwiftUI content area and the native outline, including empty space.

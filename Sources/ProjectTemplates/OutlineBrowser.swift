@@ -30,8 +30,8 @@ struct OutlineBrowser: NSViewRepresentable {
         outline.autoresizesOutlineColumn = false
         outline.columnAutoresizingStyle = .noColumnAutoresizing
         outline.focusRingType = .none
-        outline.setDraggingSourceOperationMask(.copy, forLocal: false)
-        outline.setDraggingSourceOperationMask(.copy, forLocal: true)
+        outline.setDraggingSourceOperationMask(BrowserFileDrag.operations, forLocal: false)
+        outline.setDraggingSourceOperationMask(BrowserFileDrag.operations, forLocal: true)
         outline.registerForDraggedTypes([.fileURL])
         for spec in ColumnSpec.all {
             let column = NSTableColumn(identifier: spec.identifier)

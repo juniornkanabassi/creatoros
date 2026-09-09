@@ -108,12 +108,12 @@ public enum BrowserTransfer {
     }
 
     private static func requireMove(_ source: URL, runtime: AppRuntime) throws {
-        do {
-            try runtime.requireWritable(source)
-            try runtime.requireWritable(source.deletingLastPathComponent())
-        } catch { throw AppFailure("This alpha cannot move this source outside its writable workspace. Hold Option while dropping to copy it instead.") }
-        guard source.deletingLastPathComponent() != runtime.root,
-              !Naming.key(source.path).hasPrefix(Naming.key(runtime.root.appendingPathComponent("Templates").path) + "/") else {
+        // Only explicit regular-file transfers relax source isolation; all destinations remain guarded.
+        let libraryRoots = [runtime.root, AppRuntime.alphaRoot, AppRuntime.stableRoot]
+        guard !libraryRoots.contains(where: { root in
+            Naming.key(source.deletingLastPathComponent().path) == Naming.key(root.path) ||
+            Naming.key(source.path).hasPrefix(Naming.key(root.appendingPathComponent("Templates").path) + "/")
+        }) else {
             throw AppFailure("Library files and managed templates cannot be moved. Hold Option while dropping to copy instead.")
         }
         let parent = source.deletingLastPathComponent()

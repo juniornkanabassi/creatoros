@@ -87,20 +87,21 @@ func browserTransferChecks(base: URL) throws {
     try put(bytes, at: moveSource)
     let moved = try BrowserTransfer.transferFiles([moveSource], into: destination, runtime: runtime)
     try check(!fm.fileExists(atPath: moveSource.path) && Data(contentsOf: moved[0]) == bytes, "same-volume transfer moves original bytes")
-    let optionSource = area.appendingPathComponent("Inbox/option.txt")
+    let optionSource = external.appendingPathComponent("option.txt")
     try put(bytes, at: optionSource)
     let optionCopy = try BrowserTransfer.transferFiles([optionSource], into: destination, runtime: runtime, forceCopy: true)
     try check(Data(contentsOf: optionSource) == bytes && Data(contentsOf: optionCopy[0]) == bytes, "Option copy retains original bytes")
     let externalBytes = try Data(contentsOf: fresh)
-    try rejects("same-volume source outside alpha cannot move") {
-        _ = try BrowserTransfer.transferFiles([fresh], into: destination, runtime: runtime)
-    }
-    try check(Data(contentsOf: fresh) == externalBytes, "rejected external move retains source")
+    let externalMove = try BrowserTransfer.transferFiles([fresh], into: destination, runtime: runtime)
+    try check(!fm.fileExists(atPath: fresh.path) && Data(contentsOf: externalMove[0]) == externalBytes, "explicit external same-volume drop moves source")
     let managed = area.appendingPathComponent("Templates/payload/managed.txt")
     try put(bytes, at: managed)
     try rejects("managed template source cannot move") { _ = try BrowserTransfer.transferFiles([managed], into: destination, runtime: runtime) }
-    let moveFirst = area.appendingPathComponent("Inbox/move-first.txt")
-    let moveSecond = area.appendingPathComponent("Inbox/move-second.txt")
+    let libraryFile = area.appendingPathComponent("library.json")
+    try put(bytes, at: libraryFile)
+    try rejects("library metadata cannot move") { _ = try BrowserTransfer.transferFiles([libraryFile], into: destination, runtime: runtime) }
+    let moveFirst = external.appendingPathComponent("move-first.txt")
+    let moveSecond = external.appendingPathComponent("move-second.txt")
     try put(bytes, at: moveFirst); try put(bytes, at: moveSecond)
     try rejects("move preflights complete batch") {
         _ = try BrowserTransfer.transferFiles([moveFirst, optionSource], into: destination, runtime: runtime)
