@@ -1,6 +1,6 @@
 # CreatorOS
 
-Native SwiftUI/AppKit Mac app that creates correctly named project folders from reusable content templates and tracks them through the content pipeline. Current source targets **CreatorOS 0.15.0 α**, under validation, not an installed or final release. The usable baseline remains **Content Template 0.11.0**, tagged `v0.11.0`, installed separately at `/Applications/Content Template.app`.
+Native SwiftUI/AppKit Mac app that creates correctly named project folders from reusable content templates and tracks them through the content pipeline. Current source targets **CreatorOS 0.15.1 α**, under validation, not an installed or final release. The usable baseline remains **Content Template 0.11.0**, tagged `v0.11.0`, installed separately at `/Applications/Content Template.app`.
 
 Alpha uses `local.creatoros.alpha`, `CreatorOS Alpha.app` and `~/Library/Application Support/CreatorOS Alpha/`. Stable retains `local.projecttemplates.mac` and `~/Library/Application Support/Project Templates/`. Both keep the internal executable name `ProjectTemplates`; that is not a user-facing product name. Alpha must never upgrade or write the stable library. See the cumulative acceptance checklist before installation.
 

@@ -230,6 +230,7 @@ private final class RootFileObserver: NSObject, NSFilePresenter {
     }
 
     func presentedItemDidChange() { notify() }
+    func presentedSubitemDidAppear(at url: URL) { notify() }
     func presentedSubitemDidChange(at url: URL) { notify() }
     func presentedSubitem(at oldURL: URL, didMoveTo newURL: URL) { notify() }
     func accommodatePresentedSubitemDeletion(at url: URL, completionHandler: @escaping (Error?) -> Void) {

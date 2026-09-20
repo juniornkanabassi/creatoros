@@ -284,6 +284,7 @@ struct FileBrowserView: View {
             }
         }
         .listStyle(.plain)
+        .modifier(BrowserFolderDrop(fileDrop: fileDrop, target: path))
         .focused($focusedColumn, equals: index)
         .contextMenu(forSelectionType: String.self) { ids in
             if let node = items.first(where: { ids.contains($0.id) }) {

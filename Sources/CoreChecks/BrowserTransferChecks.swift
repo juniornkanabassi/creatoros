@@ -10,6 +10,7 @@ func browserTransferChecks(base: URL) throws {
     let runtime = try AppRuntime(root: area)
     try check(try BrowserDropRoute.destination(root: area, displayed: "Project", target: "Project/Media").resolvingSymlinksInPath() == destination.resolvingSymlinksInPath(), "folder-row drop targets that folder")
     try check(try BrowserDropRoute.destination(root: area, displayed: "Project/Media", target: nil).resolvingSymlinksInPath() == destination.resolvingSymlinksInPath(), "blank drop targets displayed folder")
+    try check(try BrowserDropRoute.destination(root: area, displayed: "Project/Media", target: "").resolvingSymlinksInPath() == area.resolvingSymlinksInPath(), "ancestor root-column blank drop targets that column")
     try rejects("folder-row target traversal") { _ = try BrowserDropRoute.destination(root: area, displayed: "Project", target: "../Downloads") }
     let original = external.appendingPathComponent("Template [take 2].mov")
     let bytes = Data("opaque movie bytes\u{0}".utf8)
