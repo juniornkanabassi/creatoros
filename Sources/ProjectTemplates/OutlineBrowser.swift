@@ -31,7 +31,8 @@ struct OutlineBrowser: NSViewRepresentable {
         outline.columnAutoresizingStyle = .noColumnAutoresizing
         outline.focusRingType = .none
         outline.setDraggingSourceOperationMask(BrowserFileDrag.operations, forLocal: false)
-        outline.setDraggingSourceOperationMask(BrowserFileDrag.operations, forLocal: true)
+        // Until row-level destinations exist, local drags could silently move a file into the open folder.
+        outline.setDraggingSourceOperationMask([], forLocal: true)
         outline.registerForDraggedTypes([.fileURL])
         for spec in ColumnSpec.all {
             let column = NSTableColumn(identifier: spec.identifier)

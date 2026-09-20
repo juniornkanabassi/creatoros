@@ -328,6 +328,9 @@ struct BrowserFileDrag: ViewModifier {
         } else { content }
     }
     static let operations: NSDragOperation = [.copy, .move]
+    static func operations(for context: NSDraggingContext) -> NSDragOperation {
+        context == .withinApplication ? [] : operations
+    }
     static func provider(_ url: URL) -> NSItemProvider { NSItemProvider(object: url as NSURL) }
 }
 
@@ -352,7 +355,7 @@ final class BrowserDragSourceView: NSView, NSDraggingSource {
         beginDraggingSession(with: [item], event: event, source: self)
     }
     func draggingSession(_ session: NSDraggingSession, sourceOperationMaskFor context: NSDraggingContext) -> NSDragOperation {
-        BrowserFileDrag.operations
+        BrowserFileDrag.operations(for: context)
     }
     func draggingSession(_ session: NSDraggingSession, endedAt screenPoint: NSPoint, operation: NSDragOperation) {
         dragging = false

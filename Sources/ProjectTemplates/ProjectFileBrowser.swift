@@ -23,6 +23,7 @@ struct FolderBrowserHost: View {
     @State private var refreshCount = 0
     @State private var token = Cancellation()
     @State private var generation = 0
+    @State private var fileObserver: RootFileObserver?
 
     var shownDocuments: [BrowserItem] { projectFiles.filter { query.isEmpty || $0.relativePath.localizedCaseInsensitiveContains(query) } }
 
@@ -84,7 +85,7 @@ struct FolderBrowserHost: View {
         .onChange(of: m.browserRefresh) { refreshCount += 1 }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in refreshCount += 1 }
         .onAppear { m.activate(surface) }
-        .onDisappear { m.deactivate(surface); token.cancel() }
+        .onDisappear { m.deactivate(surface); token.cancel(); generation += 1; fileObserver?.stop(); fileObserver = nil }
         .alert("Could not open file", isPresented: Binding(get: { openingError != nil }, set: { if !$0 { openingError = nil } })) { Button("OK") {} } message: { Text(openingError ?? "") }
         .confirmationDialog("Open a managed template document?", isPresented: Binding(get: { confirmTemplateOpen != nil }, set: { if !$0 { confirmTemplateOpen = nil } }), titleVisibility: .visible) {
             Button("Open Reusable Template") { if let node = confirmTemplateOpen { open(path: node.id) }; confirmTemplateOpen = nil }
@@ -165,8 +166,13 @@ struct FolderBrowserHost: View {
                 let url = try await Task.detached(priority: .userInitiated) { try resolver() }.value
                 guard current == generation else { return }
                 if root != url { root = url }
+                observe(url)
                 if projectFilesOnly { loadDocuments() }
-            } catch { guard current == generation else { return }; failure = error.localizedDescription }
+            } catch {
+                guard current == generation else { return }
+                fileObserver?.stop(); fileObserver = nil
+                failure = error.localizedDescription
+            }
         }
     }
     func loadDocuments() {
@@ -181,6 +187,11 @@ struct FolderBrowserHost: View {
                 projectFiles = files; loading = false
             } catch { guard current == generation else { return }; loading = false; failure = error.localizedDescription }
         }
+    }
+    func observe(_ root: URL) {
+        guard fileObserver?.root != root else { return }
+        fileObserver?.stop()
+        fileObserver = RootFileObserver(root: root) { refreshCount += 1 }
     }
     func requestOpen(_ node: FileBrowserNode) { if managedTemplate { confirmTemplateOpen = node } else { open(path: node.id) } }
     func requestOpen(path: String) {
@@ -199,6 +210,40 @@ struct FolderBrowserHost: View {
                 }
             } catch { openingError = error.localizedDescription }
         }
+    }
+}
+
+/// Watches the browsed directory so Finder's asynchronous outbound moves update the current view.
+private final class RootFileObserver: NSObject, NSFilePresenter {
+    let root: URL
+    var presentedItemURL: URL? { root }
+    let presentedItemOperationQueue = OperationQueue()
+    private let didChange: () -> Void
+    private var observing = true
+
+    init(root: URL, didChange: @escaping () -> Void) {
+        self.root = root
+        self.didChange = didChange
+        super.init()
+        NSFileCoordinator.addFilePresenter(self)
+    }
+
+    func presentedItemDidChange() { notify() }
+    func presentedSubitemDidChange(at url: URL) { notify() }
+    func presentedSubitem(at oldURL: URL, didMoveTo newURL: URL) { notify() }
+    func accommodatePresentedSubitemDeletion(at url: URL, completionHandler: @escaping (Error?) -> Void) {
+        notify()
+        completionHandler(nil)
+    }
+
+    func stop() {
+        guard observing else { return }
+        observing = false
+        NSFileCoordinator.removeFilePresenter(self)
+    }
+
+    private func notify() {
+        DispatchQueue.main.async { [didChange] in didChange() }
     }
 }
 
