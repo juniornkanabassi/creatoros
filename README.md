@@ -8,12 +8,15 @@ Read `../00 Project State/ARCHITECTURE-ESSENTIALS.md` before changing code. The 
 
 ## Build and run
 
-Apple silicon Mac, Xcode 26.6 or Swift 6 command-line tools with a macOS SDK. No third-party dependencies. Deployment target macOS 14; tested on macOS 26.6.
+Apple silicon Mac, Xcode 26.6 or Swift 6 command-line tools with a macOS SDK. No third-party dependencies. Deployment target macOS 14; tested on macOS 26.6. The durable-save wrapper was also tested with Xcode 27 / Swift 6.4.
 
 ```sh
 swift build --scratch-path /private/tmp/content-template-build
 swift run --scratch-path /private/tmp/content-template-build CoreChecks
+# Legacy SwiftPM debug directory:
 zsh Scripts/check-durable-save.sh /private/tmp/content-template-build/arm64-apple-macosx/debug
+# Xcode 27 scratch root:
+zsh Scripts/check-durable-save.sh /private/tmp/content-template-build
 swift run --scratch-path /private/tmp/content-template-build CoreChecks --master "/path/to/a/real/template"
 zsh build.sh
 ```
