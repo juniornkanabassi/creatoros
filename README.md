@@ -1,8 +1,8 @@
 # CreatorOS
 
-Native SwiftUI/AppKit Mac app that creates correctly named project folders from reusable content templates and tracks them through the content pipeline. Current source targets **CreatorOS 0.15.3 α**, under validation, not a final release. The usable baseline remains **Content Template 0.11.0**, tagged `v0.11.0`, installed separately at `/Applications/Content Template.app`.
+Native SwiftUI/AppKit Mac app that creates correctly named project folders from reusable content templates and tracks them through the content pipeline. Current source targets the everyday **CreatorOS 1.0.0** release.
 
-Alpha uses `local.creatoros.alpha`, `CreatorOS Alpha.app` and `~/Library/Application Support/CreatorOS Alpha/`. Stable retains `local.projecttemplates.mac` and `~/Library/Application Support/Project Templates/`. Both keep the internal executable name `ProjectTemplates`; that is not a user-facing product name. Alpha must never upgrade or write the stable library. See the cumulative acceptance checklist before installation.
+CreatorOS keeps the established `local.projecttemplates.mac` identity and `~/Library/Application Support/Project Templates/` data root so existing preferences, templates, bookmarks and catalogue data continue without a lossy copy or merge. The internal executable remains `ProjectTemplates`; that is not a user-facing product name. Explicit `--data-directory` launches and ContentTool remain isolated from the everyday library. A build carrying the old alpha identifier or α channel also selects isolation, never production data.
 
 Read `../00 Project State/ARCHITECTURE-ESSENTIALS.md` before changing code. The full design is `../00 Project State/ARCHITECTURE.md` and the product statement is `../00 Project State/PRD.md`.
 
@@ -18,21 +18,22 @@ zsh Scripts/check-durable-save.sh /private/tmp/content-template-build/arm64-appl
 # Xcode 27 scratch root:
 zsh Scripts/check-durable-save.sh /private/tmp/content-template-build
 swift run --scratch-path /private/tmp/content-template-build CoreChecks --master "/path/to/a/real/template"
+swift run --scratch-path /private/tmp/content-template-build CoreChecks --library-copy "/path/to/a/copied/library.json"
 zsh build.sh
 ```
 
-`CoreChecks` prints `RESULT n checks passed` and keeps its disposable fixtures under the temporary directory it prints. The optional `--master` argument runs a read-only import and creation against a real template and verifies every byte and every folder icon afterwards.
+`CoreChecks` prints `RESULT n checks passed` and keeps its disposable fixtures under the temporary directory it prints. The optional `--master` argument runs a read-only import and creation against a real template and verifies every byte and every folder icon afterwards. `--library-copy` copies the supplied JSON into the disposable fixture, exercises its schema upgrade, and checks the byte-exact backup and all stored JSON fields.
 
-`build.sh` builds release, selects the orange alpha icon for the α channel (the blue/purple icon remains the stable artwork), assembles `CreatorOS Alpha.app` in a fresh temporary folder, strips bundle-root FinderInfo, signs ad hoc, verifies strictly and writes `../Outputs/CreatorOS Alpha <version> α.zip`, taking the version from `Resources/Info.plist`. It refuses archive overwrite; set `CONTENT_TEMPLATE_OUTPUT_ROOT` for a separate iteration. After the acceptance gate passes, `zsh install.sh` installs only the expected alpha identifier/version, refuses a running target and restores the prior alpha if final verification fails. Set `CONTENT_TEMPLATE_INSTALL_ROOT=/tmp/test-Applications` for a disposable dry run. Stable app and library are not installation targets.
+`build.sh` builds release, selects the orange icon only for the α channel and the blue/purple icon otherwise, assembles `CreatorOS.app` in a fresh temporary folder, strips bundle-root FinderInfo, signs ad hoc, verifies strictly and writes `../Outputs/CreatorOS <version>.zip`, taking identity and version from `Resources/Info.plist`. It refuses archive overwrite; set `CONTENT_TEMPLATE_OUTPUT_ROOT` for a separate iteration. After the acceptance gate passes, `zsh install.sh` installs only the expected CreatorOS release identifier/version, refuses a running CreatorOS-family executable and restores a prior destination if final verification fails. Set `CONTENT_TEMPLATE_INSTALL_ROOT=/tmp/test-Applications` for a disposable dry run.
 
-For interface testing launch with `--data-directory <dedicated disposable temporary folder>`. Alpha rejects production references and starts empty; create synthetic fixtures inside its isolated root. Do not copy the real library: its destinations and bookmarks still reference production data. The optional test-only `--display-name 'Prompter XL'` positions the test window when a disposable data directory is supplied.
+For interface testing launch with `--data-directory <dedicated disposable temporary folder>`. The app rejects production references and starts empty; create synthetic fixtures inside its isolated root. Do not use the real library as a disposable UI fixture: its destinations and bookmarks reference production data. The optional test-only `--display-name 'Prompter XL'` positions the test window when a disposable data directory is supplied.
 
 ## Source layout
 
 ```
 Sources/TemplateCore/     engine, no UI
   Library.swift           JSON store, schema 6, upgrade backups
-  AppRuntime.swift        alpha writable-root and stored-reference isolation
+  AppRuntime.swift        explicit production identity and disposable-root isolation
   Compatibility.swift     shared audit, explicit corrected-copy proposal and manifest
   IdeaWorkspace.swift     owned workspaces, verified promotion and recoverable Trash
   Pipelines.swift         Recordings and Live boards, stage colours, Finder tags

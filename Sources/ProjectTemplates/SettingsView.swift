@@ -139,7 +139,7 @@ struct SettingsView: View {
         Form {
             Section("About") {
                 LabeledContent("Version") { ReleaseVersionLabel(includeName: true) }
-                Text("Alpha writes stay inside its own data folder. The working Content Template installation has a separate library.").font(.caption).foregroundStyle(.secondary)
+                Text(m.runtime.isIsolated ? "Disposable launch: every write stays inside this test data folder." : "Everyday CreatorOS uses the preserved Project Templates library and your saved project locations.").font(.caption).foregroundStyle(.secondary)
                 LabeledContent("Data") {
                     HStack { Text(m.store.root.path).lineLimit(2).truncationMode(.middle).textSelection(.enabled); Button("Show") { NSWorkspace.shared.open(m.store.root) } }
                 }

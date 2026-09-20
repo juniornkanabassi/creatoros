@@ -69,13 +69,13 @@ struct RelinkReport: Identifiable {
 }
 
 enum AppInfo {
-    static var name: String { Bundle.main.object(forInfoDictionaryKey: "CFBundleDisplayName") as? String ?? "CreatorOS Alpha" }
+    static var name: String { Bundle.main.object(forInfoDictionaryKey: "CFBundleDisplayName") as? String ?? "CreatorOS" }
     static var version: String { Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "development" }
-    static var channel: String { Bundle.main.object(forInfoDictionaryKey: "CreatorOSChannel") as? String ?? "α" }
+    static var channel: String { Bundle.main.object(forInfoDictionaryKey: "CreatorOSChannel") as? String ?? "" }
     static var channelName: String {
         switch channel { case "α": "Alpha"; case "β": "Beta"; case "RC": "Release candidate"; default: channel }
     }
-    static var label: String { "\(name) \(version) \(channel)" }
+    static var label: String { [name, version, channel].filter { !$0.isEmpty }.joined(separator: " ") }
 }
 
 /// Keep the ordinary Greek characters, but give their release marks a distinct handwritten tail.
@@ -84,11 +84,12 @@ struct ReleaseVersionLabel: View {
     var size: CGFloat = 13
 
     var body: some View {
-        let prefix = "\(includeName ? AppInfo.name + " " : "")\(AppInfo.version) "
+        let prefix = "\(includeName ? AppInfo.name + " " : "")\(AppInfo.version)"
+        let spacer = AppInfo.channel.isEmpty ? "" : " "
         let greek = AppInfo.channel == "α" || AppInfo.channel == "β"
         let mark = Text(AppInfo.channel).font(greek ? .custom("TimesNewRomanPS-ItalicMT", fixedSize: size + 3) : nil)
-        Text("\(prefix)\(mark)")
-            .accessibilityLabel("\(prefix)\(AppInfo.channelName)")
+        Text("\(prefix)\(spacer)\(mark)")
+            .accessibilityLabel([prefix, AppInfo.channelName].filter { !$0.isEmpty }.joined(separator: " "))
     }
 }
 
@@ -195,15 +196,15 @@ enum BadgeColour: String, CaseIterable, Identifiable {
     init() {
         let arguments = ProcessInfo.processInfo.arguments
         var startupError: String?
-        var chosenRoot = AppRuntime.alphaRoot
+        var chosenRoot: URL?
         if let i = arguments.firstIndex(of: "--data-directory") {
             if arguments.indices.contains(i + 1), !arguments[i + 1].hasPrefix("--") { chosenRoot = URL(fileURLWithPath: arguments[i + 1]) }
             else { startupError = "--data-directory requires a separate disposable folder." }
         }
-        do { runtime = try AppRuntime(root: chosenRoot) }
-        catch { startupError = error.localizedDescription; runtime = try! AppRuntime() }
+        do { runtime = try AppRuntime.forLaunch(bundleIdentifier: Bundle.main.bundleIdentifier, channel: AppInfo.channel, dataRoot: chosenRoot) }
+        catch { startupError = error.localizedDescription; runtime = try! AppRuntime.isolated() }
         store = LibraryStore(root: runtime.root)
-        defaults = UserDefaults(suiteName: runtime.defaultsSuite)!
+        defaults = runtime.isIsolated ? UserDefaults(suiteName: runtime.defaultsSuite)! : .standard
         page = Page(rawValue: defaults.string(forKey: "page") ?? "") ?? .projects
         format = defaults.string(forKey: "format") ?? "Short"
         selection = defaults.string(forKey: "selection").flatMap(TemplateSelection.init(stored:))
@@ -218,14 +219,15 @@ enum BadgeColour: String, CaseIterable, Identifiable {
         do {
             if let startupError { throw AppFailure(startupError) }
             try runtime.requireWritable(store.file)
+            let storedSchema = store.storedSchema()
             let loaded = try store.load()
             try runtime.validate(loaded)
+            if !runtime.isIsolated, let storedSchema, storedSchema < Library.currentSchema { try store.save(loaded) }
             library = loaded
             if !FileManager.default.fileExists(atPath: store.file.path) {
                 for index in library.presets.indices { library.presets[index].destination = runtime.projects.appendingPathComponent(library.presets[index].format).path }
             }
             try FileManager.default.createDirectory(at: runtime.ideas, withIntermediateDirectories: true)
-            for preset in library.presets where !preset.destination.isEmpty { try FileManager.default.createDirectory(atPath: preset.destination, withIntermediateDirectories: true) }
         }
         catch { storeUsable = false; self.error = "Library could not be read. It has not been changed. \(error.localizedDescription)" }
         if !Library.formats.contains(format) { format = "Short" }

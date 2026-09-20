@@ -1,6 +1,6 @@
 // ContentTool: the app's own engine from the command line, for controlled tests and audits.
-// This CreatorOS Alpha build only writes inside its alpha data root (or a disposable --library root).
-// Production operations remain with the preserved stable Content Template build.
+// Command-line operations stay inside an isolated data root. The GUI uses the
+// production library only when it is launched without --data-directory.
 //
 //   ContentTool audit <folder>
 //       Windows-compatibility audit of every name under the folder. Nothing is changed.
@@ -90,7 +90,7 @@ func alphaRuntime() throws -> AppRuntime {
     if let library = option("--library"), let data = option("--data-directory"), library != data {
         throw AppFailure("Use one alpha data root; --library and --data-directory disagree.")
     }
-    return try AppRuntime(root: (option("--library") ?? option("--data-directory")).map { URL(fileURLWithPath: $0) } ?? AppRuntime.alphaRoot)
+    return try AppRuntime.isolated(root: (option("--library") ?? option("--data-directory")).map { URL(fileURLWithPath: $0) } ?? AppRuntime.alphaRoot)
 }
 guard let command = args.first else { print("usage: ContentTool audit|corrected-copy|create|probe|restore-icons|strip-icons|register-location …"); exit(2) }
 

@@ -4,13 +4,24 @@ import TemplateCore
 func runtimeChecks(base: URL) throws {
     let stable = base.appendingPathComponent("Stable")
     let alpha = base.appendingPathComponent("Alpha")
-    let runtime = try AppRuntime(root: alpha, stableRoot: stable)
+    let runtime = try AppRuntime.isolated(root: alpha, stableRoot: stable)
+    let production = try AppRuntime.production(stableRoot: stable)
     let systemTemporaryChild = FileManager.default.temporaryDirectory.appendingPathComponent("CreatorOS-runtime-" + UUID().uuidString)
     let temporaryRuntime = try AppRuntime(root: systemTemporaryChild)
     try temporaryRuntime.requireWritable(systemTemporaryChild.appendingPathComponent("Projects"))
     try check(AppRuntime.contains(temporaryRuntime.root, systemTemporaryChild), "real system temporary URL and its canonical alias share the alpha boundary")
     try check(AppRuntime.contains(runtime.root, alpha.resolvingSymlinksInPath()) && AppRuntime.contains(alpha.resolvingSymlinksInPath(), runtime.root), "alpha uses its independent data root")
     try runtime.requireWritable(alpha.appendingPathComponent("Projects/Short"))
+    let external = base.appendingPathComponent("External projects/Short")
+    try production.requireWritable(external)
+    var productionLibrary = Library(); productionLibrary.presets[0].destination = external.path
+    try production.validate(productionLibrary)
+    try check(!production.isIsolated && AppRuntime.contains(production.root, stable) && AppRuntime.contains(stable, production.root), "production uses the preserved stable library and accepts saved external destinations")
+    try rejects("production refuses home as a write destination") { try production.requireWritable(FileManager.default.homeDirectoryForCurrentUser) }
+    try rejects("production rejects relative stored paths before URL normalisation") { var bad = Library(); bad.presets[0].destination = "relative/project"; try production.validate(bad) }
+    try check(try AppRuntime.forLaunch(bundleIdentifier: AppRuntime.alphaIdentifier, channel: "α", dataRoot: alpha).isIsolated, "alpha identity remains isolated")
+    try check(try !AppRuntime.forLaunch(bundleIdentifier: "local.projecttemplates.mac", channel: "").isIsolated, "release identity selects production")
+    try rejects("unknown identity cannot open production") { _ = try AppRuntime.forLaunch(bundleIdentifier: "example.unreviewed", channel: "") }
     try rejects("alpha refuses stable data root") { _ = try AppRuntime(root: stable, stableRoot: stable) }
     try rejects("alpha refuses ancestor of stable root") { _ = try AppRuntime(root: base, stableRoot: stable) }
     try rejects("alpha refuses child of stable root") { _ = try AppRuntime(root: stable.appendingPathComponent("Child"), stableRoot: stable) }

@@ -2,19 +2,21 @@
 set -euo pipefail
 SOURCE_ROOT="${0:A:h}"
 OUTPUT_ROOT="${CONTENT_TEMPLATE_OUTPUT_ROOT:-$SOURCE_ROOT/../Outputs}"
-INSTALL_ROOT="${CONTENT_TEMPLATE_INSTALL_ROOT:-/Applications}"
+INSTALL_ROOT="${CONTENT_TEMPLATE_INSTALL_ROOT:-/Applications/JuniorOS Apps}"
 APP_NAME=$(/usr/libexec/PlistBuddy -c 'Print CFBundleDisplayName' "$SOURCE_ROOT/Resources/Info.plist")
 APP_CHANNEL=$(/usr/libexec/PlistBuddy -c 'Print CreatorOSChannel' "$SOURCE_ROOT/Resources/Info.plist")
 DEST="$INSTALL_ROOT/$APP_NAME.app"
 ARCHIVE="${1:-}"
 EXPECTED_VERSION=$(/usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' "$SOURCE_ROOT/Resources/Info.plist")
 EXPECTED_ID=$(/usr/libexec/PlistBuddy -c 'Print CFBundleIdentifier' "$SOURCE_ROOT/Resources/Info.plist")
-[[ "$EXPECTED_ID" == "local.creatoros.alpha" && "$APP_NAME" == "CreatorOS Alpha" ]] || { print -u2 "This installer only installs CreatorOS Alpha; the stable app is protected."; exit 1; }
-if (( $# > 1 )); then print -u2 "Usage: zsh install.sh [CreatorOS Alpha <version> α.zip]"; exit 2; fi
-if [[ -z "$ARCHIVE" ]]; then ARCHIVE="$OUTPUT_ROOT/$APP_NAME $EXPECTED_VERSION $APP_CHANNEL.zip"; fi
-[[ -n "$ARCHIVE" && -f "$ARCHIVE" ]] || { print -u2 "No CreatorOS Alpha archive found. Pass a ZIP path or run build.sh first."; exit 1; }
+[[ "$EXPECTED_ID" == "local.projecttemplates.mac" && "$APP_NAME" == "CreatorOS" ]] || { print -u2 "This installer only installs the reviewed CreatorOS release identity."; exit 1; }
+if (( $# > 1 )); then print -u2 "Usage: zsh install.sh [CreatorOS <version>.zip]"; exit 2; fi
+CHANNEL_SUFFIX="${APP_CHANNEL:+ $APP_CHANNEL}"
+if [[ -z "$ARCHIVE" ]]; then ARCHIVE="$OUTPUT_ROOT/$APP_NAME $EXPECTED_VERSION$CHANNEL_SUFFIX.zip"; fi
+[[ -n "$ARCHIVE" && -f "$ARCHIVE" ]] || { print -u2 "No CreatorOS release archive found. Pass a ZIP path or run build.sh first."; exit 1; }
 for APP_PID in ${(f)$(pgrep -x ProjectTemplates || true)}; do
-  if [[ "$(ps -p "$APP_PID" -o comm=)" == "$DEST/Contents/MacOS/ProjectTemplates" ]]; then print -u2 "CreatorOS Alpha is running. Quit it before installing; this installer will not kill it."; exit 1; fi
+  APP_COMMAND=$(ps -p "$APP_PID" -o comm=)
+  if [[ "$APP_COMMAND" == "/Applications/JuniorOS Apps/"*".app/Contents/MacOS/ProjectTemplates" || "$APP_COMMAND" == "$DEST/Contents/MacOS/ProjectTemplates" ]]; then print -u2 "A CreatorOS or Content Template build is running. Quit it before installing; this installer will not kill it."; exit 1; fi
 done
 mkdir -p "$INSTALL_ROOT"
 [[ ! -L "$DEST" ]] || { print -u2 "Refusing to replace symlink $DEST."; exit 1; }
@@ -39,4 +41,4 @@ if ! /usr/bin/codesign --verify --strict "$DEST"; then
   exit 1
 fi
 if [[ -e "$BACKUP" ]]; then /bin/rm -rf "$BACKUP"; fi
-print "Installed $APP_NAME $ACTUAL_VERSION $APP_CHANNEL at $DEST"
+print "Installed $APP_NAME $ACTUAL_VERSION$CHANNEL_SUFFIX at $DEST"

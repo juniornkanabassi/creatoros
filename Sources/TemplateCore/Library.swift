@@ -179,7 +179,7 @@ public struct LibraryStore: Sendable {
         return library
     }
     /// Reads the schema number stored on disk without decoding the whole document.
-    func storedSchema() -> Int? {
+    public func storedSchema() -> Int? {
         guard let data = try? Data(contentsOf: file),
               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
         return json["schema"] as? Int

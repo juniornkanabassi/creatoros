@@ -9,7 +9,8 @@ APP_CHANNEL=$(/usr/libexec/PlistBuddy -c 'Print CreatorOSChannel' Resources/Info
 ICON_SOURCE="Resources/AppIcon.icns"
 if [[ "$APP_CHANNEL" == "α" ]]; then ICON_SOURCE="Resources/AppIconAlpha.icns"; fi
 [[ -f "$ICON_SOURCE" ]] || { print -u2 "Channel icon is missing: $ICON_SOURCE"; exit 1; }
-ARCHIVE_PATH="$OUTPUT_ROOT/$APP_NAME $APP_VERSION $APP_CHANNEL.zip"
+CHANNEL_SUFFIX="${APP_CHANNEL:+ $APP_CHANNEL}"
+ARCHIVE_PATH="$OUTPUT_ROOT/$APP_NAME $APP_VERSION$CHANNEL_SUFFIX.zip"
 if [[ -e "$ARCHIVE_PATH" ]]; then
   print -u2 "Build destination already exists. Choose a fresh CONTENT_TEMPLATE_OUTPUT_ROOT; this script never replaces a delivered app."
   exit 1

@@ -201,6 +201,26 @@ do {
         try check(digestTree(master) == before, "real master files and icon metadata unchanged")
         print("REAL_OUTPUT \(realOutput.path)")
     }
+    if let index = args.firstIndex(of: "--library-copy"), args.indices.contains(index + 1) {
+        let sourceLibrary = URL(fileURLWithPath: args[index + 1]).standardizedFileURL
+        let migrationRoot = base.appendingPathComponent("Production library migration copy")
+        let migrationStore = LibraryStore(root: migrationRoot)
+        try fm.createDirectory(at: migrationRoot, withIntermediateDirectories: false)
+        let original = try Data(contentsOf: sourceLibrary)
+        try original.write(to: migrationStore.file, options: .withoutOverwriting)
+        var expected = try JSONSerialization.jsonObject(with: original) as! [String: Any]
+        expected["schema"] = Library.currentSchema
+        if expected["templateSets"] == nil { expected["templateSets"] = [] }
+        let migrated = try migrationStore.load()
+        try AppRuntime.production(stableRoot: migrationRoot).validate(migrated)
+        try migrationStore.save(migrated)
+        let backup = migrationRoot.appendingPathComponent("library-before-schema-\(Library.currentSchema).json")
+        try check(try Data(contentsOf: backup) == original, "production migration keeps byte-exact schema backup")
+        let actual = try JSONSerialization.jsonObject(with: Data(contentsOf: migrationStore.file)) as! NSDictionary
+        try check(actual.isEqual(to: expected), "production migration preserves every stored field while advancing schema")
+        try check(migrated.projects.count == (expected["projects"] as? [Any])?.count, "production migration preserves every project record")
+        print("MIGRATION_COPY \(migrationRoot.path)")
+    }
     print("RESULT \(checks) checks passed")
 } catch {
     fputs("\(error.localizedDescription)\n", stderr)
