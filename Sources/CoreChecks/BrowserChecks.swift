@@ -5,6 +5,9 @@ func browserChecks(base: URL) throws {
     let fm = FileManager.default
     let root = base.appendingPathComponent("Browser project")
     try put(Data("opaque project".utf8), at: root.appendingPathComponent("02 Project Files/Premiere/template.prproj"))
+    try put(Data("alternate".utf8), at: root.appendingPathComponent("02 Project Files/Premiere/alternate.prproj"))
+    try put(Data("after effects".utf8), at: root.appendingPathComponent("02 Project Files/After Effects/project.aep"))
+    try fm.createDirectory(at: root.appendingPathComponent("02 Project Files/not-a-file.prproj"), withIntermediateDirectories: true)
     try put(Data("notes".utf8), at: root.appendingPathComponent("01 Documents/Readme.txt"))
     try put(Data(), at: root.appendingPathComponent("Icon\r"))
     try put(Data(), at: root.appendingPathComponent("._support"))
@@ -20,9 +23,10 @@ func browserChecks(base: URL) throws {
     try check(!items.contains(where: { $0.name == "Icon\r" || $0.name.hasPrefix(".") || $0.name == "outside" }), "browser hides metadata and excludes symbolic links")
     try check(items.contains(where: { $0.name == "Library.rtfd" && $0.package }), "browser treats document packages as single items")
     let projectFiles = try ProjectBrowser.projectFiles(root: root)
-    try check(projectFiles.map(\.name) == ["template.prproj"], "project document shortcut excludes media, exports and package internals")
-    let premiere = projectFiles[0]
-    try check(ProjectBrowser.openable(premiere, root: root).lastPathComponent == "template.prproj", "browser resolves Premiere document directly")
+    try check(projectFiles.map(\.name) == ["project.aep", "not-a-file.prproj", "alternate.prproj", "template.prproj"], "project document shortcut excludes media, exports and package internals")
+    let premiere = try ProjectBrowser.premiereFiles(root: root)
+    try check(premiere.map(\.name) == ["alternate.prproj", "template.prproj"], "Premiere shortcut lists only safe Premiere documents")
+    try check(ProjectBrowser.openable(premiere[1], root: root).lastPathComponent == "template.prproj", "browser resolves Premiere document directly")
     try rejects("browser refuses package traversal") { _ = try ProjectBrowser.list(root: root, relative: "Library.rtfd") }
     try rejects("browser refuses escaping folder") { _ = try ProjectBrowser.list(root: root, relative: "../") }
     try rejects("browser refuses symbolic-link navigation") { _ = try ProjectBrowser.list(root: root, relative: "outside") }

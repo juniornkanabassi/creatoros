@@ -69,6 +69,11 @@ public enum ProjectBrowser {
         try walk("", depth: 0)
         return found.sorted { $0.relativePath.localizedStandardCompare($1.relativePath) == .orderedAscending }
     }
+    public static func premiereFiles(root: URL, cancellation: Cancellation = Cancellation()) throws -> [BrowserItem] {
+        try projectFiles(root: root, cancellation: cancellation).filter {
+            !$0.directory && ($0.name as NSString).pathExtension.lowercased() == "prproj"
+        }
+    }
     public static func openable(_ item: BrowserItem, root: URL) throws -> URL {
         let url = try Catalogue.safeChild(item.relativePath, under: root)
         let ext = url.pathExtension.lowercased()

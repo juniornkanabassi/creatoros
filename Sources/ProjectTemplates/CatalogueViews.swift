@@ -144,6 +144,9 @@ struct ProjectInspector: View {
     let record: ProjectRecord
     var inspection: ProjectInspection? { m.inspections[record.id] }
     @State private var showStatus = false
+    @State private var findingPremiere = false
+    @State private var premiereDocuments: [BrowserItem] = []
+    @State private var choosePremiere = false
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 12) {
@@ -178,6 +181,11 @@ struct ProjectInspector: View {
             }
             HStack {
                 Button("Open in Finder") { m.open(record) }.help("Open the project folder in Finder, showing what is inside it")
+                Button { findPremiere() } label: {
+                    if findingPremiere { ProgressView().controlSize(.small) } else { Text("Open Premiere Project") }
+                }
+                .disabled(findingPremiere || inspection?.available != true)
+                .help("Open the Premiere project directly, or choose one when this folder contains several")
                 Menu("More") {
                     Button("Check Folder Again") { m.inspectProject(record, findMoved: true); m.refreshMounts() }.help("Look again whether this folder is at its path, and if it is missing, search its own drive for it")
                     ProjectActions(record: record)
@@ -198,7 +206,53 @@ struct ProjectInspector: View {
                                        description: Text("Reconnect the drive, or use Find Moved Folder if it lives somewhere else now. The record stays in your list."))
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else { Spacer() }
-        }.padding(20)
+        }
+        .padding(20)
+        .confirmationDialog("Choose a Premiere project", isPresented: $choosePremiere, titleVisibility: .visible) {
+            ForEach(premiereDocuments) { item in
+                Button(item.relativePath) { openPremiere(item) }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This project contains more than one Premiere document.")
+        }
+    }
+
+    func findPremiere() {
+        guard !findingPremiere else { return }
+        findingPremiere = true
+        let record = record
+        Task {
+            do {
+                let files = try await Task.detached(priority: .userInitiated) {
+                    try ProjectBrowser.premiereFiles(root: ProjectBrowser.root(record))
+                }.value
+                findingPremiere = false
+                switch files.count {
+                case 0: m.error = "No Premiere project was found in this folder."
+                case 1: openPremiere(files[0])
+                default: premiereDocuments = files; choosePremiere = true
+                }
+            } catch { findingPremiere = false; m.error = error.localizedDescription }
+        }
+    }
+
+    func openPremiere(_ item: BrowserItem) {
+        let record = record
+        Task {
+            do {
+                let url = try await Task.detached(priority: .userInitiated) {
+                    let root = try ProjectBrowser.root(record)
+                    let candidate = try ProjectBrowser.openable(item, root: root)
+                    guard candidate.pathExtension.lowercased() == "prproj" else { throw AppFailure("This is not a Premiere project.") }
+                    return candidate
+                }.value
+                guard NSWorkspace.shared.urlForApplication(toOpen: url) != nil else { throw AppFailure("No app is registered for Premiere project files.") }
+                NSWorkspace.shared.open(url, configuration: NSWorkspace.OpenConfiguration()) { _, error in
+                    if let error { Task { @MainActor in m.error = error.localizedDescription } }
+                }
+            } catch { m.error = error.localizedDescription }
+        }
     }
 }
 
