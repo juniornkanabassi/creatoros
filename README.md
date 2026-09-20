@@ -1,6 +1,6 @@
 # CreatorOS
 
-Native SwiftUI/AppKit Mac app that creates correctly named project folders from reusable content templates and tracks them through the content pipeline. Current source targets **CreatorOS 0.15.2 α**, under validation, not a final release. The usable baseline remains **Content Template 0.11.0**, tagged `v0.11.0`, installed separately at `/Applications/Content Template.app`.
+Native SwiftUI/AppKit Mac app that creates correctly named project folders from reusable content templates and tracks them through the content pipeline. Current source targets **CreatorOS 0.15.3 α**, under validation, not a final release. The usable baseline remains **Content Template 0.11.0**, tagged `v0.11.0`, installed separately at `/Applications/Content Template.app`.
 
 Alpha uses `local.creatoros.alpha`, `CreatorOS Alpha.app` and `~/Library/Application Support/CreatorOS Alpha/`. Stable retains `local.projecttemplates.mac` and `~/Library/Application Support/Project Templates/`. Both keep the internal executable name `ProjectTemplates`; that is not a user-facing product name. Alpha must never upgrade or write the stable library. See the cumulative acceptance checklist before installation.
 
@@ -23,7 +23,7 @@ zsh build.sh
 
 `CoreChecks` prints `RESULT n checks passed` and keeps its disposable fixtures under the temporary directory it prints. The optional `--master` argument runs a read-only import and creation against a real template and verifies every byte and every folder icon afterwards.
 
-`build.sh` builds release, assembles `CreatorOS Alpha.app` in a fresh temporary folder, strips bundle-root FinderInfo, signs ad hoc, verifies strictly and writes `../Outputs/CreatorOS Alpha <version> α.zip`, taking the version from `Resources/Info.plist`. It refuses archive overwrite; set `CONTENT_TEMPLATE_OUTPUT_ROOT` for a separate iteration. After the acceptance gate passes, `zsh install.sh` installs only the expected alpha identifier/version, refuses a running target and restores the prior alpha if final verification fails. Set `CONTENT_TEMPLATE_INSTALL_ROOT=/tmp/test-Applications` for a disposable dry run. Stable app and library are not installation targets.
+`build.sh` builds release, selects the orange alpha icon for the α channel (the blue/purple icon remains the stable artwork), assembles `CreatorOS Alpha.app` in a fresh temporary folder, strips bundle-root FinderInfo, signs ad hoc, verifies strictly and writes `../Outputs/CreatorOS Alpha <version> α.zip`, taking the version from `Resources/Info.plist`. It refuses archive overwrite; set `CONTENT_TEMPLATE_OUTPUT_ROOT` for a separate iteration. After the acceptance gate passes, `zsh install.sh` installs only the expected alpha identifier/version, refuses a running target and restores the prior alpha if final verification fails. Set `CONTENT_TEMPLATE_INSTALL_ROOT=/tmp/test-Applications` for a disposable dry run. Stable app and library are not installation targets.
 
 For interface testing launch with `--data-directory <dedicated disposable temporary folder>`. Alpha rejects production references and starts empty; create synthetic fixtures inside its isolated root. Do not copy the real library: its destinations and bookmarks still reference production data. The optional test-only `--display-name 'Prompter XL'` positions the test window when a disposable data directory is supplied.
 
@@ -56,10 +56,10 @@ Sources/ProjectTemplates/ the app
   SettingsView.swift      Settings window
   ProjectTemplatesApp.swift scene, menus, main split view, import sheet
 Sources/CoreChecks/       assertion suite
-Scripts/render-icon.swift historical app icon drawing; build-icon.sh converts Resources/AppIcon.png to ICNS
+Scripts/render-icon.swift historical app icon drawing; build-icon.sh converts the stable and alpha PNG artwork to ICNS
 Scripts/configure-library.swift one-time personal setup (Notion stages and default destinations), run with the app closed
 Scripts/notion-backup.py  offline Notion export backup utility with its tests; not part of the app
-Resources/                Info.plist, AppIcon
+Resources/                Info.plist, blue/purple stable AppIcon and orange AppIconAlpha
 ```
 
 ## Git
