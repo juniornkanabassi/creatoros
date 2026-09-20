@@ -31,8 +31,7 @@ struct OutlineBrowser: NSViewRepresentable {
         outline.columnAutoresizingStyle = .noColumnAutoresizing
         outline.focusRingType = .none
         outline.setDraggingSourceOperationMask(BrowserFileDrag.operations, forLocal: false)
-        // Until row-level destinations exist, local drags could silently move a file into the open folder.
-        outline.setDraggingSourceOperationMask([], forLocal: true)
+        outline.setDraggingSourceOperationMask(BrowserFileDrag.operations, forLocal: true)
         outline.registerForDraggedTypes([.fileURL])
         for spec in ColumnSpec.all {
             let column = NSTableColumn(identifier: spec.identifier)
@@ -111,8 +110,8 @@ struct OutlineBrowser: NSViewRepresentable {
             guard parent.fileDrop.receive != nil, info.draggingSourceOperationMask.contains(.copy) else { return [] }
             let urls = BrowserFileDrop.urls(from: info.draggingPasteboard)
             guard !urls.isEmpty, urls.count <= 100 else { return [] }
-            // Always target the open folder, never a hovered row or an expanded child.
-            outlineView.setDropItem(nil, dropChildIndex: NSOutlineViewDropOnItemIndex)
+            let target = node(item)?.browsable == true ? item : nil
+            outlineView.setDropItem(target, dropChildIndex: NSOutlineViewDropOnItemIndex)
             // The asynchronous engine owns source removal, so never request drag-source cleanup.
             return .copy
         }
@@ -120,7 +119,8 @@ struct OutlineBrowser: NSViewRepresentable {
             guard info.draggingSourceOperationMask.contains(.copy) else { return false }
             let forceCopy = NSEvent.modifierFlags.contains(.option)
             let providers = BrowserFileDrop.urls(from: info.draggingPasteboard).map(BrowserFileDrag.provider)
-            return parent.fileDrop.receive?(providers, forceCopy) ?? false
+            let target = node(item)?.browsable == true ? item as? String : nil
+            return parent.fileDrop.receive?(providers, forceCopy, target) ?? false
         }
         func outlineViewItemWillExpand(_ notification: Notification) {
             guard let id = notification.userInfo?["NSObject"] as? String, parent.nodes[id] == nil else { return }

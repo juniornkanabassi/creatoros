@@ -13,7 +13,7 @@ import UniformTypeIdentifiers
         precondition(incoming == [dragFile])
         precondition(BrowserFileDrag.operations == [.copy, .move])
         precondition(BrowserFileDrag.operations(for: .outsideApplication) == [.copy, .move])
-        precondition(BrowserFileDrag.operations(for: .withinApplication).isEmpty)
+        precondition(BrowserFileDrag.operations(for: .withinApplication) == [.copy, .move])
         let pasteboard = NSPasteboard.withUniqueName()
         pasteboard.writeObjects([dragFile as NSURL])
         precondition(BrowserFileDrop.urls(from: pasteboard) == [dragFile])

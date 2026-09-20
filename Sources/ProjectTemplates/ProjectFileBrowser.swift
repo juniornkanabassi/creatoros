@@ -116,12 +116,12 @@ struct FolderBrowserHost: View {
     var fileDrop: BrowserFileDrop {
         guard !managedTemplate, !projectFilesOnly, !m.busy, m.storeUsable, failure == nil, let root else { return BrowserFileDrop() }
         let currentFolder = folder
-        return BrowserFileDrop { providers, forceCopy in
-            receive(providers, root: root, folder: currentFolder, forceCopy: forceCopy)
+        return BrowserFileDrop { providers, forceCopy, target in
+            receive(providers, root: root, folder: currentFolder, target: target, forceCopy: forceCopy)
         }
     }
 
-    func receive(_ providers: [NSItemProvider], root: URL, folder: String, forceCopy: Bool) -> Bool {
+    func receive(_ providers: [NSItemProvider], root: URL, folder: String, target: String?, forceCopy: Bool) -> Bool {
         guard !managedTemplate, !projectFilesOnly, !m.busy, m.storeUsable, failure == nil else { return false }
         guard !providers.isEmpty, providers.count <= 100,
               providers.allSatisfy({ $0.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) }) else {
@@ -129,12 +129,13 @@ struct FolderBrowserHost: View {
             return false
         }
         let destination: URL
-        do { destination = folder.isEmpty ? root : try Catalogue.safeChild(folder, under: root) }
+        do { destination = try BrowserDropRoute.destination(root: root, displayed: folder, target: target) }
         catch { m.error = error.localizedDescription; return false }
         let runtime = m.runtime
         m.run("Reading dropped files") { cancellation, progress in
             do {
                 let sources = try await BrowserDropURLs.load(providers, cancellation: cancellation)
+                if BrowserDropRoute.isNoOp(sources, destination: destination, forceCopy: forceCopy) { return [] }
                 progress(0, "Transferring files into \(destination.lastPathComponent)")
                 return try BrowserTransfer.transferFiles(sources, into: destination, runtime: runtime, forceCopy: forceCopy, cancellation: cancellation) { completed, total in
                     progress(Double(completed) / Double(total), "Transferred \(completed) of \(total) files")
@@ -144,7 +145,7 @@ struct FolderBrowserHost: View {
             }
         } completion: { copied in
             if self.root == root { refreshCount += 1 }
-            m.status = "Transferred \(copied.count) file\(copied.count == 1 ? "" : "s") into \(destination.lastPathComponent)"
+            m.status = copied.isEmpty ? "Files are already in \(destination.lastPathComponent)" : "Transferred \(copied.count) file\(copied.count == 1 ? "" : "s") into \(destination.lastPathComponent)"
         } failure: { _ in
             if self.root == root { refreshCount += 1 }
         }

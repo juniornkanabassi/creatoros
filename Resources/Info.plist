@@ -7,7 +7,7 @@
 <key>CFBundleDisplayName</key><string>CreatorOS Alpha</string>
 <key>CFBundleIconFile</key><string>AppIcon</string>
 <key>CFBundlePackageType</key><string>APPL</string>
-<key>CFBundleShortVersionString</key><string>0.14.2</string>
+<key>CFBundleShortVersionString</key><string>0.15.0</string>
 <key>CreatorOSChannel</key><string>α</string>
 <key>NSHumanReadableCopyright</key><string>© 2026 Junior Nkana Bassi. All rights reserved.</string>
 <key>CFBundleVersion</key><string>1</string>

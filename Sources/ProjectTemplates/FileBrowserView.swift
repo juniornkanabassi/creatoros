@@ -226,6 +226,7 @@ struct FileBrowserView: View {
                     .accessibilityElement(children: .combine).accessibilityLabel(node.name).accessibilityHint(node.subtitle)
                     .accessibilityAddTraits(selection == node.id ? .isSelected : [])
                     .modifier(BrowserFileDrag(enabled: dragURL != nil && !node.directory, url: { dragURL?(node) }))
+                    .modifier(BrowserFolderDrop(fileDrop: fileDrop, target: node.browsable ? node.id : nil))
                 }
             }.padding(10)
         }
@@ -279,6 +280,7 @@ struct FileBrowserView: View {
                     if node.browsable { Image(systemName: "chevron.right").font(.caption2).foregroundStyle(.tertiary) }
                 }.tag(node.id)
                     .modifier(BrowserFileDrag(enabled: dragURL != nil && !node.directory, url: { dragURL?(node) }))
+                    .modifier(BrowserFolderDrop(fileDrop: fileDrop, target: node.browsable ? node.id : nil))
             }
         }
         .listStyle(.plain)
@@ -328,9 +330,7 @@ struct BrowserFileDrag: ViewModifier {
         } else { content }
     }
     static let operations: NSDragOperation = [.copy, .move]
-    static func operations(for context: NSDraggingContext) -> NSDragOperation {
-        context == .withinApplication ? [] : operations
-    }
+    static func operations(for context: NSDraggingContext) -> NSDragOperation { operations }
     static func provider(_ url: URL) -> NSItemProvider { NSItemProvider(object: url as NSURL) }
 }
 
@@ -364,7 +364,8 @@ final class BrowserDragSourceView: NSView, NSDraggingSource {
 
 /// Shared by the SwiftUI content area and the native outline, including empty space.
 struct BrowserFileDrop: DropDelegate {
-    var receive: (([NSItemProvider], Bool) -> Bool)? = nil
+    var receive: (([NSItemProvider], Bool, String?) -> Bool)? = nil
+    var target: String? = nil
 
     func validateDrop(info: DropInfo) -> Bool {
         receive != nil && info.hasItemsConforming(to: [UTType.fileURL.identifier])
@@ -375,10 +376,20 @@ struct BrowserFileDrop: DropDelegate {
         DropProposal(operation: receive == nil ? .cancel : .copy)
     }
     func performDrop(info: DropInfo) -> Bool {
-        receive?(info.itemProviders(for: [UTType.fileURL.identifier]), NSEvent.modifierFlags.contains(.option)) ?? false
+        let providers = info.itemProviders(for: [UTType.fileURL.identifier])
+        return receive?(providers, NSEvent.modifierFlags.contains(.option), target) ?? false
     }
     static func urls(from pasteboard: NSPasteboard) -> [URL] {
         pasteboard.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL] ?? []
+    }
+}
+
+private struct BrowserFolderDrop: ViewModifier {
+    let fileDrop: BrowserFileDrop
+    let target: String?
+    @ViewBuilder func body(content: Content) -> some View {
+        if let target { content.onDrop(of: [UTType.fileURL.identifier], delegate: BrowserFileDrop(receive: fileDrop.receive, target: target)) }
+        else { content }
     }
 }
 
