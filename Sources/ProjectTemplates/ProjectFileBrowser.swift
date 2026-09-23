@@ -100,7 +100,7 @@ struct FolderBrowserHost: View {
                     FileArtwork(url: root.appendingPathComponent(item.relativePath))
                     VStack(alignment: .leading, spacing: 2) { Text(item.name).lineLimit(1); Text(item.relativePath).font(.caption).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle) }
                 }.tag(item.relativePath)
-                    .modifier(BrowserFileDrag(enabled: !managedTemplate && !item.directory, url: { outgoing(root: root, path: item.relativePath) }))
+                    .modifier(BrowserFileDrag(enabled: !managedTemplate, url: { outgoing(root: root, path: item.relativePath) }))
             }
         }
         .contextMenu(forSelectionType: String.self) { ids in if let id = ids.first { Button("Open") { requestOpen(path: id) } } } primaryAction: { ids in if let id = ids.first { requestOpen(path: id) } }
@@ -137,7 +137,7 @@ struct FolderBrowserHost: View {
                 let sources = try await BrowserDropURLs.load(providers, cancellation: cancellation)
                 if BrowserDropRoute.isNoOp(sources, destination: destination, forceCopy: forceCopy) { return [] }
                 progress(0, "Transferring files into \(destination.lastPathComponent)")
-                return try BrowserTransfer.transferFiles(sources, into: destination, runtime: runtime, forceCopy: forceCopy, cancellation: cancellation) { completed, total in
+                return try BrowserTransfer.transfer(sources, into: destination, runtime: runtime, forceCopy: forceCopy, cancellation: cancellation) { completed, total in
                     progress(Double(completed) / Double(total), "Transferred \(completed) of \(total) files")
                 }
             } catch is CancellationError {

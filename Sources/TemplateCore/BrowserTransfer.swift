@@ -19,7 +19,19 @@ public struct BrowserTransferFailure: LocalizedError {
 public enum BrowserTransfer {
     public static func dragURL(root: URL, relative: String) throws -> URL {
         _ = try ordinaryPath(root, directory: true)
-        return try ordinaryPath(Catalogue.safeChild(relative, under: root), directory: false)
+        let child = try Catalogue.safeChild(relative, under: root)
+        let directory = (try? child.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true
+        return try ordinaryPath(child, directory: directory)
+    }
+
+    /// One dropped folder moves as a folder; anything else goes through the regular-file engine.
+    public static func transfer(_ sources: [URL], into destination: URL, runtime: AppRuntime, forceCopy: Bool = false,
+                                cancellation: Cancellation = Cancellation(), progress: (Int, Int) -> Void = { _, _ in }) throws -> [URL] {
+        if sources.count == 1, (try? sources[0].resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true {
+            guard !forceCopy else { throw AppFailure("Folders can be moved here, not copied. Drop without Option.") }
+            return [try moveFolder(sources[0], into: destination, runtime: runtime)]
+        }
+        return try transferFiles(sources, into: destination, runtime: runtime, forceCopy: forceCopy, cancellation: cancellation, progress: progress)
     }
 
     public static func copyFiles(_ sources: [URL], into destination: URL, runtime: AppRuntime,

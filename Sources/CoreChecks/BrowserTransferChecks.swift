@@ -35,7 +35,12 @@ func browserTransferChecks(base: URL) throws {
     let movedFolder = try BrowserTransfer.moveFolder(folder, into: destination, runtime: runtime)
     try check(movedFolder.lastPathComponent == "Raw" && fm.fileExists(atPath: destination.appendingPathComponent("Raw").path) && !fm.fileExists(atPath: folder.path)
               && Data(contentsOf: movedFolder.appendingPathComponent("clip.txt")) == Data("clip".utf8), "folder move renames within the volume and keeps contents")
-    try fm.removeItem(at: movedFolder)
+    // Dropped folder row: the shared transfer entry moves it as a folder, drags resolve folder rows, Option is refused.
+    try check(try BrowserTransfer.dragURL(root: area, relative: "Project/Media/Raw").lastPathComponent == "Raw", "outbound drag resolves a folder row")
+    try rejects("dropped folder with Option is refused") { _ = try BrowserTransfer.transfer([movedFolder], into: area, runtime: runtime, forceCopy: true) }
+    let back = try BrowserTransfer.transfer([movedFolder], into: folder.deletingLastPathComponent(), runtime: runtime)
+    try check(back.count == 1 && fm.fileExists(atPath: folder.appendingPathComponent("clip.txt").path) && !fm.fileExists(atPath: movedFolder.path), "dropped folder row moves through the shared transfer entry")
+    try fm.removeItem(at: folder)
     let original = external.appendingPathComponent("Template [take 2].mov")
     let bytes = Data("opaque movie bytes\u{0}".utf8)
     try put(bytes, at: original)
