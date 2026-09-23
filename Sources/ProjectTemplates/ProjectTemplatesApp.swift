@@ -50,6 +50,12 @@ import TemplateCore
                 Button("Toggle Full Screen") { NSApp.keyWindow?.toggleFullScreen(nil) }.keyboardShortcut("f", modifiers: [.control, .command])
                 Divider()
             }
+            // The same actions as a project's right-click menu, for the selected project, so their shortcuts work anywhere.
+            CommandMenu("Project") {
+                if let record = model.page == .pipeline ? model.library.projects.first(where: { $0.id == model.pipelineSelection }) : model.selectedRecord {
+                    ProjectActions(record: record).environmentObject(model)
+                } else { Button("No Project Selected") {}.disabled(true) }
+            }
             CommandMenu("Go") {
                 ForEach(Array(Page.allCases.enumerated()), id: \.element) { index, page in
                     Button(page.rawValue) { model.page = page }.keyboardShortcut(KeyEquivalent(Character("\(index + 1)")), modifiers: [.command, .shift])

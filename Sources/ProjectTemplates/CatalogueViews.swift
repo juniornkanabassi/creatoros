@@ -107,17 +107,23 @@ struct UnavailableChip: View {
 }
 
 /// Shared actions for a project row, card or inspector menu.
+/// The shortcuts are shown beside each item wherever this menu appears (right-click, More, and the Project menu in
+/// the menu bar, where they act on the selected project), so Junior can learn them from the menus.
 struct ProjectActions: View {
     @EnvironmentObject var m: AppModel
     let record: ProjectRecord
+    /// The inspector's More menu sits beside the stage pill, so it leaves stages out (Junior, 23 Sep).
+    var showStages = true
     var body: some View {
-        Button(record.isPinned ? "Unpin" : "Pin") { m.togglePin(record.id) }.help("Pinned projects stay at the top of the list")
-        Button("Open in Finder") { m.open(record) }
-        Button("Show in Pipeline") { m.pipelineSelection = record.id; m.page = .pipeline }.help("Select this project on the Pipeline board")
-        Menu("Move to Stage") { ForEach(m.moveTargets(for: record), id: \.self) { stage in Button(stage) { m.setStage(stage, for: record.id) }.disabled(stage == m.effectiveStage(record)) } }
+        // Read the pin state live: the menu bar keeps this view alive across library changes.
+        let pinned = m.library.projects.first { $0.id == record.id }?.isPinned ?? record.isPinned
+        Button(pinned ? "Unpin" : "Pin") { m.togglePin(record.id) }.keyboardShortcut("p", modifiers: [.command, .shift]).help("Pinned projects stay at the top of the list")
+        Button("Open in Finder") { m.open(record) }.keyboardShortcut("o")
+        Button("Show in Pipeline") { m.pipelineSelection = record.id; m.page = .pipeline }.keyboardShortcut("p", modifiers: [.command, .option]).help("Select this project on the Pipeline board")
+        if showStages { Menu("Move to Stage") { ForEach(m.moveTargets(for: record), id: \.self) { stage in Button(stage) { m.setStage(stage, for: record.id) }.disabled(stage == m.effectiveStage(record)) } } }
         Divider()
-        Button("Find Moved Folder") { m.relink(record) }.help("Search the connected drives for a folder with this project's name")
-        Button("Locate Folder…") { m.locate(record) }.help("Point the record at the folder yourself")
+        Button("Find Moved Folder") { m.relink(record) }.keyboardShortcut("r", modifiers: [.command, .option]).help("Search the connected drives for a folder with this project's name")
+        Button("Locate Folder…") { m.locate(record) }.keyboardShortcut("l", modifiers: [.command, .option]).help("Point the record at the folder yourself")
         Button("Remove Folder Icons") { m.removeFolderIcons(record) }.help("Take the folder icons off so the project can be copied to LucidLink; Restore Folder Icons puts them back")
         Button("Restore Folder Icons") { m.restoreIcons(record) }.help("Put the content template's folder icons back after the project lived on a drive that cannot hold them")
         Button("Check LucidLink Compatibility…") { m.checkCompatibility(record) }.disabled(m.busy)
@@ -187,9 +193,9 @@ struct ProjectInspector: View {
                 .disabled(findingPremiere || inspection?.available != true)
                 .help("Open the Premiere project directly, or choose one when this folder contains several")
                 Menu("More") {
-                    Button("Check Folder Again") { m.inspectProject(record, findMoved: true); m.refreshMounts() }.help("Look again whether this folder is at its path, and if it is missing, search its own drive for it")
-                    ProjectActions(record: record)
-                }.fixedSize().help("Pin, move, relink and other actions for this project")
+                    Button("Refresh Project") { m.refreshProject() }.keyboardShortcut("r").help("Read this folder again, check it is still there, and look for any moved projects")
+                    ProjectActions(record: record, showStages: false)
+                }.fixedSize().help("Pin, relink and other actions for this project, with their keyboard shortcuts")
             }
             DisclosureGroup(isExpanded: $showStatus) {
                 ProjectStatusEditor(record: record).padding(.top, 6)
