@@ -12,6 +12,16 @@ func browserTransferChecks(base: URL) throws {
     try check(try BrowserDropRoute.destination(root: area, displayed: "Project/Media", target: nil).resolvingSymlinksInPath() == destination.resolvingSymlinksInPath(), "blank drop targets displayed folder")
     try check(try BrowserDropRoute.destination(root: area, displayed: "Project/Media", target: "").resolvingSymlinksInPath() == area.resolvingSymlinksInPath(), "ancestor root-column blank drop targets that column")
     try rejects("folder-row target traversal") { _ = try BrowserDropRoute.destination(root: area, displayed: "Project", target: "../Downloads") }
+    // A local row drag whose target is a file, not a folder, must never move anything.
+    let fileTarget = destination.appendingPathComponent("notes.txt")
+    try put(Data("notes".utf8), at: fileTarget)
+    let stray = external.appendingPathComponent("stray.txt")
+    try put(Data("stray".utf8), at: stray)
+    let fileRoute = try BrowserDropRoute.destination(root: area, displayed: "Project", target: "Project/Media/notes.txt")
+    try rejects("file-row target is refused as a destination") { _ = try BrowserTransfer.transferFiles([stray], into: fileRoute, runtime: runtime) }
+    try check(Data(contentsOf: stray) == Data("stray".utf8) && Data(contentsOf: fileTarget) == Data("notes".utf8), "refused file-row drop leaves source and target untouched")
+    try fm.removeItem(at: fileTarget)
+    try fm.removeItem(at: stray)
     let original = external.appendingPathComponent("Template [take 2].mov")
     let bytes = Data("opaque movie bytes\u{0}".utf8)
     try put(bytes, at: original)
