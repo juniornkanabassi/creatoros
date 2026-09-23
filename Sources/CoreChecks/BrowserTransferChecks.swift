@@ -40,7 +40,16 @@ func browserTransferChecks(base: URL) throws {
     try rejects("dropped folder with Option is refused") { _ = try BrowserTransfer.transfer([movedFolder], into: area, runtime: runtime, forceCopy: true) }
     let back = try BrowserTransfer.transfer([movedFolder], into: folder.deletingLastPathComponent(), runtime: runtime)
     try check(back.count == 1 && fm.fileExists(atPath: folder.appendingPathComponent("clip.txt").path) && !fm.fileExists(atPath: movedFolder.path), "dropped folder row moves through the shared transfer entry")
-    try fm.removeItem(at: folder)
+    // Several folders in one drop: one refusal leaves every folder where it was.
+    let audio = area.appendingPathComponent("Project/Audio")
+    try fm.createDirectory(at: audio, withIntermediateDirectories: true)
+    try fm.createDirectory(at: destination.appendingPathComponent("audio"), withIntermediateDirectories: true)
+    try rejects("multi-folder drop refuses the batch on one collision") { _ = try BrowserTransfer.transfer([folder, audio], into: destination, runtime: runtime) }
+    try check(fm.fileExists(atPath: folder.path) && fm.fileExists(atPath: audio.path) && !fm.fileExists(atPath: destination.appendingPathComponent("Raw").path), "refused multi-folder drop moves nothing")
+    try fm.removeItem(at: destination.appendingPathComponent("audio"))
+    let both = try BrowserTransfer.transfer([folder, audio], into: destination, runtime: runtime)
+    try check(both.count == 2 && fm.fileExists(atPath: destination.appendingPathComponent("Audio").path) && fm.fileExists(atPath: destination.appendingPathComponent("Raw/clip.txt").path), "multi-folder drop moves every folder")
+    for url in both { try fm.removeItem(at: url) }
     let original = external.appendingPathComponent("Template [take 2].mov")
     let bytes = Data("opaque movie bytes\u{0}".utf8)
     try put(bytes, at: original)

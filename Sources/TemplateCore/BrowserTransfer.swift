@@ -24,14 +24,26 @@ public enum BrowserTransfer {
         return try ordinaryPath(child, directory: directory)
     }
 
-    /// One dropped folder moves as a folder; anything else goes through the regular-file engine.
+    /// Dropped folders move as folders, files go through the regular-file engine. Every folder is validated
+    /// before any is renamed, and a rename failure puts the already-renamed folders back.
     public static func transfer(_ sources: [URL], into destination: URL, runtime: AppRuntime, forceCopy: Bool = false,
                                 cancellation: Cancellation = Cancellation(), progress: (Int, Int) -> Void = { _, _ in }) throws -> [URL] {
-        if sources.count == 1, (try? sources[0].resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true {
-            guard !forceCopy else { throw AppFailure("Folders can be moved here, not copied. Drop without Option.") }
-            return [try moveFolder(sources[0], into: destination, runtime: runtime)]
+        let folders = sources.filter { (try? $0.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true }
+        let files = sources.filter { !folders.contains($0) }
+        if !folders.isEmpty, forceCopy { throw AppFailure("Folders can be moved here, not copied. Drop without Option.") }
+        let planned = try folders.map { try folderMoveTarget($0, into: destination, runtime: runtime) }
+        var movedFolders: [(from: URL, to: URL)] = []
+        do {
+            for (source, target) in zip(folders, planned) {
+                try FileManager.default.moveItem(at: source, to: target)
+                movedFolders.append((source, target))
+            }
+        } catch {
+            for step in movedFolders.reversed() { try? FileManager.default.moveItem(at: step.to, to: step.from) }
+            throw error
         }
-        return try transferFiles(sources, into: destination, runtime: runtime, forceCopy: forceCopy, cancellation: cancellation, progress: progress)
+        let copied = files.isEmpty ? [] : try transferFiles(files, into: destination, runtime: runtime, forceCopy: forceCopy, cancellation: cancellation, progress: progress)
+        return movedFolders.map(\.to) + copied
     }
 
     public static func copyFiles(_ sources: [URL], into destination: URL, runtime: AppRuntime,
@@ -43,6 +55,12 @@ public enum BrowserTransfer {
     /// guard passes. No copying across volumes, no merging, no overwrite. Returns the folder's new URL.
     // ponytail: same-volume rename only; add a copy-then-verify path if Junior asks for cross-volume folder moves.
     public static func moveFolder(_ source: URL, into destination: URL, runtime: AppRuntime) throws -> URL {
+        let target = try folderMoveTarget(source, into: destination, runtime: runtime)
+        try FileManager.default.moveItem(at: source, to: target)
+        return target
+    }
+
+    private static func folderMoveTarget(_ source: URL, into destination: URL, runtime: AppRuntime) throws -> URL {
         let source = try ordinaryPath(source, directory: true)
         try runtime.requireWritable(destination)
         try runtime.requireWritable(source.deletingLastPathComponent())
@@ -59,9 +77,7 @@ public enum BrowserTransfer {
         guard !names.contains(Naming.key(source.lastPathComponent)) else {
             throw AppFailure("A folder or file named ‘\(source.lastPathComponent)’ already exists in \(destination.lastPathComponent).")
         }
-        let target = destination.appendingPathComponent(source.lastPathComponent)
-        try FileManager.default.moveItem(at: source, to: target)
-        return target
+        return destination.appendingPathComponent(source.lastPathComponent)
     }
 
     public static func shouldMove(sourceDevice: dev_t, destinationDevice: dev_t, forceCopy: Bool) -> Bool {
