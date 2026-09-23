@@ -6,13 +6,25 @@ import TemplateCore
     @StateObject private var model = AppModel()
     @NSApplicationDelegateAdaptor(CreatorOSDelegate.self) private var delegate
     init() {
+        // macOS restores the windows an app had when it quit; after Junior closed the window and quit, that was none,
+        // so a relaunch from Spotlight showed nothing. Always open the main window instead; it keeps its own frame below.
+        UserDefaults.standard.register(defaults: ["ApplePersistenceIgnoreState": true])
         // A second launch should activate the running app, not open a second
         // writer over the same library. Test bundles use a separate identifier.
+        // A copy that is still finishing its quit (saving the library) must not swallow the new launch: Junior's
+        // relaunch from Spotlight used to activate that departing copy and exit, so nothing opened. Wait for it first.
         if let identifier = Bundle.main.bundleIdentifier,
            let existing = NSRunningApplication.runningApplications(withBundleIdentifier: identifier)
             .first(where: { $0.processIdentifier != ProcessInfo.processInfo.processIdentifier }) {
-            existing.activate(options: [.activateAllWindows])
-            exit(0)
+            // isTerminated only updates through the run loop, which is not running yet; ask the kernel instead.
+            let pid = existing.processIdentifier
+            func alive() -> Bool { kill(pid, 0) == 0 }
+            let deadline = Date().addingTimeInterval(8)
+            while alive() && Date() < deadline { Thread.sleep(forTimeInterval: 0.1) }
+            if alive() {
+                existing.activate(options: [.activateAllWindows])
+                exit(0)
+            }
         }
     }
     var body: some Scene {
@@ -72,16 +84,25 @@ import TemplateCore
 
 @MainActor final class CreatorOSDelegate: NSObject, NSApplicationDelegate {
     weak var model: AppModel?
+    /// One window is the app, so closing it quits, like System Settings. A windowless copy left running was what a
+    /// Spotlight or Dock relaunch activated, with nothing to show.
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         guard let model else { return .terminateNow }
         guard !model.busy else { model.error = "Wait for the current operation to finish or cancel it before quitting."; return .terminateCancel }
         Task {
             // Let the existing writer finish all queued snapshots; never race it with a second synchronous writer.
-            await model.saveTaskForWorkspace()
-            if model.storeUsable { sender.reply(toApplicationShouldTerminate: true) }
+            // A save that never finishes must not leave a windowless process behind; after 15 seconds, ask.
+            // (A task group would wait for the hung save too, so the first of two plain tasks decides.)
+            let finished = await withCheckedContinuation { (done: CheckedContinuation<Bool, Never>) in
+                let once = OnceFlag()
+                Task { @MainActor in await model.saveTaskForWorkspace(); if once.take() { done.resume(returning: true) } }
+                Task { @MainActor in try? await Task.sleep(for: .seconds(15)); if once.take() { done.resume(returning: false) } }
+            }
+            if finished && model.storeUsable { sender.reply(toApplicationShouldTerminate: true) }
             else {
                 let alert = NSAlert()
-                alert.messageText = "The latest library changes could not be saved."
+                alert.messageText = finished ? "The latest library changes could not be saved." : "The library is still saving."
                 alert.informativeText = "Quitting may discard unsaved changes. Your existing library remains on disk."
                 alert.addButton(withTitle: "Keep Open"); alert.addButton(withTitle: "Quit Anyway")
                 sender.reply(toApplicationShouldTerminate: alert.runModal() == .alertSecondButtonReturn)
@@ -127,6 +148,10 @@ enum WindowSetup {
         }
         for window in NSApp.windows where window.styleMask.contains(.titled) {
             window.collectionBehavior.insert(.fullScreenPrimary)
+            // Reopen where it was last left: AppKit saves the frame under this name and restores it when set.
+            if window.frameAutosaveName.isEmpty, !(window.identifier?.rawValue.contains("Settings") ?? false), !args.contains("--data-directory") {
+                window.setFrameAutosaveName("CreatorOS Main Window")
+            }
         }
         // Command with = + - 0 zooms from anywhere in the window, including while a text field has focus,
         // and Command-Shift-= (the + key) counts as Command-+. Handled here so the menu equivalents never double up.
@@ -298,4 +323,10 @@ struct ImportSheet: View {
             }
         }.padding(24).frame(width: 720, height: 620).interactiveDismissDisabled(m.busy)
     }
+}
+
+/// Main-actor flag that lets exactly one of two racing tasks resume a continuation.
+@MainActor final class OnceFlag {
+    private var taken = false
+    func take() -> Bool { if taken { return false }; taken = true; return true }
 }
