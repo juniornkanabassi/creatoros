@@ -22,6 +22,20 @@ func browserTransferChecks(base: URL) throws {
     try check(Data(contentsOf: stray) == Data("stray".utf8) && Data(contentsOf: fileTarget) == Data("notes".utf8), "refused file-row drop leaves source and target untouched")
     try fm.removeItem(at: fileTarget)
     try fm.removeItem(at: stray)
+    // Folder moves: same-volume rename after every guard; nothing else.
+    let folder = area.appendingPathComponent("Project/Raw")
+    let inner = folder.appendingPathComponent("clip.txt")
+    try put(Data("clip".utf8), at: inner)
+    try rejects("folder move into itself") { _ = try BrowserTransfer.moveFolder(folder, into: folder, runtime: runtime) }
+    try rejects("folder move into own descendant") { _ = try BrowserTransfer.moveFolder(folder, into: inner.deletingLastPathComponent(), runtime: runtime) }
+    try fm.createDirectory(at: destination.appendingPathComponent("raw"), withIntermediateDirectories: true)
+    try rejects("folder move case-folded name collision") { _ = try BrowserTransfer.moveFolder(folder, into: destination, runtime: runtime) }
+    try fm.removeItem(at: destination.appendingPathComponent("raw"))
+    try rejects("folder move outside the writable root") { _ = try BrowserTransfer.moveFolder(folder, into: fm.temporaryDirectory, runtime: runtime) }
+    let movedFolder = try BrowserTransfer.moveFolder(folder, into: destination, runtime: runtime)
+    try check(movedFolder.lastPathComponent == "Raw" && fm.fileExists(atPath: destination.appendingPathComponent("Raw").path) && !fm.fileExists(atPath: folder.path)
+              && Data(contentsOf: movedFolder.appendingPathComponent("clip.txt")) == Data("clip".utf8), "folder move renames within the volume and keeps contents")
+    try fm.removeItem(at: movedFolder)
     let original = external.appendingPathComponent("Template [take 2].mov")
     let bytes = Data("opaque movie bytes\u{0}".utf8)
     try put(bytes, at: original)

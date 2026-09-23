@@ -27,6 +27,31 @@ public enum BrowserTransfer {
         try transferFiles(sources, into: destination, runtime: runtime, forceCopy: true, cancellation: cancellation, progress: progress)
     }
 
+    /// First slice of in-app folder moves: one ordinary folder, same volume only, renamed in place after every
+    /// guard passes. No copying across volumes, no merging, no overwrite. Returns the folder's new URL.
+    // ponytail: same-volume rename only; add a copy-then-verify path if Junior asks for cross-volume folder moves.
+    public static func moveFolder(_ source: URL, into destination: URL, runtime: AppRuntime) throws -> URL {
+        let source = try ordinaryPath(source, directory: true)
+        try runtime.requireWritable(destination)
+        try runtime.requireWritable(source.deletingLastPathComponent())
+        let destination = try ordinaryPath(destination, directory: true)
+        try requireMove(source, runtime: runtime)
+        guard destination.path != source.path, !destination.path.hasPrefix(source.path + "/") else {
+            throw AppFailure("A folder cannot be moved into itself.")
+        }
+        let sourceInfo = try identity(source), destinationInfo = try identity(destination)
+        guard sourceInfo.st_dev == destinationInfo.st_dev else {
+            throw AppFailure("Folders move only within the same volume.")
+        }
+        let names = Set(try FileManager.default.contentsOfDirectory(atPath: destination.path).map(Naming.key))
+        guard !names.contains(Naming.key(source.lastPathComponent)) else {
+            throw AppFailure("A folder or file named ‘\(source.lastPathComponent)’ already exists in \(destination.lastPathComponent).")
+        }
+        let target = destination.appendingPathComponent(source.lastPathComponent)
+        try FileManager.default.moveItem(at: source, to: target)
+        return target
+    }
+
     public static func shouldMove(sourceDevice: dev_t, destinationDevice: dev_t, forceCopy: Bool) -> Bool {
         !forceCopy && sourceDevice == destinationDevice
     }
