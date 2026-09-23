@@ -808,6 +808,8 @@ enum BadgeColour: String, CaseIterable, Identifiable {
         if let record = selectedRecord { inspectProject(record, findMoved: true) }
         if let record = library.projects.first(where: { $0.id == pipelineSelection }) { inspectProject(record) }
         scheduleDeepSearch()
+        // Junior's request (23 Sep): one press also finds moved folders. The report only appears when something is missing.
+        relinkAll(reportWhenNothingMissing: false)
     }
     /// Command-F: puts the cursor in the search field of the front window, the way every Mac app does.
     static func focusSearchField() {
@@ -870,7 +872,7 @@ enum BadgeColour: String, CaseIterable, Identifiable {
     }
     /// Checks every project on the ticked drives whose folder is missing, relinks the certain ones, and reports the rest,
     /// the way an editor reports offline media. Roots from unticked drives are never searched.
-    func relinkAll() {
+    func relinkAll(reportWhenNothingMissing: Bool = true) {
         guard !relinkBatchRunning else { return }
         relinkBatchRunning = true
         let records = library.projects.filter { !$0.isPlanned && !hiddenLocations.contains($0.location.key) }
@@ -884,7 +886,7 @@ enum BadgeColour: String, CaseIterable, Identifiable {
                 outcomes.append(RelinkOutcome(id: record.id, name: record.name, previousPath: record.path, kind: kind))
             }
             status = ""
-            relinkReport = RelinkReport(checked: records.count, outcomes: outcomes)
+            if reportWhenNothingMissing || !outcomes.isEmpty { relinkReport = RelinkReport(checked: records.count, outcomes: outcomes) }
         }
     }
 
