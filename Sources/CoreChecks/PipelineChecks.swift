@@ -143,6 +143,90 @@ func plainCopyChecks(base: URL) throws {
     let missing = try IconService.restore(template: template, fields: fields, onto: created)
     try check(missing.unmatched == ["01 Documents"] && missing.restored.isEmpty && !FileManager.default.fileExists(atPath: created.appendingPathComponent("01 Documents").path), "a folder the project no longer has is reported, never created")
     try rejects("restore refuses a missing project") { _ = try IconService.restore(template: template, fields: fields, onto: out.appendingPathComponent("nowhere")) }
+
+    func layoutTemplate(_ folder: String, named name: String, nestedLevels: Int = 0) throws -> URL {
+        let root = base.appendingPathComponent(name, isDirectory: true)
+        let documents = root.appendingPathComponent("01 Documents", isDirectory: true)
+        let anchor = root.appendingPathComponent("02 Project Files/\(folder)", isDirectory: true)
+        try FileManager.default.createDirectory(at: documents, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: anchor, withIntermediateDirectories: true)
+        try Data().write(to: documents.appendingPathComponent("Icon\r"))
+        try Data().write(to: anchor.appendingPathComponent("Icon\r"))
+        var finder = Data(count: 32); finder[8] = 0x04
+        _ = finder.withUnsafeBytes { setxattr(documents.path, "com.apple.FinderInfo", $0.baseAddress, 32, 0, XATTR_NOFOLLOW) }
+        _ = finder.withUnsafeBytes { setxattr(anchor.path, "com.apple.FinderInfo", $0.baseAddress, 32, 0, XATTR_NOFOLLOW) }
+        var nested = anchor
+        if nestedLevels > 0 {
+            for level in 1...nestedLevels {
+                nested = nested.appendingPathComponent("01 Child \(level)", isDirectory: true)
+                try FileManager.default.createDirectory(at: nested, withIntermediateDirectories: true)
+            }
+        }
+        return root
+    }
+    func layoutProject(_ folder: String, named name: String) throws -> URL {
+        let root = base.appendingPathComponent(name, isDirectory: true)
+        try FileManager.default.createDirectory(at: root.appendingPathComponent("01 Documents"), withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: root.appendingPathComponent("02 Project Files/\(folder)"), withIntermediateDirectories: true)
+        return root
+    }
+    for (templateFolder, projectFolder, label) in [
+        ("01 Video", "01 Premiere Pro", "old template on new project"),
+        ("01 Premiere Pro", "01 Video", "new template on old project")
+    ] {
+        let mismatchTemplate = try layoutTemplate(templateFolder, named: "Mismatch Template \(label)", nestedLevels: 8)
+        let mismatchProject = try layoutProject(projectFolder, named: "Mismatch Project \(label)")
+        var message = ""
+        do {
+            _ = try IconService.restore(template: mismatchTemplate, fields: fields, onto: mismatchProject)
+        } catch { message = error.localizedDescription }
+        try check(message.contains("No icons were changed") && message.contains(templateFolder) && message.contains(mismatchProject.appendingPathComponent("02 Project Files/\(projectFolder)").path), "restore preflight reports exact \(label) evidence")
+        try rejects("restore preflight rejects \(label) before the first write") {
+            try IconService.preflight(template: mismatchTemplate, fields: fields, onto: mismatchProject)
+        }
+        try check(!FileManager.default.fileExists(atPath: mismatchProject.appendingPathComponent("01 Documents/Icon\r").path), "\(label) leaves earlier icon targets untouched")
+    }
+    let manyTemplate = base.appendingPathComponent("Many planned", isDirectory: true)
+    let manyProject = base.appendingPathComponent("Many existing", isDirectory: true)
+    try FileManager.default.createDirectory(at: manyTemplate, withIntermediateDirectories: true)
+    try FileManager.default.createDirectory(at: manyProject, withIntermediateDirectories: true)
+    for number in 1...6 {
+        let prefix = String(format: "%02d", number)
+        let expected = manyTemplate.appendingPathComponent("\(prefix) planned", isDirectory: true)
+        let actual = manyProject.appendingPathComponent("\(prefix) actual", isDirectory: true)
+        try FileManager.default.createDirectory(at: expected.appendingPathComponent("01 Child/02 Grandchild"), withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: actual, withIntermediateDirectories: true)
+    }
+    var summary = ""
+    do { try IconService.preflight(template: manyTemplate, fields: fields, onto: manyProject) }
+    catch { summary = error.localizedDescription }
+    try check(summary.contains("Showing 4 of 6 conflicts") && summary.contains("+2 more conflicts"), "restore conflict summary caps repeated paths and counts the rest")
+    try check(summary.contains(manyProject.appendingPathComponent("01 actual").path) && summary.contains(manyProject.appendingPathComponent("04 actual").path), "restore conflict summary preserves the shown exact paths")
+    let ambiguousTemplate = try layoutTemplate("01 Video", named: "Ambiguous Template")
+    let ambiguousProject = try layoutProject("01 Video", named: "Ambiguous Project")
+    try FileManager.default.createDirectory(at: ambiguousProject.appendingPathComponent("02 Project Files/01 Premiere Pro"), withIntermediateDirectories: true)
+    try rejects("restore refuses when both Premiere anchors exist") {
+        _ = try IconService.restore(template: ambiguousTemplate, fields: fields, onto: ambiguousProject)
+    }
+    try check(!FileManager.default.fileExists(atPath: ambiguousProject.appendingPathComponent("01 Documents/Icon\r").path), "ambiguous Premiere anchors leave icons untouched")
+    let symlinkTemplate = try layoutTemplate("01 Video", named: "Symlink Template")
+    let symlinkProject = try layoutProject("01 Video", named: "Symlink Project")
+    let outside = base.appendingPathComponent("Outside project", isDirectory: true)
+    try FileManager.default.createDirectory(at: outside, withIntermediateDirectories: true)
+    let outsideIcon = outside.appendingPathComponent("Icon\r")
+    let originalIcon = Data("external icon must survive".utf8)
+    try originalIcon.write(to: outsideIcon)
+    let linkedDocuments = symlinkProject.appendingPathComponent("01 Documents", isDirectory: true)
+    try FileManager.default.removeItem(at: linkedDocuments)
+    try FileManager.default.createSymbolicLink(at: linkedDocuments, withDestinationURL: outside)
+    try rejects("restore rejects an expected folder occupied by a symlink") {
+        _ = try IconService.restore(template: symlinkTemplate, fields: fields, onto: symlinkProject)
+    }
+    try check(try Data(contentsOf: outsideIcon) == originalIcon, "symlink preflight preserves the external icon file")
+    let legacyTemplate = try layoutTemplate("01 Cafe\u{301}", named: "Unicode Template")
+    let unicodeProject = try layoutProject("01 Café", named: "Unicode Project")
+    let unicodeRestore = try IconService.restore(template: legacyTemplate, fields: fields, onto: unicodeProject)
+    try check(unicodeRestore.failed.isEmpty && unicodeRestore.restored.count == 2, "restore matches canonically equivalent numbered folders")
     // Stripping a copy made with icons leaves exactly a plain copy; restoring brings it back.
     let plainAgain = try CreationEngine.create(plan: plain, destination: out, name: "000 — Short — Plain again", icon: nil, finderMetadata: false)
     let stripped = try IconService.strip(project: withIcons)

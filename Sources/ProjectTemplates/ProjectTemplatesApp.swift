@@ -248,6 +248,7 @@ struct MainView: View {
         .sheet(isPresented: $m.importPresented) { ImportSheet() }
         .sheet(isPresented: Binding(get: { m.compatibilityPresented && !m.newProjectPresented }, set: { m.compatibilityPresented = $0 })) { CompatibilitySheet() }
         .sheet(item: $m.workspacePrompt) { WorkspaceSheet(record: $0) }
+        .sheet(item: $m.restoreIconsPrompt) { record in RestoreIconsSheet(record: record) }
         .sheet(item: $m.workspaceToBrowse) { record in
             VStack(alignment: .leading, spacing: 12) {
                 HStack { Text(record.name).font(.title2); Spacer(); Button("Done") { m.workspaceToBrowse = nil } }
@@ -288,6 +289,68 @@ struct MainView: View {
                 }, managedTemplate: true, surface: .managedTemplate)
             }.padding(20).frame(width: 820, height: 640)
         }
+    }
+}
+
+struct RestoreIconsSheet: View {
+    @EnvironmentObject var m: AppModel
+    let record: ProjectRecord
+    @State private var format: String
+    @State private var candidates: [IconRestoreCandidate] = []
+    @State private var selectedSet: UUID?
+
+    init(record: ProjectRecord) {
+        self.record = record
+        _format = State(initialValue: Library.formats.contains(record.format) ? record.format : "")
+    }
+    var selectedCandidate: IconRestoreCandidate? { candidates.first { $0.id == selectedSet } }
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text("Restore Folder Icons").font(.title2.weight(.semibold))
+            Text("Choose a set for this operation. New Project's saved set stays unchanged.").font(.callout)
+            Text(record.name).font(.caption).foregroundStyle(.secondary)
+            if !Library.formats.contains(record.format) {
+                Picker("Project format", selection: $format) {
+                    Text("Choose a format…").tag("")
+                    ForEach(m.library.presets) { Text($0.label).tag($0.format) }
+                }.onChange(of: format) { refreshCandidates() }
+            } else {
+                LabeledContent("Format", value: m.label(for: format))
+            }
+            if Library.formats.contains(format) {
+                Picker("Template set", selection: $selectedSet) {
+                    Text("Choose a set…").tag(UUID?.none)
+                    ForEach(candidates) { candidate in
+                        Text(candidate.name + (candidate.available ? "" : " · layout mismatch"))
+                            .tag(Optional(candidate.id)).disabled(!candidate.available)
+                    }
+                }
+                if candidates.isEmpty { Text("No set has a payload for this format.").foregroundStyle(.secondary) }
+                if let reason = selectedCandidate?.reason { Text(reason).font(.caption).foregroundStyle(.orange).textSelection(.enabled) }
+                ForEach(candidates.filter { !$0.available }) { candidate in
+                    Text("\(candidate.name): \(candidate.reason ?? "layout mismatch")")
+                        .font(.caption2).foregroundStyle(.secondary).textSelection(.enabled)
+                }
+            }
+            Spacer()
+            HStack {
+                Button("Cancel") { m.restoreIconsPrompt = nil }.keyboardShortcut(.cancelAction)
+                Spacer()
+                Button("Restore") {
+                    guard let selectedSet else { return }
+                    m.restoreIcons(record, format: format, setID: selectedSet)
+                    m.restoreIconsPrompt = nil
+                }.keyboardShortcut(.defaultAction)
+                    .disabled(!Library.formats.contains(format) || selectedCandidate?.available != true || m.busy)
+            }
+        }
+        .padding(22).frame(width: 520, height: 300)
+        .onAppear { refreshCandidates() }
+    }
+    private func refreshCandidates() {
+        candidates = m.iconRestoreCandidates(for: record, format: format)
+        let available = candidates.filter(\.available)
+        selectedSet = available.count == 1 ? available[0].id : nil
     }
 }
 
