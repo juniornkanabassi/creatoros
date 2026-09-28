@@ -45,6 +45,12 @@ enum VariantState {
 enum BrowserSurface: String, CaseIterable { case projectFiles, managedTemplate, creationPreview }
 
 struct PendingAssignment: Equatable { let setID: UUID; let format: String }
+struct IconRestoreCandidate: Identifiable {
+    let id: UUID
+    let name: String
+    let available: Bool
+    let reason: String?
+}
 struct NewSetPrompt: Identifiable { let id = UUID(); let mappingTemplateID: UUID?; var name: String }
 struct CachedStructure { let plan: CopyPlan; let rootModified: Date?; let renamingPaths: Set<String>? }
 
@@ -169,6 +175,7 @@ enum BadgeColour: String, CaseIterable, Identifiable {
     @Published var workspacePrompt: ProjectRecord?
     @Published var workspaceToBrowse: ProjectRecord?
     @Published var workspaceCleanup: ProjectRecord?
+    @Published var restoreIconsPrompt: ProjectRecord?
     @Published var binIdea: ProjectRecord?
     @Published var confirmedWorkspaceURL: URL?
     @Published var groupByDate: Bool { didSet { defaults.set(groupByDate, forKey: "groupByDate") } }
@@ -974,16 +981,37 @@ enum BadgeColour: String, CaseIterable, Identifiable {
             if self.selectedProject == record.id { self.inspectProject(record) }
         }
     }
-    /// Puts the current content template's folder icons back onto a registered project, for one that came back from LucidLink.
+    /// Opens a one-operation set and format chooser without changing New Project preferences.
     func restoreIcons(_ record: ProjectRecord) {
         guard !record.isPlanned else { return }
-        guard case .set(let setID) = selection, let set = library.set(setID), let payload = library.resolve(setID: setID, format: record.format) else {
-            error = "Choose a content template set in New Project first; its \(label(for: record.format)) payload provides the icons."; return
+        restoreIconsPrompt = record
+    }
+    func iconRestoreCandidates(for record: ProjectRecord, format: String) -> [IconRestoreCandidate] {
+        guard Library.formats.contains(format) else { return [] }
+        do {
+            let project = try record.resolve()
+            try runtime.requireWritable(project)
+            let fields = iconRestoreFields(record, format: format)
+            return library.sets.compactMap { set in
+                guard let payload = library.resolve(setID: set.id, format: format) else { return nil }
+                do {
+                    let root = store.payload(payload)
+                    try runtime.requireWritable(root)
+                    try IconService.preflight(template: root, fields: fields, onto: project)
+                    return IconRestoreCandidate(id: set.id, name: set.name, available: true, reason: nil)
+                } catch {
+                    return IconRestoreCandidate(id: set.id, name: set.name, available: false, reason: error.localizedDescription)
+                }
+            }
+        } catch {
+            return [IconRestoreCandidate(id: UUID(), name: "Unable to check sets", available: false, reason: error.localizedDescription)]
         }
-        let parts = record.name.components(separatedBy: " — ")
-        let fields = ProjectFields(number: record.number ?? "", format: record.format, campaign: parts.count >= 4 ? parts[2] : "",
-                                   title: parts.count >= 4 ? parts.dropFirst(3).joined(separator: " — ") : record.title)
-        let root = store.payload(payload), icon = library.presets.first { $0.format == record.format }?.icon
+    }
+    func restoreIcons(_ record: ProjectRecord, format: String, setID: UUID) {
+        guard !record.isPlanned, Library.formats.contains(format),
+              let set = library.set(setID), let payload = library.resolve(setID: setID, format: format) else { return }
+        let fields = iconRestoreFields(record, format: format)
+        let root = store.payload(payload), icon = library.presets.first { $0.format == format }?.icon
         let runtime = runtime
         run("Restoring folder icons from \(set.name)") { token, _ in
             let project = try record.resolve()
@@ -994,6 +1022,11 @@ enum BadgeColour: String, CaseIterable, Identifiable {
             if !report.failed.isEmpty { self.error = "Some icons could not be written. " + report.failed.prefix(3).joined(separator: " ") + (report.failed.count > 3 ? " …" : "") + " A drive such as LucidLink cannot hold folder icons; move the project to a Mac drive first." }
             if self.selectedProject == record.id { self.inspectProject(record) }
         }
+    }
+    private func iconRestoreFields(_ record: ProjectRecord, format: String) -> ProjectFields {
+        let parts = record.name.components(separatedBy: " — ")
+        return ProjectFields(number: record.number ?? "", format: format, campaign: parts.count >= 4 ? parts[2] : "",
+                             title: parts.count >= 4 ? parts.dropFirst(3).joined(separator: " — ") : record.title)
     }
 
     // MARK: Finder tags

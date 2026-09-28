@@ -186,6 +186,78 @@ public struct IconRestoreReport: Sendable {
 }
 
 public extension IconService {
+    /// Checks the complete destination folder layout before restore writes any metadata.
+    static func preflight(template payload: URL, fields: ProjectFields, onto project: URL,
+                          cancellation: Cancellation = Cancellation()) throws {
+        let plan = try TemplateReader.scan(payload, fields: fields, cancellation: cancellation)
+        try preflight(plan: plan, onto: project)
+    }
+    private static func preflight(plan: CopyPlan, onto project: URL) throws {
+        guard (try project.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true else {
+            throw AppFailure("The project folder is unavailable.")
+        }
+        let fm = FileManager.default
+        func directory(_ path: String) -> Bool {
+            guard let values = try? URL(fileURLWithPath: path, isDirectory: true).resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey]) else { return false }
+            return values.isDirectory == true && values.isSymbolicLink != true
+        }
+        func numberedPrefix(_ name: String) -> String? {
+            let digits = name.prefix(while: \.isNumber)
+            return digits.isEmpty ? nil : String(digits)
+        }
+        var childrenCache: [String: [URL]] = [:]
+        func children(of folder: URL) throws -> [URL] {
+            if let cached = childrenCache[folder.path] { return cached }
+            do {
+                let found = try fm.contentsOfDirectory(at: folder, includingPropertiesForKeys: [.isDirectoryKey])
+                childrenCache[folder.path] = found
+                return found
+            } catch {
+                throw AppFailure("Cannot inspect project folder layout at \(folder.path): \(error.localizedDescription)")
+            }
+        }
+        var conflicts: [String: Set<String>] = [:]
+        for entry in plan.entries where entry.directory {
+            var parent = project
+            let components = entry.output.split(separator: "/").map(String.init)
+            for (index, component) in components.enumerated() {
+                let siblings = try children(of: parent)
+                if let exact = siblings.first(where: { Naming.key($0.lastPathComponent) == Naming.key(component) }) {
+                    if directory(exact.path) {
+                        parent = exact
+                        continue
+                    }
+                    let ancestor = components.prefix(index + 1).joined(separator: "/")
+                    conflicts[ancestor, default: []].insert(exact.path)
+                    break
+                }
+                if let expectedPrefix = numberedPrefix(component) {
+                    for sibling in siblings where directory(sibling.path) {
+                        guard numberedPrefix(sibling.lastPathComponent) == expectedPrefix,
+                              Naming.key(sibling.lastPathComponent) != Naming.key(component) else { continue }
+                        let ancestor = components.prefix(index + 1).joined(separator: "/")
+                        conflicts[ancestor, default: []].insert(sibling.path)
+                    }
+                }
+                break
+            }
+        }
+        let oldPremiere = project.appendingPathComponent("02 Project Files/01 Video", isDirectory: true)
+        let newPremiere = project.appendingPathComponent("02 Project Files/01 Premiere Pro", isDirectory: true)
+        if directory(oldPremiere.path), directory(newPremiere.path) {
+            conflicts["Premiere folder anchors", default: []].formUnion([oldPremiere.path, newPremiere.path])
+        }
+        guard conflicts.isEmpty else {
+            let evidence = conflicts.keys.sorted().flatMap { ancestor in
+                conflicts[ancestor, default: []].sorted().map { "\(ancestor) conflicts with \($0)" }
+            }
+            let shown = evidence.prefix(4).joined(separator: "; ")
+            let omitted = evidence.count - min(evidence.count, 4)
+            let more = omitted > 0 ? " +\(omitted) more conflicts." : "."
+            throw AppFailure("The selected template does not match this project's folder layout. No icons were changed. Showing \(min(evidence.count, 4)) of \(evidence.count) conflicts: \(shown)\(more)")
+        }
+    }
+
     /// Reattaches every custom folder icon the template carries onto the matching folders of an existing project,
     /// matched by the same substituted paths creation would have produced. Files are never touched, folders are never
     /// created, renamed or removed; a folder the project no longer has is reported, not made. The outer folder gets
@@ -193,7 +265,7 @@ public extension IconService {
     static func restore(template payload: URL, fields: ProjectFields, onto project: URL, presetIcon: Data? = nil,
                         cancellation: Cancellation = Cancellation()) throws -> IconRestoreReport {
         let plan = try TemplateReader.scan(payload, fields: fields, cancellation: cancellation)
-        guard (try project.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true else { throw AppFailure("The project folder is unavailable.") }
+        try preflight(plan: plan, onto: project)
         var report = IconRestoreReport()
         let fm = FileManager.default
         // Icon\r files first, then their folders, so the custom-icon flag never points at a missing file.
