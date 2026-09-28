@@ -42,7 +42,6 @@ do {
     try fm.createDirectory(at: base, withIntermediateDirectories: false)
     // Keep this run's disposable fixtures for inspection; no user folder is ever removed.
     print("FIXTURES \(base.path)")
-    try plainCopyChecks(base: base)
     let source = base.appendingPathComponent("Original")
     let destination = base.appendingPathComponent("Projects")
     try fm.createDirectory(at: destination, withIntermediateDirectories: false)
@@ -172,6 +171,7 @@ do {
     try compatibilityChecks(base: base)
     try runtimeChecks(base: base)
     try boardChecks(base: base)
+    try plainCopyChecks(base: base)
     try relinkChecks(base: base)
     let args = ProcessInfo.processInfo.arguments
     if let index = args.firstIndex(of: "--master"), args.indices.contains(index + 1) {
