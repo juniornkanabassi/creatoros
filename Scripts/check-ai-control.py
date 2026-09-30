@@ -71,15 +71,15 @@ try:
     state = command('status')
     check(state['selectedProject']['id'] == ref and state['page'] == 'Projects', 'CLI create selection is visible in main-actor GUI state')
     check(command('project','reveal','missing',code=1)['error']['code'] == 'not_found', 'project reveal error route without opening Finder')
-    if any(tool['name'] == 'project_rename' for tool in json.loads(subprocess.check_output([str(cli),'mcp-manifest']))['tools']):
-        preview = command('project','rename',ref,'--title','Renamed test','--dry-run')
-        check(preview['dryRun'] and pathlib.Path(created['path']).exists(), 'rename dry-run changes nothing')
-        renamed = command('project','rename',ref,'--title','Renamed test','--request-id','rename-1')
-        check(pathlib.Path(renamed['newPath']).is_dir() and not pathlib.Path(created['path']).exists(), 'rename updates disk and record')
-        check(command('project','rename',ref,'--title','Renamed test','--request-id','rename-1')['newPath'] == renamed['newPath'], 'rename session idempotency')
-        check(command('status')['selectedProject']['name'] == renamed['newName'], 'CLI rename updates GUI selection name')
     manifest = json.loads(subprocess.check_output([str(cli),'mcp-manifest']))
-    check(len(manifest['tools']) >= 7, 'mcp-manifest from command table')
+    expected_tools = {'status','library_stats','project_list','project_status','project_open','project_reveal','project_create','project_rename'}
+    check({tool['name'] for tool in manifest['tools']} == expected_tools, 'mcp-manifest contains the exact eight shipped tools')
+    preview = command('project','rename',ref,'--title','Renamed test','--dry-run')
+    check(preview['dryRun'] and pathlib.Path(created['path']).exists(), 'rename dry-run changes nothing')
+    renamed = command('project','rename',ref,'--title','Renamed test','--request-id','rename-1')
+    check(pathlib.Path(renamed['newPath']).is_dir() and not pathlib.Path(created['path']).exists(), 'rename updates disk and record')
+    check(command('project','rename',ref,'--title','Renamed test','--request-id','rename-1')['newPath'] == renamed['newPath'], 'rename session idempotency')
+    check(command('status')['selectedProject']['name'] == renamed['newName'], 'CLI rename updates GUI selection name')
     for tool in manifest['tools']:
         words = tool['name'].split('_')
         text = subprocess.check_output([str(cli), *words, '--help'], text=True)
@@ -117,17 +117,16 @@ try:
         results = list(pool.map(concurrent_create, ['Concurrent A','Concurrent B']))
     check(0 in results, 'concurrent create preserves each request or reports busy')
     # Block only this synthetic library's durable save: disk rename must roll back.
-    if any(tool['name'] == 'project_rename' for tool in manifest['tools']):
-        before = command('project','status',ref)
-        selected_before = command('status')['selectedProject']
-        saved_library = (root / 'library.json').read_bytes()
-        (root / 'library.json').unlink(); (root / 'library.json').mkdir()
-        try:
-            failure = command('project','rename',ref,'--title','Save failure rollback',code=1)
-            check('error' in failure and pathlib.Path(before['path']).is_dir(), 'rename library-save failure restores disk names')
-            check(command('status')['selectedProject'] == selected_before, 'rename save failure retains GUI record')
-        finally:
-            (root / 'library.json').rmdir(); (root / 'library.json').write_bytes(saved_library)
+    before = command('project','status',ref)
+    selected_before = command('status')['selectedProject']
+    saved_library = (root / 'library.json').read_bytes()
+    (root / 'library.json').unlink(); (root / 'library.json').mkdir()
+    try:
+        failure = command('project','rename',ref,'--title','Save failure rollback',code=1)
+        check('error' in failure and pathlib.Path(before['path']).is_dir(), 'rename library-save failure restores disk names')
+        check(command('status')['selectedProject'] == selected_before, 'rename save failure retains GUI record')
+    finally:
+        (root / 'library.json').rmdir(); (root / 'library.json').write_bytes(saved_library)
     print('RESULT', checks, 'AI control checks passed; fixture',root)
 finally:
     if proc is not None:
