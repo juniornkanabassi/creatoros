@@ -77,7 +77,9 @@ public enum ProjectRename {
                     // ponytail: headings in Markdown files up to 8 MiB; leave larger documents unchanged.
                     guard (try child.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0) <= 8 * 1024 * 1024,
                           let text = String(data: try Data(contentsOf: child), encoding: .utf8) else { continue }
-                    let line = String(text.prefix { $0 != "\n" })
+                    let bytes = Data(text.utf8)
+                    let lineEnd = bytes.firstIndex(of: 10) ?? bytes.endIndex
+                    let line = String(decoding: bytes[..<lineEnd], as: UTF8.self)
                     if line.hasPrefix("#"), line.contains(record.name) { headings.append(ProjectRenameChange(path: relative(child), from: line, to: line.replacingOccurrences(of: record.name, with: newName), heading: true)) }
                 }
             }
@@ -93,13 +95,16 @@ public enum ProjectRename {
     }
     private static func heading(_ url: URL, from: String, to: String) throws {
         let data = try Data(contentsOf: url)
-        guard let text = String(data: data, encoding: .utf8), String(text.prefix { $0 != "\n" }) == from else { throw AppFailure("Markdown changed since review: \(url.path)") }
+        guard String(data: data, encoding: .utf8) != nil else { throw AppFailure("Markdown changed since review: \(url.path)") }
+        let lineEnd = data.firstIndex(of: 10) ?? data.endIndex
+        guard String(decoding: data[..<lineEnd], as: UTF8.self) == from else { throw AppFailure("Markdown changed since review: \(url.path)") }
         // Write in place: retain inode, Finder metadata and permissions.
         let fd = Darwin.open(url.path, O_WRONLY | O_NOFOLLOW)
         guard fd >= 0 else { throw AppFailure("Cannot update heading at \(url.path)") }
         let file = FileHandle(fileDescriptor: fd, closeOnDealloc: true)
         defer { try? file.close() }
-        let replacement = Data((to + text.dropFirst(from.count)).utf8)
+        var replacement = Data(to.utf8)
+        replacement.append(data.dropFirst(from.utf8.count))
         do { try file.write(contentsOf: replacement); try file.truncate(atOffset: UInt64(replacement.count)); try file.synchronize() }
         catch {
             do { try file.seek(toOffset: 0); try file.write(contentsOf: data); try file.truncate(atOffset: UInt64(data.count)); try file.synchronize() }
