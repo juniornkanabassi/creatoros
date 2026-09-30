@@ -46,7 +46,7 @@ try:
     check(command('library','stats')['templates'] == 1, 'library stats')
     check(command('project','list')['total'] == 0, 'project list empty')
     check(command('project','list','--limit','0',code=2)['error']['code'] == 'usage', 'CLI usage exit 2')
-    created = command('project','create','--format','Short','--title','Socket test','--request-id','create-1')
+    created = command('project','create','--format','Short','--title','Socket test','--campaign','Temporary campaign','--request-id','create-1')
     check(pathlib.Path(created['path']).is_dir(), 'project create writes folder and durable record')
     check(command('project','create','--format','Short','--title','Socket test','--request-id','create-1')['id'] == created['id'], 'create session idempotency')
     next_created = command('project','create','--format','Short','--title','Next socket test')
@@ -83,6 +83,7 @@ try:
         {'jsonrpc':'2.0','id':4,'method':'tools/call','params':{'name':'status','arguments':{}}},
         {'jsonrpc':'2.0','id':5,'method':'unknown'},
         {'jsonrpc':'2.0','id':6,'method':'tools/call','params':{'name':'project_status','arguments':{'project':'missing'}}},
+        {'jsonrpc':'2.0','id':7,'method':'tools/call','params':{'name':'project_rename','arguments':{'project':ref,'campaign':''}}},
     ]
     mcp = subprocess.run(['node',str(shim)], input=''.join(json.dumps(r)+'\n' for r in requests), capture_output=True,text=True,env=env,timeout=30)
     check(mcp.returncode == 0, 'MCP starts with packaged manifest')
@@ -90,6 +91,7 @@ try:
     check(replies[1]['result']['protocolVersion'] == '2025-06-18' and replies[2]['result']['tools'] == manifest['tools'] and replies[3]['result'] == {}, 'MCP initialize/list/ping')
     check(json.loads(replies[4]['result']['content'][0]['text'])['pid'] == pid, 'MCP forwards tools/call to built CLI')
     check(replies[5]['error']['code'] == -32601 and replies[6]['result']['isError'], 'MCP unknown methods and action failures')
+    check(not replies[7]['result'].get('isError') and command('project','status',ref)['campaign'] is None, 'MCP rename clears an existing campaign')
     suite = 'local.creatoros.alpha.' + base64.b64encode(str(root).encode()).decode()
     format_before = subprocess.check_output(['/usr/bin/defaults','read',suite,'format'],text=True).strip()
     command('project','create','--format','Long','--title','Form preservation','--campaign','')

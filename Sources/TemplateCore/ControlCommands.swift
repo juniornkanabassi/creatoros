@@ -9,7 +9,7 @@ public struct ControlCommand {
     public var tool: String { action.replacingOccurrences(of: ".", with: "_") }
     public var schema: [String: Any] {
         var properties: [String: Any] = [:]
-        for key in strings { properties[key] = ["type": "string"] }
+        for key in strings { properties[key] = ["type": "string", "maxLength": 4096] as [String: Any]; if key != "campaign" { properties[key] = ["type": "string", "minLength": 1, "maxLength": 4096] } }
         for key in booleans { properties[key] = ["type": "boolean"] }
         for key in integers { properties[key] = ["type": "integer", "minimum": key == "limit" ? 1 : 0]; if key == "limit" { properties[key] = ["type": "integer", "minimum": 1, "maximum": 200] } }
         return ["type": "object", "properties": properties, "required": required, "additionalProperties": false]

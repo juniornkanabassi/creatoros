@@ -25,7 +25,7 @@ function validArgs(tool, args) {
     const prop = schema.properties[key];
     if (!prop) return false;
     if (prop.type === 'integer') return Number.isSafeInteger(value) && value >= (prop.minimum ?? 0) && value <= (prop.maximum ?? Number.MAX_SAFE_INTEGER);
-    if (prop.type === 'string') return typeof value === 'string' && value.length > 0;
+    if (prop.type === 'string') return typeof value === 'string' && new TextEncoder().encode(value).length <= (prop.maxLength ?? Infinity) && value.length >= (prop.minLength ?? 0);
     return prop.type === 'boolean' && typeof value === 'boolean';
   });
 }
