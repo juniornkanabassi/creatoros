@@ -62,6 +62,10 @@ do {
             else { flags[key] = value }
         } else { words.append(arg) }
     }
+    if words == ["mcp-manifest"] {
+        guard flags.isEmpty, !show else { throw fail("usage", "mcp-manifest accepts only global output/data flags.") }
+        print(json(["tools": ControlCommand.all.map { ["name": $0.tool, "description": $0.description, "inputSchema": $0.schema] }])); exit(0)
+    }
     let action = words.first == "status" ? "status" : words.prefix(2).joined(separator: ".")
     guard let command = ControlCommand.all.first(where: { $0.action == action }) else { throw fail("usage", "Unknown command. See --help.") }
     let consumed = action == "status" ? 1 : 2

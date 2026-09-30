@@ -82,6 +82,17 @@ try:
     check(replies[1]['result']['protocolVersion'] == '2025-06-18' and replies[2]['result']['tools'] == manifest['tools'] and replies[3]['result'] == {}, 'MCP initialize/list/ping')
     check(json.loads(replies[4]['result']['content'][0]['text'])['pid'] == proc.pid, 'MCP forwards tools/call to built CLI')
     check(replies[5]['error']['code'] == -32601 and replies[6]['result']['isError'], 'MCP unknown methods and action failures')
+    # Block only this synthetic library's durable save: disk rename must roll back.
+    if any(tool['name'] == 'project_rename' for tool in manifest['tools']):
+        before = command('project','status',ref)
+        saved_library = (root / 'library.json').read_bytes()
+        (root / 'library.json').unlink(); (root / 'library.json').mkdir()
+        try:
+            failure = command('project','rename',ref,'--title','Save failure rollback',code=1)
+            check('error' in failure and pathlib.Path(before['path']).is_dir(), 'rename library-save failure restores disk names')
+            check(command('status')['selectedProject']['name'] == before['name'], 'rename save failure retains GUI record')
+        finally:
+            (root / 'library.json').rmdir(); (root / 'library.json').write_bytes(saved_library)
     print('RESULT', checks, 'AI control checks passed; fixture',root)
 finally:
     proc.terminate(); proc.wait(timeout=10)

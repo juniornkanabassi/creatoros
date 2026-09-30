@@ -179,6 +179,7 @@ enum BadgeColour: String, CaseIterable, Identifiable {
     var controlServer: ControlServer?
     var controlResults: [String: [String: Any]] = [:]
     var controlPending = Set<String>()
+    var controlMutating = false
     @Published var restoreIconsPrompt: ProjectRecord?
     @Published var binIdea: ProjectRecord?
     @Published var confirmedWorkspaceURL: URL?
@@ -245,6 +246,7 @@ enum BadgeColour: String, CaseIterable, Identifiable {
         if !selectionIsValid { selection = defaultSelection }
         destination = preset.destination
         number = suggestedNumber
+        startControl()
         if storeUsable {
             refreshMounts()
             mountTimer = Timer.scheduledTimer(withTimeInterval: 20, repeats: true) { [weak self] _ in Task { @MainActor in self?.refreshMounts() } }

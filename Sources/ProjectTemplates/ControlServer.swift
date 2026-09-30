@@ -79,7 +79,7 @@ extension AppModel {
     func startControl() {
         guard controlServer == nil else { return }
         do { controlServer = try ControlServer(root: runtime.root) { [weak self] in await self?.control($0) ?? ["id": NSNull(), "ok": false, "error": ["code": "internal", "message": "App is closing."]] } }
-        catch { self.error = error.localizedDescription }
+        catch { storeUsable = false; self.error = error.localizedDescription }
     }
     func control(_ request: [String: Any]) async -> [String: Any] {
         let id = request["id"] ?? NSNull()
@@ -94,6 +94,12 @@ extension AppModel {
             if let key, controlPending.contains(key) { throw ControlFailure(code: "busy", message: "This request is still running; retry the same requestId.") }
             if let key { guard controlResults.count < 4096 else { throw ControlFailure(code: "busy", message: "Session request cache is full; restart before creating more projects.") }; controlPending.insert(key) }
             defer { if let key { controlPending.remove(key) } }
+            let mutating = action == "project.create" || action == "project.rename"
+            if mutating {
+                guard !controlMutating else { throw ControlFailure(code: "busy", message: "Another control mutation is preparing or running.") }
+                controlMutating = true
+            }
+            defer { if mutating { controlMutating = false } }
             let result = try await controlAction(action, params)
             if let key { controlResults[key] = result }
             if params["show"] as? Bool == true, action != "project.reveal" { NSApp.activate(ignoringOtherApps: true) }
@@ -121,7 +127,7 @@ extension AppModel {
          "mounted": !record.isPlanned && mountedLocations.contains(record.location.key), "pinned": record.isPinned]
     }
     func controlAction(_ action: String, _ params: [String: Any]) async throws -> [String: Any] {
-        if action == "status" { return ["app": AppInfo.name, "version": AppInfo.version, "channel": AppInfo.channel, "pid": getpid(), "dataRoot": runtime.root.path, "isolated": runtime.isIsolated, "storeUsable": storeUsable, "busy": busy, "statusText": status, "page": page.rawValue, "selectedProject": selectedRecord.map { ["id": $0.id.uuidString, "name": $0.name] } as Any? ?? NSNull(), "newProjectSheetOpen": newProjectPresented, "renameSheetOpen": renamePrompt != nil, "socket": runtime.root.appendingPathComponent("control.sock").path] }
+        if action == "status" { return ["app": AppInfo.name, "version": AppInfo.version, "channel": AppInfo.channel, "pid": getpid(), "dataRoot": runtime.root.path, "isolated": runtime.isIsolated, "storeUsable": storeUsable, "busy": busy || controlMutating, "statusText": status, "page": page.rawValue, "selectedProject": selectedRecord.map { ["id": $0.id.uuidString, "name": $0.name] } as Any? ?? NSNull(), "newProjectSheetOpen": newProjectPresented, "renameSheetOpen": renamePrompt != nil, "socket": runtime.root.appendingPathComponent("control.sock").path] }
         guard storeUsable else { throw ControlFailure(code: "store_unavailable", message: "Resolve the library error in the GUI first.") }
         let visible = library.projects.filter { $0.isPlanned || !hiddenLocations.contains($0.location.key) }
         if action == "library.stats" { return ["schema": Library.currentSchema, "projects": visible.filter { !$0.isPlanned }.count, "ideas": visible.filter(\.isPlanned).count, "byFormat": Dictionary(grouping: visible, by: \.format).mapValues(\.count), "byStage": Dictionary(grouping: visible, by: { effectiveStage($0) }).mapValues(\.count), "templates": library.templates.count, "sets": library.sets.count, "locations": distinctLocations.count, "hiddenLocations": hiddenLocations.sorted()] }
@@ -158,8 +164,12 @@ extension AppModel {
             title = params["title"] as! String; campaign = params["campaign"] as? String ?? ""
             numberIsAutomatic = params["number"] == nil; number = params["number"] as? String ?? suggestedNumber
             do { _ = try fields.finalName() } catch { throw ControlFailure(code: "invalid_params", message: error.localizedDescription) }
+            guard !hiddenLocations.contains(ProjectLocation(path: destination).key) else { throw ControlFailure(code: "location_hidden", message: "Tick the destination's location in the GUI first.") }
             guard !destination.isEmpty else { throw ControlFailure(code: "no_destination", message: "Choose a destination for this format in the GUI.") }
+            busy = true
             refresh(); await refreshTask?.value
+            busy = false
+            guard !newProjectPresented, renamePrompt == nil, !importPresented else { throw ControlFailure(code: "form_in_use", message: "Close the app's project form first.") }
             guard canCreate else { throw ControlFailure(code: "template_not_ready", message: validation.isEmpty ? "Template cannot create this project." : validation) }
             let templateID = payload?.id.uuidString
             let record: ProjectRecord = try await withCheckedThrowingContinuation { done in create { done.resume(with: $0) } }
@@ -175,6 +185,29 @@ extension AppModel {
             result["previousPaths"] = record.previousPaths ?? []; return result
         }
         guard !busy else { throw ControlFailure(code: "busy", message: "Wait for the current operation.") }
+        if action == "project.rename" {
+            guard renamePrompt == nil, !newProjectPresented, !importPresented else { throw ControlFailure(code: "form_in_use", message: "Close the app's rename or creation form first.") }
+            guard let fields = ProjectRename.fields(of: record) else { throw ControlFailure(code: "invalid_params", message: "Rename needs Number — Format — [Campaign — ]Title and an existing folder.") }
+            let number = params["number"] as? String ?? fields.number
+            let campaign = params["campaign"] as? String ?? fields.campaign
+            let title = params["title"] as? String ?? fields.title
+            let headings = params["updateHeadings"] as? Bool ?? false
+            let plan: ProjectRenamePlan
+            do { busy = true; defer { busy = false }; plan = try await renamePlan(for: record.id, number: number, campaign: campaign, title: title, updateHeadings: headings) }
+            catch let failure as ControlFailure { throw failure }
+            catch { throw ControlFailure(code: "rename_failed", message: error.localizedDescription) }
+            let adobe = Self.runningAdobeApps()
+            if params["dryRun"] as? Bool == true {
+                return ["dryRun": true, "oldName": plan.oldName, "newName": plan.newName, "changes": plan.changes.count,
+                        "items": plan.changes.prefix(50).map { ["path": $0.path, "from": $0.from, "to": $0.to] }, "warnings": plan.warnings + adobe.map { "Running: " + $0 }]
+            }
+            guard adobe.isEmpty || params["ignoreOpenApps"] as? Bool == true else { throw ControlFailure(code: "adobe_app_running", message: "Close " + adobe.joined(separator: ", ") + " or explicitly use --ignore-open-apps.") }
+            let result: ProjectRenameResult = try await withCheckedThrowingContinuation { done in
+                renameProject(record.id, number: number, campaign: campaign, title: title, updateHeadings: headings, expectedChanges: plan.changes) { done.resume(with: $0) }
+            }
+            return ["id": record.id.uuidString, "oldName": plan.oldName, "newName": plan.newName, "oldPath": result.oldRoot.path, "newPath": result.newRoot.path,
+                    "renamed": result.changes.count, "manifest": result.manifest.path, "warnings": plan.warnings]
+        }
         if action == "project.open" { search = ""; formatFilter = "All formats"; excludedStages = []; selectedProject = record.id; page = .projects; selectProject(); return ["id": record.id.uuidString, "name": record.name, "selected": true] }
         if action == "project.reveal" {
             let url = try projectFolderForAction(record)

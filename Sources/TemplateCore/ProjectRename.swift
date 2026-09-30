@@ -38,7 +38,11 @@ public enum ProjectRename {
         let newName = try fields.finalName()
         guard number.range(of: #"^\d+$"#, options: .regularExpression) != nil else { throw AppFailure("Use digits for the project number.") }
         guard Naming.key(newName) != Naming.key(record.name) else { throw AppFailure("Choose a different name; case-only and unchanged renames are refused.") }
-        let root = try record.resolve().standardizedFileURL.resolvingSymlinksInPath()
+        let unresolved = try record.resolve()
+        try runtime.requireWritable(unresolved)
+        let root = unresolved.standardizedFileURL.resolvingSymlinksInPath()
+        let libraries = [runtime.root, AppRuntime.stableRoot, AppRuntime.alphaRoot]
+        guard !libraries.contains(where: { AppRuntime.contains(root, $0) || AppRuntime.contains($0.appendingPathComponent("Templates"), root) || root.deletingLastPathComponent() == $0 }) else { throw AppFailure("Library folders and managed templates cannot be renamed.") }
         try runtime.requireWritable(root)
         guard root.lastPathComponent == record.name,
               try root.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey]).isDirectory == true else { throw AppFailure("The project moved or is unavailable. Locate Folder before renaming.") }
@@ -62,7 +66,7 @@ public enum ProjectRename {
                 try cancellation.check()
                 let values = try child.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey, .isPackageKey, .isHiddenKey, .isRegularFileKey])
                 let name = child.lastPathComponent
-                let excluded = name.hasPrefix(".") || name == "Icon\r" || values.isHidden == true || values.isSymbolicLink == true || (directory.standardizedFileURL.resolvingSymlinksInPath() == root && name == "03 Media")
+                let excluded = name.hasPrefix(".") || name == "Icon\r" || values.isHidden == true || values.isSymbolicLink == true || (values.isDirectory != true && values.isRegularFile != true) || (directory.standardizedFileURL.resolvingSymlinksInPath() == root && name == "03 Media")
                 let next = excluded ? name : replacement(name)
                 guard names.insert(Naming.key(next)).inserted else { throw AppFailure("Rename would collide at \(child.path), including case or Unicode variants.") }
                 if excluded { continue }
@@ -95,8 +99,13 @@ public enum ProjectRename {
         guard fd >= 0 else { throw AppFailure("Cannot update heading at \(url.path)") }
         let file = FileHandle(fileDescriptor: fd, closeOnDealloc: true)
         defer { try? file.close() }
-        try file.write(contentsOf: Data((to + text.dropFirst(from.count)).utf8))
-        try file.truncate(atOffset: UInt64(Data((to + text.dropFirst(from.count)).utf8).count)); try file.synchronize()
+        let replacement = Data((to + text.dropFirst(from.count)).utf8)
+        do { try file.write(contentsOf: replacement); try file.truncate(atOffset: UInt64(replacement.count)); try file.synchronize() }
+        catch {
+            do { try file.seek(toOffset: 0); try file.write(contentsOf: data); try file.truncate(atOffset: UInt64(data.count)); try file.synchronize() }
+            catch { throw AppFailure("Heading update and restoration failed at \(url.path): \(error.localizedDescription)") }
+            throw error
+        }
     }
     private static func undo(_ changes: [ProjectRenameChange], root: URL, newRoot: URL) throws {
         var current = newRoot
@@ -131,8 +140,12 @@ public enum ProjectRename {
             let parent = (try? other.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true ? other : current
             try runtime.requireWritable(parent)
             let url = parent.appendingPathComponent("Rename-" + UUID().uuidString + ".json")
-            try JSONEncoder().encode(plan.changes).write(to: url, options: .withoutOverwriting)
+            let fd = Darwin.open(url.path, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW, 0o600)
+            guard fd >= 0 else { throw AppFailure("Cannot create rename manifest without overwriting.") }
             manifest = url
+            let file = FileHandle(fileDescriptor: fd, closeOnDealloc: true)
+            defer { try? file.close() }
+            try file.write(contentsOf: JSONEncoder().encode(plan.changes)); try file.synchronize()
             return ProjectRenameResult(oldRoot: plan.root, newRoot: current, manifest: url, changes: done)
         } catch {
             if let manifest { try? FileManager.default.removeItem(at: manifest) }

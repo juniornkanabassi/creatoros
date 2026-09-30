@@ -1,6 +1,6 @@
 # CreatorOS
 
-Native SwiftUI/AppKit Mac app that creates correctly named project folders from reusable content templates and tracks them through the content pipeline. Current source is the everyday **CreatorOS 1.2.0** release (tag `v1.2.0`), installed at `/Applications/JuniorOS Apps/CreatorOS.app`.
+Native SwiftUI/AppKit Mac app that creates correctly named project folders from reusable content templates and tracks them through the content pipeline. Current source targets **CreatorOS 1.3.0** on `release-2026-09-30`. The installed app remains 1.2.0 at `/Applications/JuniorOS Apps/CreatorOS.app`; this build does not install, tag or push.
 
 CreatorOS keeps the established `local.projecttemplates.mac` identity and `~/Library/Application Support/Project Templates/` data root so existing preferences, templates, bookmarks and catalogue data continue without a lossy copy or merge. The internal executable remains `ProjectTemplates`; that is not a user-facing product name. Explicit `--data-directory` launches and ContentTool remain isolated from the everyday library. A build carrying the old alpha identifier or α channel also selects isolation, never production data.
 
@@ -40,6 +40,8 @@ Sources/TemplateCore/     engine, no UI
   TemplateSets.swift      content template sets and per-format variants
   Naming.swift            fields, tokens, the shared substitution rule, validation
   FileEngine.swift        template reader, copy plan, copy engine, icon service
+  ProjectRename.swift     reviewed exclusive rename and rollback
+  ControlCommands.swift   shared CLI/help/MCP action table
   Preview.swift           placeholder rendering that can never become a copy plan
   Catalogue.swift         project discovery, availability, retained export indexing
   Locations.swift         drive and cloud classification, per-format numbering
@@ -98,3 +100,41 @@ Alpha `library.json` uses schema 6 with optional owned idea workspace references
 ## Limits worth knowing
 
 Ad-hoc signed, not Developer ID or notarised; do not distribute it as a finished release. Column view widths are fixed. Folder artwork is macOS metadata and does not travel to Windows or phones. The copy engine is not a security boundary against templates being modified adversarially while copying. Whole-folder drag import, branch exclusion, managed payload editing, portable sharing and Post Haste recents remain unbuilt.
+
+## AI control
+
+`creatoros` controls the running GUI through its existing main-actor actions. ContentTool remains an isolated test/audit utility. Commands do not activate CreatorOS or Finder unless `--show` is explicitly supplied. `status` works while stopped and returns `running: false` without launching. Other commands launch the bundled app with `open -g` and wait up to 10 seconds; action responses time out after 30 seconds, or 600 seconds for create/rename. CLI exits are 0 success, 1 action/transport failure, 2 usage error. `--json` prints a single result/error JSON line; successful output is concise JSON even without it.
+
+| Command | Example |
+| --- | --- |
+| `status` | `creatoros status --json` |
+| `library stats` | `creatoros library stats --json` |
+| `project list` | `creatoros project list --format Short --stage Writing --search Example --limit 10 --offset 0` |
+| `project status <ref>` | `creatoros project status 001 --format Short` |
+| `project open <ref>` | `creatoros project open 001 --format Short` |
+| `project reveal <ref>` | `creatoros project reveal 001 --format Short --show` |
+| `project create` | `creatoros project create --format Short --title Example --number 001 --campaign Series --template Fixture --request-id create-001` |
+| `project rename <ref>` | `creatoros project rename 001 --format Short --title Updated --dry-run` |
+| `mcp-manifest` | `creatoros mcp-manifest` |
+| `help` / `--help` | `creatoros project rename --help` |
+
+References accept a UUID, exact folder name or number; use `--format` for ambiguous numbers, or `--project` instead of a positional reference. Global flags are `--json`, `--show`, `--data-directory PATH`, `--help`. A disposable data root can also come from `CREATOROS_DATA_DIRECTORY`; it must be a dedicated child of a temporary directory. Production uses the established Project Templates data root. List supports `--include-ideas`; hidden locations are never read or listed. Create needs format/title and accepts number, campaign and a unique template set or payload name/UUID. It retains New Project's saved form settings. Create and rename accept `--request-id`: a session retry returns the first successful result; an in-flight retry returns busy. A full session cache refuses further request IDs rather than risking a duplicate.
+
+Rename accepts title/number/campaign, `--dry-run`, `--update-headings` (off by default) and `--ignore-open-apps` (explicitly overrides the Adobe-running refusal). Dry runs return at most 50 items plus the complete change count. The GUI sheet lists every change. Media under `03 Media`, hidden items, symlinks and package internals are excluded; Markdown updates change only matching first-line headings in UTF-8 files up to 8 MiB. Names, case/Unicode collisions and a changed reviewed plan are refused before commit. Exclusive rename support is required; unlike project creation, rename does not fall back on SMB. Library save failure restores the original names. A manifest records the changes under `05 Other/` or the project root. Premiere relinking and Watchtower paths remain separate and unverified; no Adobe app is controlled. No token savings have been measured.
+
+The Unix socket is `<data root>/control.sock` (directory 0700, socket 0600, same-user peers only), with newline JSON requests `{"id":"1","action":"status","params":{}}` and `{"id":"1","ok":true,"result":{...}}` or `{"id":"1","ok":false,"error":{"code":"...","message":"..."}}`. Unknown params and requests over 65,536 bytes are refused. Only stale socket files are removed at launch. This is local control, with no authentication beyond OS ownership/peer identity and no remote listener.
+
+The bundled CLI is `Contents/MacOS/creatoros`, and `install.sh` links it into `~/.local/bin` only for the default install root, preserving non-symlink files. The MCP shim ships at `Contents/Resources/mcp/creatoros-mcp.mjs`, uses Node built-ins and the CLI's shared command manifest, and implements protocol 2025-06-18 (`initialize`, `notifications/initialized`, `tools/list`, `tools/call`, `ping`). Node must already be installed. Each app carries its own thin shim; accepted duplication avoids a shared runtime dependency.
+
+```sh
+claude mcp add creatoros -- node "/Applications/JuniorOS Apps/CreatorOS.app/Contents/Resources/mcp/creatoros-mcp.mjs"
+```
+
+```toml
+# ~/.codex/config.toml
+[mcp_servers.creatoros]
+command = "node"
+args = ["/Applications/JuniorOS Apps/CreatorOS.app/Contents/Resources/mcp/creatoros-mcp.mjs"]
+```
+
+For a disposable build check: `zsh Scripts/check-ai-control.sh "/path/to/CreatorOS.app"`; `python3 Scripts/check-control.py "/path/to/CreatorOS.app"` exercises the socket boundary. `MCP_CLI` overrides the shim's executable for testing. MCP inherits `CREATOROS_DATA_DIRECTORY`. UI gestures, physical disconnected drives, real LucidLink and Adobe relinking need separate acceptance evidence.

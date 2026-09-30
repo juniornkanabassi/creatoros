@@ -1,4 +1,5 @@
 import Foundation
+import Darwin
 import TemplateCore
 
 func renameChecks(base: URL) throws {
@@ -30,6 +31,14 @@ func renameChecks(base: URL) throws {
     try put(bytes, at: root.appendingPathComponent("Old.md"))
     try rejects("rename collision refused") { _ = try ProjectRename.plan(record: original, number: "002", campaign: "", title: "New", runtime: runtime) }
     try FileManager.default.removeItem(at: root.appendingPathComponent("New.md"))
+    let locked = root.appendingPathComponent("Old locked.txt")
+    try put(bytes, at: locked)
+    let rollbackPlan = try ProjectRename.plan(record: original, number: "002", campaign: "", title: "New", updateHeadings: true, runtime: runtime)
+    guard chflags(locked.path, UInt32(UF_IMMUTABLE)) == 0 else { throw AppFailure("Cannot prepare locked-file rollback check.") }
+    defer { _ = chflags(locked.path, 0) }
+    try rejects("rename mid-way failure rolls back") { _ = try ProjectRename.apply(rollbackPlan, runtime: runtime) }
+    try check(Data(contentsOf: root.appendingPathComponent("02 Project Files/001 — Short — Old.prproj")) == bytes && String(contentsOf: root.appendingPathComponent("01 Documents/Old.md"), encoding: .utf8).hasPrefix("# 001 — Short — Old"), "rename forced rollback restores earlier names and heading")
+    guard chflags(locked.path, 0) == 0 else { throw AppFailure("Cannot unlock fixture.") }
     let stale = try ProjectRename.plan(record: original, number: "002", campaign: "", title: "New", runtime: runtime)
     try put(bytes, at: root.appendingPathComponent("Old extra.txt"))
     try rejects("rename stale reviewed list refused") { _ = try ProjectRename.apply(stale, runtime: runtime) }

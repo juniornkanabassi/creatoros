@@ -21,13 +21,14 @@ public struct ControlCommand {
         .init(action: "project.status", description: "Inspect a project by UUID, name or number", example: "creatoros project status 001 --format Short", strings: ["project", "format"], booleans: [], integers: [], required: ["project"]),
         .init(action: "project.open", description: "Select a project in the GUI", example: "creatoros project open 001 --format Short", strings: ["project", "format"], booleans: ["show"], integers: [], required: ["project"]),
         .init(action: "project.reveal", description: "Open the project folder in Finder", example: "creatoros project reveal 001 --format Short", strings: ["project", "format"], booleans: ["show"], integers: [], required: ["project"]),
-        .init(action: "project.create", description: "Create and register a project using the app action", example: "creatoros project create --format Short --title Example --request-id example-1", strings: ["format", "title", "number", "campaign", "template", "requestId"], booleans: ["show"], integers: [], required: ["format", "title"])
+        .init(action: "project.create", description: "Create and register a project using the app action", example: "creatoros project create --format Short --title Example --request-id example-1", strings: ["format", "title", "number", "campaign", "template", "requestId"], booleans: ["show"], integers: [], required: ["format", "title"]),
+        .init(action: "project.rename", description: "Preview or apply the app's reviewed project rename", example: "creatoros project rename 001 --format Short --title Updated --dry-run", strings: ["project", "format", "title", "number", "campaign", "requestId"], booleans: ["dryRun", "updateHeadings", "ignoreOpenApps", "show"], integers: [], required: ["project"])
     ]
     public func validate(_ params: [String: Any]) throws {
         let allowed = Set(strings + booleans + integers)
         guard Set(params.keys).isSubset(of: allowed), required.allSatisfy({ params[$0] != nil }) else { throw AppFailure("Unknown or missing parameters for \(action).") }
         for (key, value) in params {
-            if strings.contains(key) { guard let text = value as? String, !text.isEmpty, text.utf8.count <= 4096 else { throw AppFailure("\(key) must be a non-empty string of at most 4096 bytes.") } }
+            if strings.contains(key) { guard let text = value as? String, (key == "campaign" || !text.isEmpty), text.utf8.count <= 4096 else { throw AppFailure("\(key) must be a non-empty string of at most 4096 bytes.") } }
             if booleans.contains(key) { guard let n = value as? NSNumber, CFGetTypeID(n) == CFBooleanGetTypeID() else { throw AppFailure("\(key) must be a boolean.") } }
             if integers.contains(key) { guard let n = value as? NSNumber, CFGetTypeID(n) != CFBooleanGetTypeID(), n.doubleValue.rounded() == n.doubleValue, n.doubleValue >= (key == "limit" ? 1 : 0), n.doubleValue <= (key == "limit" ? 200 : Double(Int.max / 2)) else { throw AppFailure("\(key) is outside its integer range.") } }
         }
