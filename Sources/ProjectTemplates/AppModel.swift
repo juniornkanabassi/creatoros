@@ -175,6 +175,10 @@ enum BadgeColour: String, CaseIterable, Identifiable {
     @Published var workspacePrompt: ProjectRecord?
     @Published var workspaceToBrowse: ProjectRecord?
     @Published var workspaceCleanup: ProjectRecord?
+    @Published var renamePrompt: ProjectRecord?
+    var controlServer: ControlServer?
+    var controlResults: [String: [String: Any]] = [:]
+    var controlPending = Set<String>()
     @Published var restoreIconsPrompt: ProjectRecord?
     @Published var binIdea: ProjectRecord?
     @Published var confirmedWorkspaceURL: URL?
@@ -541,8 +545,8 @@ enum BadgeColour: String, CaseIterable, Identifiable {
 
     // MARK: Creation
 
-    func create() {
-        guard canCreate, let plan, let preview else { return }
+    func create(onFinish: ((Result<ProjectRecord, Error>) -> Void)? = nil) {
+        guard canCreate, let plan, let preview else { onFinish?(.failure(AppFailure("Project cannot be created from the current form."))); return }
         let destination = URL(fileURLWithPath: destination); let name = preview.outerFolderName
         let icon = preset.icon; let format = format; let payloadID = payload?.id
         let campaignAtCreation = campaign
@@ -595,9 +599,11 @@ enum BadgeColour: String, CaseIterable, Identifiable {
                 self.newProjectPresented = false
                 self.nextProject()
                 if record.ideaWorkspace != nil { self.workspaceCleanup = record }
-            } catch { self.error = "The project exists at \(url.path), but history could not be saved. Do not create it again. Resolve the storage issue, restart the app, then use Add Existing Project to recover. \(error.localizedDescription)" }
+                onFinish?(.success(record))
+            } catch { onFinish?(.failure(error)); self.error = "The project exists at \(url.path), but history could not be saved. Do not create it again. Resolve the storage issue, restart the app, then use Add Existing Project to recover. \(error.localizedDescription)" }
             }
         } failure: { message in
+            onFinish?(.failure(ControlFailure(code: "create_failed", message: message)))
             if message.contains("changed") {
                 if let origin, origin.ideaWorkspace != nil { self.invalidateStructure(origin.id) }
                 else if let payloadID { self.invalidateStructure(payloadID) }
@@ -625,7 +631,7 @@ enum BadgeColour: String, CaseIterable, Identifiable {
                     }
                 }.value
                 busy = false; status = "Complete"; completion(result)
-            } catch is CancellationError { busy = false; status = "Cancelled. Nothing was created or registered." }
+            } catch is CancellationError { busy = false; status = "Cancelled. Nothing was created or registered."; failure("Operation cancelled.") }
             catch { busy = false; status = "Stopped"; self.error = error.localizedDescription; failure(error.localizedDescription) }
         }
     }

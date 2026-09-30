@@ -112,10 +112,17 @@ extension AppModel {
             relinkReport?.markLinked(record.id, at: url)
         }
     }
+    func projectFolderForAction(_ record: ProjectRecord) throws -> URL {
+        guard !record.isPlanned, !hiddenLocations.contains(record.location.key) else { throw ControlFailure(code: "location_hidden", message: "Choose a project on a ticked location.") }
+        guard mountedLocations.contains(record.location.key) else { throw ControlFailure(code: "unavailable", message: "Connect the project's drive first.") }
+        let url = try record.resolve()
+        try runtime.requireWritable(url)
+        guard FileManager.default.fileExists(atPath: url.path) else { throw ControlFailure(code: "unavailable", message: "Folder is unavailable. Use Locate Folder.") }
+        return url
+    }
     func open(_ record: ProjectRecord) {
         attempt {
-            let url = try record.resolve()
-            guard FileManager.default.fileExists(atPath: url.path) else { throw AppFailure("Folder is unavailable. Its drive may be disconnected, access may be denied, or the folder may have moved. Use Locate Folder.") }
+            let url = try projectFolderForAction(record)
             if !NSWorkspace.shared.open(url) { throw AppFailure("Finder could not open this folder.") }
         }
     }

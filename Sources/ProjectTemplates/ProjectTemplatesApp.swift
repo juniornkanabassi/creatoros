@@ -13,7 +13,7 @@ import TemplateCore
         // writer over the same library. Test bundles use a separate identifier.
         // A copy that is still finishing its quit (saving the library) must not swallow the new launch: Junior's
         // relaunch from Spotlight used to activate that departing copy and exit, so nothing opened. Wait for it first.
-        if let identifier = Bundle.main.bundleIdentifier,
+        if !ProcessInfo.processInfo.arguments.contains("--data-directory"), let identifier = Bundle.main.bundleIdentifier,
            let existing = NSRunningApplication.runningApplications(withBundleIdentifier: identifier)
             .first(where: { $0.processIdentifier != ProcessInfo.processInfo.processIdentifier }) {
             // isTerminated only updates through the run loop, which is not running yet; ask the kernel instead.
@@ -22,7 +22,7 @@ import TemplateCore
             let deadline = Date().addingTimeInterval(8)
             while alive() && Date() < deadline { Thread.sleep(forTimeInterval: 0.1) }
             if alive() {
-                existing.activate(options: [.activateAllWindows])
+                if !ProcessInfo.processInfo.arguments.contains("--background") { existing.activate(options: [.activateAllWindows]) }
                 exit(0)
             }
         }
@@ -32,7 +32,9 @@ import TemplateCore
             MainView().environmentObject(model).frame(minWidth: 1000, minHeight: 680)
                 .onAppear {
                     delegate.model = model
-                    NSApp.setActivationPolicy(.regular); NSApp.activate(ignoringOtherApps: true); model.refresh()
+                    NSApp.setActivationPolicy(.regular)
+                    if !ProcessInfo.processInfo.arguments.contains("--background") { NSApp.activate(ignoringOtherApps: true) }
+                    model.startControl(); model.refresh()
                     WindowSetup.apply(zoom: { model.zoom($0) }, reset: { model.zoomLevel = 0 })
                 }
         }
