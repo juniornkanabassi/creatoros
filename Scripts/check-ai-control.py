@@ -43,6 +43,16 @@ try:
         if (root / 'control.sock').exists(): break
         assert proc is None or proc.poll() is None, 'test app exited'; time.sleep(.1)
     check(command('status')['pid'] == pid, 'status targets disposable built app')
+    if app.suffix == '.app':
+        other_root = pathlib.Path(tempfile.mkdtemp(prefix='cos-ai-second-', dir='/private/tmp'))
+        def other_command(*args):
+            result = subprocess.run([str(cli), *args, '--json', '--data-directory', str(other_root)], capture_output=True, text=True, timeout=30)
+            assert result.returncode == 0, (args, result.stdout, result.stderr)
+            return json.loads(result.stdout)
+        other_command('library','stats')
+        other_state = other_command('status')
+        check(other_state['isolated'] and other_state['dataRoot'] == str(other_root) and other_state['pid'] != pid, 'separate isolated launch starts beside existing instance')
+        os.kill(other_state['pid'], signal.SIGTERM)
     check(command('library','stats')['templates'] == 1, 'library stats')
     check(command('project','list')['total'] == 0, 'project list empty')
     check(command('project','list','--limit','0',code=2)['error']['code'] == 'usage', 'CLI usage exit 2')

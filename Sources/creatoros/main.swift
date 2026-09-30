@@ -89,8 +89,7 @@ do {
         let launch = Process(); launch.executableURL = URL(fileURLWithPath: "/usr/bin/open")
         let executable = URL(fileURLWithPath: CommandLine.arguments[0]).resolvingSymlinksInPath()
         let bundle = executable.deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
-        var launchArgs = ["-g"]
-        if dataDirectory != nil { launchArgs += ["-n"] }
+        var launchArgs = ["-g", "-n"]
         launchArgs += bundle.pathExtension == "app" ? ["-a", bundle.path] : ["-b", "local.projecttemplates.mac"]
         launchArgs += ["--args", "--background"]
         if dataDirectory != nil { launchArgs += ["--data-directory", root.path] }

@@ -2,6 +2,32 @@ import SwiftUI
 import AppKit
 import TemplateCore
 
+private func launchArguments(for pid: pid_t) -> [String]? {
+    var mib: [Int32] = [CTL_KERN, KERN_PROCARGS2, pid]
+    var size = 0
+    guard sysctl(&mib, u_int(mib.count), nil, &size, nil, 0) == 0, size > MemoryLayout<Int32>.size else { return nil }
+    var bytes = [UInt8](repeating: 0, count: size)
+    guard sysctl(&mib, u_int(mib.count), &bytes, &size, nil, 0) == 0 else { return nil }
+    let argc = bytes.withUnsafeBytes { $0.loadUnaligned(as: Int32.self) }
+    guard argc > 0 else { return nil }
+    var index = MemoryLayout<Int32>.size
+    while index < size && bytes[index] != 0 { index += 1 }
+    while index < size && bytes[index] == 0 { index += 1 }
+    var result: [String] = []
+    for _ in 0..<argc {
+        guard index < size else { return nil }
+        let end = bytes[index...].firstIndex(of: 0) ?? size
+        result.append(String(decoding: bytes[index..<end], as: UTF8.self))
+        index = end + 1
+    }
+    return result
+}
+
+private func dataRootArgument(_ arguments: [String]) -> String? {
+    guard let index = arguments.firstIndex(of: "--data-directory"), arguments.indices.contains(index + 1) else { return nil }
+    return URL(fileURLWithPath: arguments[index + 1]).standardizedFileURL.path
+}
+
 @main struct ContentTemplateApp: App {
     @StateObject private var model = AppModel()
     @NSApplicationDelegateAdaptor(CreatorOSDelegate.self) private var delegate
@@ -13,9 +39,13 @@ import TemplateCore
         // writer over the same library. Test bundles use a separate identifier.
         // A copy that is still finishing its quit (saving the library) must not swallow the new launch: Junior's
         // relaunch from Spotlight used to activate that departing copy and exit, so nothing opened. Wait for it first.
-        if !ProcessInfo.processInfo.arguments.contains("--data-directory"), let identifier = Bundle.main.bundleIdentifier,
+        if let identifier = Bundle.main.bundleIdentifier,
            let existing = NSRunningApplication.runningApplications(withBundleIdentifier: identifier)
-            .first(where: { $0.processIdentifier != ProcessInfo.processInfo.processIdentifier }) {
+            .first(where: { app in
+                guard app.processIdentifier != ProcessInfo.processInfo.processIdentifier,
+                      let args = launchArguments(for: app.processIdentifier) else { return false }
+                return dataRootArgument(args) == dataRootArgument(ProcessInfo.processInfo.arguments)
+            }) {
             // isTerminated only updates through the run loop, which is not running yet; ask the kernel instead.
             let pid = existing.processIdentifier
             func alive() -> Bool { kill(pid, 0) == 0 }
