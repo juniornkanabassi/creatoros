@@ -78,7 +78,13 @@ final class ControlServer: @unchecked Sendable {
 extension AppModel {
     func startControl() {
         guard controlServer == nil else { return }
-        do { controlServer = try ControlServer(root: runtime.root) { [weak self] in await self?.control($0) ?? ["id": NSNull(), "ok": false, "error": ["code": "internal", "message": "App is closing."]] } }
+        do {
+            controlServer = try ControlServer(root: runtime.root) { [weak self] in await self?.control($0) ?? ["id": NSNull(), "ok": false, "error": ["code": "internal", "message": "App is closing."]] }
+            if storeUsable {
+                refreshMounts()
+                mountTimer = Timer.scheduledTimer(withTimeInterval: 20, repeats: true) { [weak self] _ in Task { @MainActor in self?.refreshMounts() } }
+            }
+        }
         catch { storeUsable = false; self.error = error.localizedDescription }
     }
     func control(_ request: [String: Any]) async -> [String: Any] {

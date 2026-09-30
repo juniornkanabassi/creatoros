@@ -246,11 +246,6 @@ enum BadgeColour: String, CaseIterable, Identifiable {
         if !selectionIsValid { selection = defaultSelection }
         destination = preset.destination
         number = suggestedNumber
-        startControl()
-        if storeUsable {
-            refreshMounts()
-            mountTimer = Timer.scheduledTimer(withTimeInterval: 20, repeats: true) { [weak self] _ in Task { @MainActor in self?.refreshMounts() } }
-        }
     }
 
     // MARK: Selection and resolution
