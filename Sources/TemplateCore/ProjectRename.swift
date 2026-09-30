@@ -160,7 +160,8 @@ public enum ProjectRename {
         }
     }
     public static func revert(_ result: ProjectRenameResult) throws {
-        try FileManager.default.removeItem(at: result.manifest)
         try undo(result.changes, root: result.oldRoot, newRoot: result.newRoot)
+        let relativeManifest = result.manifest.path.dropFirst(result.newRoot.path.count)
+        try? FileManager.default.removeItem(atPath: result.oldRoot.path + relativeManifest)
     }
 }

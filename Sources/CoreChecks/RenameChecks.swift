@@ -30,6 +30,7 @@ func renameChecks(base: URL, iconData: Data) throws {
     try check(FileManager.default.fileExists(atPath: result.manifest.path), "rename manifest exists")
     try record.relocate(to: result.newRoot)
     try check(record.notes == "keep" && record.isPinned && record.previousPaths?.contains(root.path) == true, "rename record relocation retains metadata and old path")
+    try FileManager.default.removeItem(at: result.manifest)
     try ProjectRename.revert(result)
     try check(Data(contentsOf: root.appendingPathComponent("02 Project Files/001 — Short — Old.prproj")) == bytes && String(contentsOf: root.appendingPathComponent("01 Documents/Old.md"), encoding: .utf8).hasPrefix("# 001 — Short — Old"), "rename revert restores names and headings")
     let original = try ProjectRecord(url: root, format: "Short")
