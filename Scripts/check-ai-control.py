@@ -92,6 +92,7 @@ try:
     format_before = subprocess.check_output(['/usr/bin/defaults','read',suite,'format'],text=True).strip()
     command('project','create','--format','Long','--title','Form preservation','--campaign','')
     check(subprocess.check_output(['/usr/bin/defaults','read',suite,'format'],text=True).strip() == format_before, 'CLI create restores saved New Project format')
+    check(command('project','status',created['number'],code=1)['error']['code'] == 'ambiguous_project', 'project number ambiguity requires format or UUID')
     # Simultaneous create requests must never borrow each other's form values.
     def concurrent_create(title):
         response = subprocess.run([str(cli),'project','create','--format','Short','--title',title,'--request-id',title,'--json','--data-directory',str(root)],capture_output=True,text=True,timeout=30)
