@@ -49,7 +49,10 @@ for p in applied["projects"]:
     manifest = {}
     if "manifest.json" not in row["missing"]:
         manifest = json.load(open(os.path.join(backup, "manifest.json")))
-    for rel, digest in manifest.get("files", {}).items():
+    expected = p.get("files")
+    if not isinstance(expected, dict) or manifest.get("files") != expected:
+        row["mismatched"].append("manifest.json files differ from applied report")
+    for rel, digest in (expected or {}).items():
         row["files"] += 1
         target = os.path.join(backup, "Sources", rel)
         if not os.path.isfile(target):
@@ -77,7 +80,7 @@ for r in results:
     by_drive[r["drive"]][r["status"]] += 1
 today = datetime.date.today().isoformat()
 lines = [f"# Notion backup verification [{today}]", "",
-         "Read-only re-check of the backups written on 2026-09-03. Every file listed in a backup's manifest was re-hashed and compared with the recorded SHA-256. Nothing was rewritten.", "",
+         "Read-only re-check of the backups written on 2026-09-03. Every file listed in the applied report was re-hashed and compared with the recorded SHA-256. Nothing was rewritten.", "",
          "| Drive | Verified | Problem | Folder missing | Drive not connected |", "| --- | ---: | ---: | ---: | ---: |"]
 for drive, c in sorted(by_drive.items()):
     label = "Macintosh HD" if drive == "/" else os.path.basename(drive)

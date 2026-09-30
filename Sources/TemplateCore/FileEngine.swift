@@ -277,13 +277,16 @@ public extension IconService {
             guard (try? folder.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true else {
                 report.unmatched.append((entry.output as NSString).deletingLastPathComponent); continue
             }
+            var createdIcon = false
             do {
-                if !fm.fileExists(atPath: target.path) { try Data(contentsOf: source).write(to: target) }
+                if !fm.fileExists(atPath: target.path) { try Data(contentsOf: source).write(to: target, options: .withoutOverwriting); createdIcon = true }
+                let values = try target.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey])
+                guard values.isRegularFile == true, values.isSymbolicLink != true else { throw AppFailure("Icon support must be an ordinary file.") }
                 try copyMetadata(from: source, to: target)
                 try copyMetadata(from: source.deletingLastPathComponent(), to: folder)
                 report.restored.append((entry.output as NSString).deletingLastPathComponent.isEmpty ? "." : (entry.output as NSString).deletingLastPathComponent)
             } catch {
-                try? fm.removeItem(at: target)
+                if createdIcon { try? fm.removeItem(at: target) }
                 report.failed.append("\(entry.output): \(error.localizedDescription)")
             }
         }
@@ -315,13 +318,14 @@ public extension IconService {
         var report = IconStripReport()
         let fm = FileManager.default
         var folders: [URL] = [project]
-        guard let enumerator = fm.enumerator(at: project, includingPropertiesForKeys: [.isDirectoryKey, .isSymbolicLinkKey, .isPackageKey], options: []) else { throw AppFailure("Cannot read the project folder.") }
+        guard let enumerator = fm.enumerator(at: project, includingPropertiesForKeys: [.isDirectoryKey, .isSymbolicLinkKey, .isPackageKey, .isRegularFileKey], options: []) else { throw AppFailure("Cannot read the project folder.") }
         for case let url as URL in enumerator {
             try cancellation.check()
-            let values = try url.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey, .isPackageKey])
+            let values = try url.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey, .isPackageKey, .isRegularFileKey])
             if values.isSymbolicLink == true { continue }
             if values.isPackage == true { enumerator.skipDescendants(); continue }
             if url.lastPathComponent == "Icon\r" {
+                guard values.isRegularFile == true else { enumerator.skipDescendants(); report.failed.append(relative(url, to: project) + ": not an ordinary icon file"); continue }
                 do { try fm.removeItem(at: url); report.iconFilesRemoved.append(relative(url, to: project)) }
                 catch { report.failed.append("\(relative(url, to: project)): \(error.localizedDescription)") }
             } else if values.isDirectory == true { folders.append(url) }
@@ -456,8 +460,9 @@ public enum CreationEngine {
                 guard descriptor >= 0 else { throw AppFailure("Cannot read \(entry.source). Check access and download any cloud-only files first.") }
                 let input = FileHandle(fileDescriptor: descriptor, closeOnDealloc: true)
                 defer { try? input.close() }
-                guard fm.createFile(atPath: target.path, contents: nil) else { throw AppFailure("Cannot create \(entry.output). Check free space and permissions.") }
-                let output = try FileHandle(forWritingTo: target)
+                let outputDescriptor = Darwin.open(target.path, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW, 0o644)
+                guard outputDescriptor >= 0 else { throw AppFailure("Cannot create \(entry.output) without overwriting. Check free space and permissions.") }
+                let output = FileHandle(fileDescriptor: outputDescriptor, closeOnDealloc: true)
                 defer { try? output.close() }
                 while true {
                     try cancellation.check()

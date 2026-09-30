@@ -7,6 +7,7 @@ snapshots to existing project/01 Documents folders. Never edits library.json.
 import argparse
 import collections
 import csv
+import datetime
 import hashlib
 import io
 import json
@@ -363,6 +364,11 @@ if __name__ == '__main__':
     parser.add_argument('--apply', action='store_true')
     parser.add_argument('--supplement-from', help='Completed apply report; add only verified cross-page exported image references')
     args = parser.parse_args()
+    try:
+        if datetime.date.fromisoformat(args.date).isoformat() != args.date:
+            raise ValueError()
+    except ValueError:
+        parser.error('--date must be YYYY-MM-DD')
     if args.supplement_from:
         if not args.apply:
             parser.error('--supplement-from requires explicit --apply')

@@ -17,7 +17,7 @@ public struct BrowserItem: Identifiable, Sendable {
 /// Read-only navigation. No metadata files, symlinks, package internals or executable launch.
 public enum ProjectBrowser {
     public static let projectExtensions: Set<String> = ["prproj", "aep", "aepx", "sesx", "psd", "psb", "drp", "fcpbundle", "logicx", "band"]
-    public static let unsafeExtensions: Set<String> = ["app", "command", "sh", "bash", "zsh", "py", "js", "scpt", "applescript", "workflow", "exe", "bat", "cmd", "ps1", "pkg", "dmg"]
+    public static let unsafeExtensions: Set<String> = ["app", "command", "sh", "bash", "zsh", "py", "js", "scpt", "applescript", "workflow", "exe", "bat", "cmd", "ps1", "pkg", "dmg", "terminal", "fileloc", "webloc", "inetloc", "jar", "mobileconfig", "mpkg"]
     public static func root(_ record: ProjectRecord) throws -> URL {
         let root = try Catalogue.canonicalURL(record.resolve())
         let values = try root.resourceValues(forKeys: [.isDirectoryKey, .volumeUUIDStringKey])
