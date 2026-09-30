@@ -156,6 +156,7 @@ extension AppModel {
             let saved = (format, selection, number, numberIsAutomatic, title, campaign, extraValues, destination, plainFolders)
             defer {
                 format = saved.0; selection = saved.1; number = saved.2; numberIsAutomatic = saved.3
+                if numberIsAutomatic { number = suggestedNumber }
                 title = saved.4; campaign = saved.5; extraValues = saved.6; destination = saved.7; plainFolders = saved.8
                 refresh()
             }

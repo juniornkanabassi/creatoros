@@ -49,9 +49,11 @@ try:
     created = command('project','create','--format','Short','--title','Socket test','--request-id','create-1')
     check(pathlib.Path(created['path']).is_dir(), 'project create writes folder and durable record')
     check(command('project','create','--format','Short','--title','Socket test','--request-id','create-1')['id'] == created['id'], 'create session idempotency')
+    next_created = command('project','create','--format','Short','--title','Next socket test')
+    check(next_created['number'] == '002', 'CLI create advances saved automatic number in same format')
     ref = created['id']
     check(command('project','list','--format','Short','--search','Socket','--limit','1')['returned'] == 1, 'project list filters and pagination')
-    check(command('project','list','--offset','1')['returned'] == 0, 'project list offset')
+    check(command('project','list','--offset','2')['returned'] == 0, 'project list offset')
     check(command('project','status',ref)['available'], 'project status resolves UUID and availability')
     check(command('project','status',created['number'],'--format','Short')['id'] == ref, 'project status resolves number')
     check(command('project','status',created['name'])['id'] == ref, 'project status resolves exact name')
