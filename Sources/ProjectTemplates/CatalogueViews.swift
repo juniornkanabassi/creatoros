@@ -118,6 +118,7 @@ struct ProjectActions: View {
         // Read the pin state live: the menu bar keeps this view alive across library changes.
         let pinned = m.library.projects.first { $0.id == record.id }?.isPinned ?? record.isPinned
         Button(pinned ? "Unpin" : "Pin") { m.togglePin(record.id) }.keyboardShortcut("p", modifiers: [.command, .shift]).help("Pinned projects stay at the top of the list")
+        Button("Rename Project…") { m.requestRename(record) }.disabled(m.busy)
         Button("Open in Finder") { m.open(record) }.keyboardShortcut("o")
         Button("Show in Pipeline") { m.pipelineSelection = record.id; m.page = .pipeline }.keyboardShortcut("p", modifiers: [.command, .option]).help("Select this project on the Pipeline board")
         if showStages { Menu("Move to Stage") { ForEach(m.moveTargets(for: record), id: \.self) { stage in Button(stage) { m.setStage(stage, for: record.id) }.disabled(stage == m.effectiveStage(record)) } } }
@@ -186,7 +187,8 @@ struct ProjectInspector: View {
                 }.padding(10).background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 8))
             }
             HStack {
-                Button("Open in Finder") { m.open(record) }.help("Open the project folder in Finder, showing what is inside it")
+                Button("Rename Project…") { m.requestRename(record) }.disabled(m.busy)
+        Button("Open in Finder") { m.open(record) }.help("Open the project folder in Finder, showing what is inside it")
                 Button { findPremiere() } label: {
                     if findingPremiere { ProgressView().controlSize(.small) } else { Text("Open Premiere Project") }
                 }

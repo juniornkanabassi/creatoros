@@ -250,6 +250,7 @@ struct MainView: View {
         .sheet(isPresented: $m.importPresented) { ImportSheet() }
         .sheet(isPresented: Binding(get: { m.compatibilityPresented && !m.newProjectPresented }, set: { m.compatibilityPresented = $0 })) { CompatibilitySheet() }
         .sheet(item: $m.workspacePrompt) { WorkspaceSheet(record: $0) }
+        .sheet(item: $m.renamePrompt) { record in RenameProjectSheet(record: record) }
         .sheet(item: $m.restoreIconsPrompt) { record in RestoreIconsSheet(record: record) }
         .sheet(item: $m.workspaceToBrowse) { record in
             VStack(alignment: .leading, spacing: 12) {
