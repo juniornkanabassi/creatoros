@@ -1,7 +1,7 @@
 #!/bin/zsh
 set -euo pipefail
 cd "${0:A:h}"
-BUILD_ROOT="${CONTENT_TEMPLATE_BUILD_ROOT:-/private/tmp/creatoros-build}"
+BUILD_ROOT="${CONTENT_TEMPLATE_BUILD_ROOT:-${TMPDIR:-/private/tmp}/creatoros-build}"
 OUTPUT_ROOT="${CONTENT_TEMPLATE_OUTPUT_ROOT:-../Outputs}"
 APP_VERSION=$(/usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' Resources/Info.plist)
 APP_NAME=$(/usr/libexec/PlistBuddy -c 'Print CFBundleDisplayName' Resources/Info.plist)
@@ -16,11 +16,16 @@ if [[ -e "$ARCHIVE_PATH" ]]; then
   exit 1
 fi
 swift build --scratch-path "$BUILD_ROOT" -c release --product ProjectTemplates
+swift build --scratch-path "$BUILD_ROOT" -c release --product creatoros
 BIN_PATH=$(swift build --scratch-path "$BUILD_ROOT" -c release --show-bin-path)
 BUILD_STAGE=$(mktemp -d /private/tmp/content-template-package.XXXXXX)
 APP_PATH="$BUILD_STAGE/$APP_NAME.app"
 mkdir -p "$APP_PATH/Contents/MacOS" "$APP_PATH/Contents/Resources"
 cp "$BIN_PATH/ProjectTemplates" "$APP_PATH/Contents/MacOS/ProjectTemplates"
+cp "$BIN_PATH/creatoros" "$APP_PATH/Contents/MacOS/creatoros"
+mkdir -p "$APP_PATH/Contents/Resources/mcp"
+cp mcp/creatoros-mcp.mjs "$APP_PATH/Contents/Resources/mcp/"
+/usr/bin/codesign --force --sign - "$APP_PATH/Contents/MacOS/creatoros"
 cp Resources/Info.plist "$APP_PATH/Contents/Info.plist"
 cp "$ICON_SOURCE" "$APP_PATH/Contents/Resources/AppIcon.icns"
 # Finder/File Provider can attach FinderInfo to this newly made bundle directory.

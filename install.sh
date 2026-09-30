@@ -42,3 +42,17 @@ if ! /usr/bin/codesign --verify --strict "$DEST"; then
 fi
 if [[ -e "$BACKUP" ]]; then /bin/rm -rf "$BACKUP"; fi
 print "Installed $APP_NAME $ACTUAL_VERSION$CHANNEL_SUFFIX at $DEST"
+CLI_LINK="$HOME/.local/bin/creatoros"
+if [[ "$INSTALL_ROOT" == "/Applications/JuniorOS Apps" ]]; then
+  mkdir -p "$HOME/.local/bin"
+  if [[ -e "$CLI_LINK" && ! -L "$CLI_LINK" ]]; then
+    print -u2 "CLI link skipped: $CLI_LINK is not a symlink."
+  else
+    ln -sfn "$DEST/Contents/MacOS/creatoros" "$CLI_LINK"
+  fi
+fi
+print "claude mcp add creatoros -- node \"$DEST/Contents/Resources/mcp/creatoros-mcp.mjs\""
+print "# ~/.codex/config.toml"
+print "[mcp_servers.creatoros]"
+print 'command = "node"'
+print "args = [\"$DEST/Contents/Resources/mcp/creatoros-mcp.mjs\"]"
