@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Run every control command on synthetic data in the supplied build, with no input events."""
-import json, os, pathlib, socket, subprocess, sys, tempfile, time, uuid
+import base64, concurrent.futures, json, os, pathlib, signal, socket, subprocess, sys, tempfile, time, uuid
 app = pathlib.Path(sys.argv[1]).resolve()
 cli = app / 'Contents/MacOS/creatoros' if app.suffix == '.app' else app.parent / 'creatoros'
 exe = app / 'Contents/MacOS/ProjectTemplates' if app.suffix == '.app' else app
@@ -31,12 +31,18 @@ for fmt in formats: (root / 'Projects' / fmt).mkdir(parents=True)
 library = {'schema':6, 'projects':[], 'templates':[{'id':template,'name':'Fixture','imported':0,'source':str(payload),'mode':'full'}],
            'presets':[{'format':fmt,'destination':str(root / 'Projects' / fmt)} for fmt in formats], 'templateSets':[], 'finderTags':False}
 (root / 'library.json').write_text(json.dumps(library))
-proc = subprocess.Popen([str(exe), '--background','--data-directory',str(root)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+proc = None
+if app.suffix == '.app':
+    check(command('library','stats')['templates'] == 1, 'stopped built app launches via background CLI')
+    pid = command('status')['pid']
+else:
+    proc = subprocess.Popen([str(exe), '--background','--data-directory',str(root)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    pid = proc.pid
 try:
     for _ in range(100):
         if (root / 'control.sock').exists(): break
-        assert proc.poll() is None, 'test app exited'; time.sleep(.1)
-    check(command('status')['pid'] == proc.pid, 'status targets disposable built app')
+        assert proc is None or proc.poll() is None, 'test app exited'; time.sleep(.1)
+    check(command('status')['pid'] == pid, 'status targets disposable built app')
     check(command('library','stats')['templates'] == 1, 'library stats')
     check(command('project','list')['total'] == 0, 'project list empty')
     check(command('project','list','--limit','0',code=2)['error']['code'] == 'usage', 'CLI usage exit 2')
@@ -80,19 +86,38 @@ try:
     check(mcp.returncode == 0, 'MCP starts with packaged manifest')
     replies = {r['id']:r for r in map(json.loads,mcp.stdout.splitlines())}
     check(replies[1]['result']['protocolVersion'] == '2025-06-18' and replies[2]['result']['tools'] == manifest['tools'] and replies[3]['result'] == {}, 'MCP initialize/list/ping')
-    check(json.loads(replies[4]['result']['content'][0]['text'])['pid'] == proc.pid, 'MCP forwards tools/call to built CLI')
+    check(json.loads(replies[4]['result']['content'][0]['text'])['pid'] == pid, 'MCP forwards tools/call to built CLI')
     check(replies[5]['error']['code'] == -32601 and replies[6]['result']['isError'], 'MCP unknown methods and action failures')
+    suite = 'local.creatoros.alpha.' + base64.b64encode(str(root).encode()).decode()
+    format_before = subprocess.check_output(['/usr/bin/defaults','read',suite,'format'],text=True).strip()
+    command('project','create','--format','Long','--title','Form preservation','--campaign','')
+    check(subprocess.check_output(['/usr/bin/defaults','read',suite,'format'],text=True).strip() == format_before, 'CLI create restores saved New Project format')
+    # Simultaneous create requests must never borrow each other's form values.
+    def concurrent_create(title):
+        response = subprocess.run([str(cli),'project','create','--format','Short','--title',title,'--request-id',title,'--json','--data-directory',str(root)],capture_output=True,text=True,timeout=30)
+        result = json.loads(response.stdout)
+        assert (response.returncode == 0 and result['name'].endswith(title)) or (response.returncode == 1 and result['error']['code'] == 'busy'), (title,result)
+        return response.returncode
+    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
+        results = list(pool.map(concurrent_create, ['Concurrent A','Concurrent B']))
+    check(0 in results, 'concurrent create preserves each request or reports busy')
     # Block only this synthetic library's durable save: disk rename must roll back.
     if any(tool['name'] == 'project_rename' for tool in manifest['tools']):
         before = command('project','status',ref)
+        selected_before = command('status')['selectedProject']
         saved_library = (root / 'library.json').read_bytes()
         (root / 'library.json').unlink(); (root / 'library.json').mkdir()
         try:
             failure = command('project','rename',ref,'--title','Save failure rollback',code=1)
             check('error' in failure and pathlib.Path(before['path']).is_dir(), 'rename library-save failure restores disk names')
-            check(command('status')['selectedProject']['name'] == before['name'], 'rename save failure retains GUI record')
+            check(command('status')['selectedProject'] == selected_before, 'rename save failure retains GUI record')
         finally:
             (root / 'library.json').rmdir(); (root / 'library.json').write_bytes(saved_library)
     print('RESULT', checks, 'AI control checks passed; fixture',root)
 finally:
-    proc.terminate(); proc.wait(timeout=10)
+    if proc is not None:
+        proc.terminate(); proc.wait(timeout=10)
+    else:
+        state = command('status')
+        assert state['pid'] == pid and state['dataRoot'] == str(root), state
+        os.kill(pid, signal.SIGTERM)

@@ -4,10 +4,16 @@ import json, os, pathlib, socket, subprocess, sys, tempfile, time
 app = pathlib.Path(sys.argv[1]).resolve()
 exe = app / 'Contents/MacOS/ProjectTemplates' if app.suffix == '.app' else app
 root = pathlib.Path(tempfile.mkdtemp(prefix='cos-control-', dir='/private/tmp'))
+# A stale socket owned by this fixture must be replaced, never a regular file.
+stale = socket.socket(socket.AF_UNIX)
+stale.bind(str(root / 'control.sock')); stale.close()
 proc = subprocess.Popen([str(exe), '--background', '--data-directory', str(root)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 try:
     for _ in range(100):
-        if (root / 'control.sock').exists(): break
+        try:
+            with socket.socket(socket.AF_UNIX) as probe: probe.connect(str(root / 'control.sock'))
+            break
+        except OSError: pass
         assert proc.poll() is None, 'test app exited before socket startup'
         time.sleep(.1)
     def call(action, params=None):
@@ -27,7 +33,24 @@ try:
     assert call('project.list', {'limit':True})['error']['code'] == 'invalid_params'
     assert call('project.create', {'format':'Short','title':'Test'})['error']['code'] == 'template_not_ready'
     assert call('project.status', {'project':'missing'})['error']['code'] == 'not_found'
-    print('PASS 10 built-app socket checks; fixture', root)
+    with socket.socket(socket.AF_UNIX) as sock:
+        sock.settimeout(10); sock.connect(str(root / 'control.sock'))
+        sock.sendall(b'x' * 65537 + b'\n')
+        try: rejected = sock.recv(1) == b''
+        except ConnectionResetError: rejected = True
+        assert rejected, 'oversized request must close'
+    assert call('status')['ok'], 'oversized client must not stop server'
+    print('PASS 13 built-app socket checks (including stale socket and oversize); fixture', root)
 finally:
     # Only the exact disposable child spawned above, never a pre-existing app.
     proc.terminate(); proc.wait(timeout=10)
+
+blocked_root = pathlib.Path(tempfile.mkdtemp(prefix='cos-socket-file-', dir='/private/tmp'))
+(blocked_root / 'control.sock').write_bytes(b'keep this regular file')
+blocked = subprocess.Popen([str(exe), '--background', '--data-directory', str(blocked_root)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+try:
+    time.sleep(.5)
+    assert (blocked_root / 'control.sock').read_bytes() == b'keep this regular file'
+    print('PASS non-socket control path is preserved; fixture', blocked_root)
+finally:
+    blocked.terminate(); blocked.wait(timeout=10)

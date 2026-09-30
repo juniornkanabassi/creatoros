@@ -70,7 +70,7 @@ public enum ProjectRename {
                 let next = excluded ? name : replacement(name)
                 guard names.insert(Naming.key(next)).inserted else { throw AppFailure("Rename would collide at \(child.path), including case or Unicode variants.") }
                 if excluded { continue }
-                if next != name { try Naming.validate(next); renames.append(ProjectRenameChange(path: relative(child), from: name, to: next, heading: false)) }
+                if next != name { guard Naming.key(next) != Naming.key(name) else { throw AppFailure("Case-only rename is refused at " + child.path) }; try Naming.validate(next); renames.append(ProjectRenameChange(path: relative(child), from: name, to: next, heading: false)) }
                 if values.isPackage == true || TemplateReader.packages.contains(child.pathExtension.lowercased()) { continue }
                 if values.isDirectory == true { try walk(child) }
                 else if updateHeadings && values.isRegularFile == true && child.pathExtension.lowercased() == "md" {

@@ -170,7 +170,7 @@ do {
     try ideaWorkspaceChecks(base: base)
     try compatibilityChecks(base: base)
     try runtimeChecks(base: base)
-    try renameChecks(base: base)
+    try renameChecks(base: base, iconData: iconData)
     try securityChecks(base: base)
     try boardChecks(base: base)
     try plainCopyChecks(base: base)

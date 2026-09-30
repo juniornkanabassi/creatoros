@@ -2,7 +2,7 @@ import Foundation
 import Darwin
 import TemplateCore
 
-func renameChecks(base: URL) throws {
+func renameChecks(base: URL, iconData: Data) throws {
     let area = base.appendingPathComponent("Rename")
     let runtime = try AppRuntime(root: area)
     let root = area.appendingPathComponent("001 — Short — Old")
@@ -12,6 +12,11 @@ func renameChecks(base: URL) throws {
     try put(bytes, at: root.appendingPathComponent("Old.rtfd/Old.txt"))
     try put(Data("# 001 — Short — Old\nBody\n".utf8), at: root.appendingPathComponent("01 Documents/Old.md"))
     try put(bytes, at: root.appendingPathComponent(".Old"))
+    try IconService.apply(iconData, to: root)
+    try FinderTags.write([FinderTags.Tag(name: "Keep", colour: .blue)], to: root)
+    let tag = try IconService.attribute(FinderTags.attribute, at: root)
+    let iconBefore = try IconService.attribute("com.apple.ResourceFork", at: root.appendingPathComponent("Icon\r"))
+    let finderBefore = try IconService.attribute("com.apple.FinderInfo", at: root)
     var record = try ProjectRecord(url: root, format: "Short"); record.notes = "keep"; record.pinned = true
     let plan = try ProjectRename.plan(record: record, number: "002", campaign: "", title: "New", updateHeadings: true, runtime: runtime)
     try check(plan.changes.last?.path == "" && plan.changes.first?.heading == true, "rename heading first and project last")
@@ -19,6 +24,7 @@ func renameChecks(base: URL) throws {
     try check(Data(contentsOf: result.newRoot.appendingPathComponent("02 Project Files/002 — Short — New.prproj")) == bytes, "rename preserves opaque bytes")
     try check(Data(contentsOf: result.newRoot.appendingPathComponent("03 Media/Old.mov")) == bytes && Data(contentsOf: result.newRoot.appendingPathComponent("New.rtfd/Old.txt")) == bytes, "rename excludes media and package internals")
     try check(String(contentsOf: result.newRoot.appendingPathComponent("01 Documents/New.md"), encoding: .utf8) == "# 002 — Short — New\nBody\n", "rename optional first heading only")
+    try check(IconService.attribute("com.apple.ResourceFork", at: result.newRoot.appendingPathComponent("Icon\r")) == iconBefore && IconService.attribute("com.apple.FinderInfo", at: result.newRoot) == finderBefore && IconService.attribute("com.apple.metadata:_kMDItemUserTags", at: result.newRoot) == tag, "rename preserves Finder icons and unrelated tags")
     try check(FileManager.default.fileExists(atPath: result.manifest.path), "rename manifest exists")
     try record.relocate(to: result.newRoot)
     try check(record.notes == "keep" && record.isPinned && record.previousPaths?.contains(root.path) == true, "rename record relocation retains metadata and old path")
@@ -26,6 +32,7 @@ func renameChecks(base: URL) throws {
     try check(Data(contentsOf: root.appendingPathComponent("02 Project Files/001 — Short — Old.prproj")) == bytes && String(contentsOf: root.appendingPathComponent("01 Documents/Old.md"), encoding: .utf8).hasPrefix("# 001 — Short — Old"), "rename revert restores names and headings")
     let original = try ProjectRecord(url: root, format: "Short")
     try rejects("rename case-only refused") { _ = try ProjectRename.plan(record: original, number: "001", campaign: "", title: "OLD", runtime: runtime) }
+    try rejects("rename case-only child refused before moving") { _ = try ProjectRename.plan(record: original, number: "002", campaign: "", title: "OLD", runtime: runtime) }
     try rejects("rename unsafe name refused") { _ = try ProjectRename.plan(record: original, number: "001", campaign: "", title: "CON", runtime: runtime) }
     try put(bytes, at: root.appendingPathComponent("New.md"))
     try put(bytes, at: root.appendingPathComponent("Old.md"))

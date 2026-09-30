@@ -296,7 +296,7 @@ struct RelinkReportSheet: View {
         HStack(alignment: .top, spacing: 10) {
             statusMark(outcome.kind).frame(width: 22)
             VStack(alignment: .leading, spacing: 5) {
-                Text(outcome.name).font(.headline)
+                Text(record(outcome)?.name ?? outcome.name).font(.headline)
                 switch outcome.kind {
                 case .relinked(let url):
                     Text("Linked · " + url.path).font(.caption).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
