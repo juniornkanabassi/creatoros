@@ -28,22 +28,34 @@ public enum BrowserTransfer {
     /// before any is renamed, and a rename failure puts the already-renamed folders back.
     public static func transfer(_ sources: [URL], into destination: URL, runtime: AppRuntime, forceCopy: Bool = false,
                                 cancellation: Cancellation = Cancellation(), progress: (Int, Int) -> Void = { _, _ in }) throws -> [URL] {
+        try cancellation.check()
+        guard !sources.isEmpty, sources.count <= 100 else { throw AppFailure("Drop between 1 and 100 files or folders at a time.") }
         let folders = sources.filter { (try? $0.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true }
         let files = sources.filter { !folders.contains($0) }
+        guard Set(sources.map { Naming.key($0.lastPathComponent) }).count == sources.count else { throw AppFailure("Duplicate names in this drop, including case or Unicode variants.") }
         if !folders.isEmpty, forceCopy { throw AppFailure("Folders can be moved here, not copied. Drop without Option.") }
         let planned = try folders.map { try folderMoveTarget($0, into: destination, runtime: runtime) }
+        if !files.isEmpty { _ = try transferFiles(files, into: destination, runtime: runtime, forceCopy: forceCopy, cancellation: cancellation, validateOnly: true) }
         var movedFolders: [(from: URL, to: URL)] = []
         do {
             for (source, target) in zip(folders, planned) {
-                try FileManager.default.moveItem(at: source, to: target)
+                try cancellation.check()
+                guard renamex_np(source.path, target.path, UInt32(RENAME_EXCL)) == 0 else { throw AppFailure("Cannot move folder without overwriting: \(source.lastPathComponent).") }
                 movedFolders.append((source, target))
             }
+            let transferred = files.isEmpty ? [] : try transferFiles(files, into: destination, runtime: runtime, forceCopy: forceCopy, cancellation: cancellation, progress: progress)
+            return movedFolders.map(\.to) + transferred
         } catch {
-            for step in movedFolders.reversed() { try? FileManager.default.moveItem(at: step.to, to: step.from) }
-            throw error
+            var remaining: [URL] = [], rollbackErrors: [String] = []
+            for step in movedFolders.reversed() {
+                if renamex_np(step.to.path, step.from.path, UInt32(RENAME_EXCL)) != 0 {
+                    remaining.append(step.to); rollbackErrors.append("Folder remains at " + step.to.path)
+                }
+            }
+            let partial = error as? BrowserTransferFailure
+            let cause = rollbackErrors.isEmpty ? (partial?.cause ?? error) : AppFailure(error.localizedDescription + " " + rollbackErrors.joined(separator: "; "))
+            throw BrowserTransferFailure(committed: (partial?.committed ?? []) + remaining, moved: (partial?.moved ?? []) + remaining, cause: cause)
         }
-        let copied = files.isEmpty ? [] : try transferFiles(files, into: destination, runtime: runtime, forceCopy: forceCopy, cancellation: cancellation, progress: progress)
-        return movedFolders.map(\.to) + copied
     }
 
     public static func copyFiles(_ sources: [URL], into destination: URL, runtime: AppRuntime,
@@ -85,7 +97,7 @@ public enum BrowserTransfer {
     }
 
     public static func transferFiles(_ sources: [URL], into destination: URL, runtime: AppRuntime, forceCopy: Bool = false,
-                                     cancellation: Cancellation = Cancellation(), progress: (Int, Int) -> Void = { _, _ in }) throws -> [URL] {
+                                     cancellation: Cancellation = Cancellation(), progress: (Int, Int) -> Void = { _, _ in }, validateOnly: Bool = false) throws -> [URL] {
         var committed: [URL] = []
         var moved: [URL] = []
         do {
@@ -112,6 +124,7 @@ public enum BrowserTransfer {
                 if move { try requireMove(source, runtime: runtime) }
                 return (source, info, parent, move)
             }
+            if validateOnly { return [] }
             for candidate in candidates {
                 let source = candidate.url
                 try cancellation.check()
@@ -164,6 +177,7 @@ public enum BrowserTransfer {
         // Only explicit regular-file transfers relax source isolation; all destinations remain guarded.
         let libraryRoots = [runtime.root, AppRuntime.alphaRoot, AppRuntime.stableRoot]
         guard !libraryRoots.contains(where: { root in
+            AppRuntime.contains(source, root) ||
             Naming.key(source.deletingLastPathComponent().path) == Naming.key(root.path) ||
             Naming.key(source.path).hasPrefix(Naming.key(root.appendingPathComponent("Templates").path) + "/")
         }) else {

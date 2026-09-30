@@ -56,7 +56,7 @@ struct CachedStructure { let plan: CopyPlan; let rootModified: Date?; let renami
 
 /// What Find Moved Folders concluded about one project whose folder was missing.
 struct RelinkOutcome: Identifiable {
-    enum Kind { case relinked(URL), candidates([URL]), notFound, stillThere }
+    enum Kind: Hashable { case relinked(URL), candidates([URL]), notFound, stillThere }
     let id: UUID
     let name: String
     let previousPath: String

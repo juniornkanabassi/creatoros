@@ -54,7 +54,7 @@ struct FolderBrowserHost: View {
             if !managedTemplate && !projectFilesOnly, root != nil {
                 Label("Drop files anywhere below into \(folder.isEmpty ? title : folder). Hold Option to copy.", systemImage: "square.and.arrow.down")
                     .font(.caption).foregroundStyle(.secondary)
-                    .help("Moves files on the same volume; copies between volumes. Option always copies. Existing names are never replaced. Up to 100 regular files; folders are not supported.")
+                    .help("Moves files on the same volume; copies between volumes. Option always copies. Existing names are never replaced. Up to 100 files or folders. Folders move on the same volume; Option-copy of folders is refused.")
             }
             Group {
                 if let failure {
@@ -125,7 +125,7 @@ struct FolderBrowserHost: View {
         guard !managedTemplate, !projectFilesOnly, !m.busy, m.storeUsable, failure == nil else { return false }
         guard !providers.isEmpty, providers.count <= 100,
               providers.allSatisfy({ $0.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) }) else {
-            m.error = "Drop between 1 and 100 files from Finder. Web links, text and folders are not supported."
+            m.error = "Drop between 1 and 100 files or folders from Finder. Web links and text are not supported."
             return false
         }
         let destination: URL

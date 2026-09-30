@@ -283,7 +283,7 @@ struct RelinkReportSheet: View {
                     Label("\(linked) linked", systemImage: "checkmark.circle.fill").foregroundStyle(.green)
                     Label("\(open) still missing", systemImage: open == 0 ? "checkmark.circle.fill" : "xmark.circle.fill").foregroundStyle(open == 0 ? .green : .red)
                 }.font(.callout)
-                List { ForEach(report.outcomes) { row($0) } }
+                List { ForEach(report.outcomes) { row($0).id($0.kind) } }
                 if open == 0 { Label("Everything is linked again.", systemImage: "checkmark.seal.fill").foregroundStyle(.green) }
             }
             HStack { Spacer(); Button("Done") { m.relinkReport = nil }.keyboardShortcut(.defaultAction) }

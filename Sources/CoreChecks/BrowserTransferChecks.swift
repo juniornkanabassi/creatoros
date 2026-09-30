@@ -50,6 +50,37 @@ func browserTransferChecks(base: URL) throws {
     let both = try BrowserTransfer.transfer([folder, audio], into: destination, runtime: runtime)
     try check(both.count == 2 && fm.fileExists(atPath: destination.appendingPathComponent("Audio").path) && fm.fileExists(atPath: destination.appendingPathComponent("Raw/clip.txt").path), "multi-folder drop moves every folder")
     for url in both { try fm.removeItem(at: url) }
+    let mixedFolder = area.appendingPathComponent("Inbox/Mixed")
+    try put(Data("keep".utf8), at: mixedFolder.appendingPathComponent("inside.txt"))
+    let mixedFile = area.appendingPathComponent("Inbox/collision.txt")
+    try put(Data("keep".utf8), at: mixedFile)
+    try put(Data("existing".utf8), at: destination.appendingPathComponent("collision.txt"))
+    try rejects("mixed drop preflights files before moving folders") { _ = try BrowserTransfer.transfer([mixedFolder, mixedFile], into: destination, runtime: runtime) }
+    try check(fm.fileExists(atPath: mixedFolder.path) && Data(contentsOf: mixedFile) == Data("keep".utf8), "mixed refusal preserves every source")
+    try fm.removeItem(at: destination.appendingPathComponent("collision.txt"))
+    let cancelledMixed = Cancellation()
+    do {
+        _ = try BrowserTransfer.transfer([mixedFolder, mixedFile], into: destination, runtime: runtime, cancellation: cancelledMixed, progress: { _, _ in cancelledMixed.cancel() })
+    } catch { throw AppFailure("Unexpected completed mixed batch failure: " + error.localizedDescription) }
+    try check(fm.fileExists(atPath: destination.appendingPathComponent("Mixed/inside.txt").path), "valid mixed batch moves folder and file")
+    try rejects("library root cannot move") { _ = try BrowserTransfer.moveFolder(area, into: destination, runtime: runtime) }
+    let protectedRuntime = try AppRuntime(root: area.appendingPathComponent("Library"))
+    try fm.createDirectory(at: protectedRuntime.root, withIntermediateDirectories: true)
+    try rejects("library ancestor cannot move") { _ = try BrowserTransfer.moveFolder(area, into: base.appendingPathComponent("Downloads"), runtime: protectedRuntime) }
+    let rollbackFolder = area.appendingPathComponent("Inbox/Rollback")
+    let rollbackFirst = area.appendingPathComponent("Inbox/rollback-first.txt")
+    let rollbackSecond = area.appendingPathComponent("Inbox/rollback-second.txt")
+    try put(Data("keep".utf8), at: rollbackFolder.appendingPathComponent("inside.txt"))
+    try put(Data("first".utf8), at: rollbackFirst); try put(Data("second".utf8), at: rollbackSecond)
+    let rollbackCancel = Cancellation()
+    do {
+        _ = try BrowserTransfer.transfer([rollbackFolder, rollbackFirst, rollbackSecond], into: destination, runtime: runtime,
+                                        cancellation: rollbackCancel, progress: { _, _ in rollbackCancel.cancel() })
+        throw AppFailure("FAILED: mixed cancellation")
+    } catch let failure as BrowserTransferFailure {
+        try check(failure.committed.count == 1 && failure.moved.count == 1 && fm.fileExists(atPath: rollbackFolder.path), "mixed later failure restores folders and honestly reports committed file")
+        try check(Data(contentsOf: rollbackSecond) == Data("second".utf8), "mixed cancellation retains uncommitted file")
+    }
     let original = external.appendingPathComponent("Template [take 2].mov")
     let bytes = Data("opaque movie bytes\u{0}".utf8)
     try put(bytes, at: original)
