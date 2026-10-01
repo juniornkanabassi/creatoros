@@ -36,9 +36,6 @@ let args = Array(CommandLine.arguments.dropFirst())
 let wantsJSON = args.contains("--json")
 do {
     if args.isEmpty || args.contains("--help") || args.first == "help" { help(); exit(0) }
-    if args == ["mcp-manifest"] || args == ["mcp-manifest", "--json"] {
-        print(json(["tools": ControlCommand.all.map { ["name": $0.tool, "description": $0.description, "inputSchema": $0.schema] }])); exit(0)
-    }
     var words: [String] = [], flags: [String: Any] = [:]
     var dataDirectory = ProcessInfo.processInfo.environment["CREATOROS_DATA_DIRECTORY"]
     var show = false, index = 0
