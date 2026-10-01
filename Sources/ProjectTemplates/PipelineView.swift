@@ -44,7 +44,7 @@ struct StageBadge: View {
             Text(stage).lineLimit(1)
         }
         .font(.caption.weight(.medium)).padding(.horizontal, 7).padding(.vertical, 2)
-        .background(colour.opacity(0.14), in: Capsule()).foregroundStyle(colour == .secondary ? Color.secondary : colour)
+        .background(colour.opacity(0.14), in: Capsule()).foregroundStyle(.primary)
         .accessibilityLabel("Stage \(stage)")
     }
 }
@@ -71,7 +71,7 @@ struct StageMenu: View {
         .padding(.leading, 9).padding(.trailing, 4).padding(.vertical, 3)
         .background(colour.opacity(0.2), in: Capsule())
         .overlay(Capsule().strokeBorder(colour.opacity(0.55), lineWidth: 1))
-        .foregroundStyle(colour)
+        .foregroundStyle(.primary)
         .help("Move this project to another stage. Finder's tag follows when the drive is connected.")
         .accessibilityLabel("Stage \(current), change")
     }
@@ -156,6 +156,7 @@ struct ProjectFilters: View {
             }
             Button { m.refreshEverything() } label: { Image(systemName: "arrow.clockwise") }.controlSize(.small)
                 .help("Refresh: check which drives are connected, check the selected project's folder again, and rerun the search")
+                .accessibilityLabel("Refresh")
         }
         }
     }
@@ -173,10 +174,13 @@ struct ProjectStatusEditor: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             TextField("Campaign", text: $campaign, prompt: Text("Campaign, if any")).onSubmit(save)
-                .accessibilityLabel("Campaign")
+                .accessibilityLabel("Campaign").help("The campaign this project belongs to. Saved as you type; the folder name is not changed.")
             TextField("With", text: $editor, prompt: Text("Editor or collaborator")).onSubmit(save)
+                .accessibilityLabel("Editor or collaborator").help("Who you are making this with. Shown on the card.")
             TextField("Series", text: $series, prompt: Text("Series, separated by commas")).onSubmit(save)
+                .accessibilityLabel("Series").help("Series this belongs to. Separate several with commas.")
             TextField("Notes", text: $notes, prompt: Text("Notes"), axis: .vertical).lineLimit(2...5).onSubmit(save)
+                .accessibilityLabel("Notes").help("Anything to remember about this project. Searchable from the toolbar.")
             if let link = record.notionURL, let url = URL(string: link) {
                 Link(destination: url) { Label("Open in Notion", systemImage: "arrow.up.right.square") }.font(.callout)
             }
@@ -211,11 +215,12 @@ struct ProjectStatusEditor: View {
 struct PipelineSidebar: View {
     @EnvironmentObject var m: AppModel
     var selected: ProjectRecord? { m.library.projects.first { $0.id == m.pipelineSelection } }
+    @State private var showAdvanced = false
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             Picker("Board", selection: $m.pipelineKind) { ForEach(PipelineKind.allCases) { Text($0.title).tag($0) } }
                 .pickerStyle(.segmented).labelsHidden().padding(.horizontal, 16).padding(.top, 12)
-                .help("Recordings move from idea to published. Live streams are scheduled, then streamed.")
+                .help("Recordings move from idea to published. Live streams are scheduled, then streamed.").accessibilityLabel("Board")
             ProjectFilters(includeStage: false, kind: m.pipelineKind).padding(.horizontal, 16).padding(.vertical, 10)
             Divider()
             if let record = selected {
@@ -236,21 +241,28 @@ struct PipelineSidebar: View {
                     }
                     Section("Details") { ProjectStatusEditor(record: record).id(record.id) }
                     Section {
-                        HStack {
+                        FlowLayout(spacing: 8) {
                             if record.isPlanned {
-                                Button("Start Project…") { m.startPlanned(record) }.buttonStyle(.borderedProminent).help("Fill in New Project with this idea")
-                                if record.ideaWorkspace == nil { Button("Create Workspace…") { m.workspacePrompt = record } }
-                                else { Button("Browse Workspace…") { m.workspaceToBrowse = record } }
+                                Button("Start Project…") { m.startPlanned(record) }.help("Fill in New Project with this idea")
+                                if record.ideaWorkspace == nil {
+                                    Button("Create Workspace…") { m.workspacePrompt = record }.help("Make a draft folder for this idea's notes and attachments")
+                                } else { Button("Browse Workspace…") { m.workspaceToBrowse = record }.help("See the files in this idea's draft folder") }
                             } else {
                                 Button("Show in Projects") { m.selectedProject = record.id; m.page = .projects; m.selectProject() }.help("Open this project's files and details in Projects")
                                 Button("Open in Finder") { m.open(record) }.help("Open the project folder in Finder")
                             }
-                            Spacer()
-                            Button(record.isPlanned ? "Bin Idea…" : "Remove from List", role: .destructive) { if record.isPlanned { m.requestBinIdea(record) } else { m.removeProject(record.id) } }
-                                .help(record.isPlanned ? "Review this idea and its owned workspace before putting it in the Bin." : "Forget this project. Its folder is not touched.")
                         }
                     } footer: {
-                        Text(record.isPlanned ? "Starting fills in New Project with this idea. The idea becomes the project once its folder is created." : "Removing only forgets the record. The folder is not touched.")
+                        if record.isPlanned { Text("Starting fills in New Project with this idea. The idea becomes the project once its folder is created.") }
+                    }
+                    Section {
+                        DisclosureGroup("Advanced", isExpanded: $showAdvanced) {
+                            Text(record.isPlanned ? "Remove this idea from the board. Its draft folder, if any, goes to the recoverable Bin after you confirm."
+                                                  : "Forget this project. Only the record is removed; the folder is not touched.")
+                                .font(.caption).foregroundStyle(.secondary)
+                            Button(record.isPlanned ? "Bin Idea…" : "Remove from List", role: .destructive) { if record.isPlanned { m.requestBinIdea(record) } else { m.removeProject(record.id) } }
+                                .help(record.isPlanned ? "Review this idea and its owned workspace before putting it in the Bin." : "Forget this project. Its folder is not touched.")
+                        }.accessibilityAction { showAdvanced.toggle() }
                     }
                 }.formStyle(.grouped)
             } else {
@@ -264,14 +276,18 @@ struct PipelineSidebar: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .toolbar {
-            ToolbarItem(placement: .primaryAction) {
-                Button { m.newIdeaPresented = true } label: { Label("New Idea", systemImage: "lightbulb") }.help("Add an idea without a folder yet")
-                    .disabled(m.pipelineKind == .live)
+            ToolbarItemGroup(placement: .primaryAction) {
+                if m.pipelineKind == .recordings {
+                    Button { m.newIdeaPresented = true } label: { Label("New Idea", systemImage: "lightbulb") }.help("Add an idea without a folder yet")
+                }
+                Button { m.newProjectPresented = true } label: { Label("Create Project", systemImage: "folder.badge.plus").labelStyle(.titleAndIcon) }
+                    .buttonStyle(.borderedProminent).help(m.pipelineKind == .live ? "Create a project folder from a template (⌘N). Choose Live for this board." : "Create a project folder from a template (⌘N). Long, Short and Podcast appear on this board.")
             }
         }
         .searchable(text: $m.search, placement: .toolbar, prompt: "Search projects, notes and documents")
         .sheet(isPresented: $m.newIdeaPresented) { NewIdeaSheet() }
-        .onAppear { m.refreshMounts() }
+        .onAppear { m.refreshMounts(); showAdvanced = m.defaults.bool(forKey: "disclosure.pipelineAdvanced") }
+        .onChange(of: showAdvanced) { m.defaults.set(showAdvanced, forKey: "disclosure.pipelineAdvanced") }
     }
 }
 
@@ -279,10 +295,20 @@ struct PipelineSidebar: View {
 struct PipelineBoard: View {
     @EnvironmentObject var m: AppModel
     var body: some View {
-        ScrollView(.horizontal) {
-            HStack(alignment: .top, spacing: 12) {
-                ForEach(m.boardStages, id: \.self) { stage in StageColumn(stage: stage) }
-            }.padding(16)
+        VStack(alignment: .leading, spacing: 0) {
+            // One explanation for an empty board instead of an empty label in every column; the columns stay as drop targets.
+            if m.boardStages.allSatisfy({ m.projects(in: $0).isEmpty }) {
+                Label(m.pipelineKind == .live
+                      ? "No streams here yet. Press Create Project and choose Live; the stream appears in the first column. If you expected some, check the filters."
+                      : "No projects here yet. Add an idea or press Create Project; drag cards between columns as the work moves on. If you expected some, check the filters.",
+                      systemImage: "info.circle")
+                    .font(.callout).foregroundStyle(.secondary).padding(.horizontal, 16).padding(.top, 14)
+            }
+            ScrollView(.horizontal) {
+                HStack(alignment: .top, spacing: 12) {
+                    ForEach(m.boardStages, id: \.self) { stage in StageColumn(stage: stage) }
+                }.padding(16)
+            }
         }
         .background(Color(nsColor: .underPageBackgroundColor))
     }
@@ -309,12 +335,14 @@ struct StageColumn: View {
                         }
                     }.disabled(items.isEmpty)
                 } label: { Image(systemName: "ellipsis.circle") }.menuStyle(.borderlessButton).fixedSize().help("Move every card in this column")
+                    .accessibilityLabel("\(stage) column actions")
             }.padding(.horizontal, 4)
-            Rectangle().fill(colour.opacity(0.5)).frame(height: 3).clipShape(Capsule()).padding(.horizontal, 4)
             ScrollView {
                 LazyVStack(spacing: 8) {
                     ForEach(items) { record in ProjectCard(record: record) }
-                    if items.isEmpty { Text("Nothing here").font(.caption).foregroundStyle(.tertiary).padding(.top, 12) }
+                    if items.isEmpty && m.boardStages.contains(where: { !m.projects(in: $0).isEmpty }) {
+                        Text("Drag cards here").font(.caption).foregroundStyle(.tertiary).padding(.top, 12)
+                    }
                 }.padding(2)
             }
         }
@@ -357,7 +385,7 @@ struct ProjectCard: View {
         .overlay(alignment: .leading) {
             RoundedRectangle(cornerRadius: 2).fill(m.stageColour(m.effectiveStage(record))).frame(width: 4).padding(.vertical, 8).padding(.leading, 4)
         }
-        .overlay(RoundedRectangle(cornerRadius: 9).strokeBorder(selected ? Color.accentColor : Color.primary.opacity(0.08), lineWidth: selected ? 2 : 1))
+        .overlay(RoundedRectangle(cornerRadius: 9).strokeBorder(selected ? Color.accentColor : .clear, lineWidth: 2))
         .contentShape(Rectangle())
         // Double-click opens the project in Projects; a single click selects it. The double-tap is registered first so it wins.
         .onTapGesture(count: 2) { if !record.isPlanned { m.selectedProject = record.id; m.page = .projects; m.selectProject() } else { m.startPlanned(record) } }
@@ -376,7 +404,13 @@ struct ProjectCard: View {
             Button(record.isPlanned ? "Bin Idea…" : "Remove from List", role: .destructive) { if record.isPlanned { m.requestBinIdea(record) } else { m.removeProject(record.id) } }
         }
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(record.name), \(record.stage ?? "")")
+        .accessibilityLabel("\(record.name), \(m.effectiveStage(record))")
+        .accessibilityAddTraits(.isButton)
+        .accessibilityAction { m.pipelineSelection = record.id }
+        .accessibilityAction(named: Text(record.isPlanned ? "Start Project" : "Show in Projects")) {
+            if record.isPlanned { m.startPlanned(record) }
+            else { m.selectedProject = record.id; m.page = .projects; m.selectProject() }
+        }
     }
 }
 
@@ -391,16 +425,18 @@ struct NewIdeaSheet: View {
             Text("New idea").font(.title2.weight(.semibold))
             Text("An idea sits in the first column without a number or folder. Start it from Pipeline when you are ready to make it.").foregroundStyle(.secondary)
             Form {
-                TextField("Title", text: $title, prompt: Text("What the video is about"))
+                TextField("Title", text: $title, prompt: Text("What the video is about")).help("A working title. You can change it when you start the project.")
                 Picker("Format", selection: $format) { ForEach(m.library.presets.filter { PipelineKind.recordings.includes(format: $0.format) }) { Text($0.label).tag($0.format) } }
-                TextField("Campaign", text: $campaign, prompt: Text("Optional"))
-                TextField("Notes", text: $notes, prompt: Text("Hook, angle, references"), axis: .vertical).lineLimit(2...6)
+                    .help("The kind of video this idea will become")
+                TextField("Campaign", text: $campaign, prompt: Text("Optional")).help("Optional campaign this idea belongs to")
+                TextField("Notes", text: $notes, prompt: Text("Hook, angle, references"), axis: .vertical).lineLimit(2...6).help("Anything to remember about the idea")
             }.formStyle(.grouped).frame(height: 240)
             HStack {
-                Button("Cancel") { m.newIdeaPresented = false }.keyboardShortcut(.cancelAction)
+                Button("Cancel") { m.newIdeaPresented = false }.keyboardShortcut(.cancelAction).help("Close without adding the idea")
                 Spacer()
                 Button("Add Idea") { m.addIdea(title: title, format: format, campaign: campaign, notes: notes); m.newIdeaPresented = false }
                     .buttonStyle(.borderedProminent).keyboardShortcut(.defaultAction).disabled(title.trimmingCharacters(in: .whitespaces).isEmpty)
+                    .help("Put the idea in the first column of Recordings")
             }
         }.padding(24).frame(width: 520)
         .onAppear { format = PipelineKind.recordings.includes(format: m.format) ? m.format : "Long" }
