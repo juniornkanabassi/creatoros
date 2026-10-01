@@ -13,8 +13,6 @@ func pipelineChecks(base: URL) throws {
     try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
     var record = try ProjectRecord(url: folder, format: "Long")
     try check(record.number == "230" && record.title == "Lille vs PSG | Post-Game Reaction" && !record.isPlanned, "number and title parse from the folder name")
-    let campaignRecord = try ProjectRecord(url: base.appendingPathComponent("Pipeline/01 Longs/230 — Long — Lille vs PSG | Post-Game Reaction"), format: "Long")
-    _ = campaignRecord
     var planned = ProjectRecord(planned: "Doué is a better UCL player than Yamal", format: "Short", stage: "Idea", campaign: nil)
     try check(planned.isPlanned && planned.number == nil && planned.location.key == "planned", "planned idea has no folder, number or location")
     try rejects("planned record cannot resolve a folder") { _ = try planned.resolve() }
@@ -236,5 +234,4 @@ func plainCopyChecks(base: URL) throws {
     let roundTrip = try IconService.restore(template: template, fields: fields, onto: withIcons)
     try check(roundTrip.restored == ["01 Documents"] && inside(try digestTree(withIcons)) == iconTree, "strip then restore returns the original icons")
     try rejects("strip refuses a missing project") { _ = try IconService.strip(project: out.appendingPathComponent("nowhere")) }
-    _ = iconTree
 }
