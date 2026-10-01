@@ -26,7 +26,7 @@ zsh build.sh
 
 `build.sh` builds release, selects the orange icon only for the α channel and the pastel red slate icon otherwise, assembles `CreatorOS.app` in a fresh temporary folder, strips bundle-root FinderInfo, signs ad hoc, verifies strictly and writes `../Outputs/CreatorOS <version>.zip`, taking identity and version from `Resources/Info.plist`. It refuses archive overwrite; set `CONTENT_TEMPLATE_OUTPUT_ROOT` for a separate iteration. After the acceptance gate passes, `zsh install.sh` installs only the expected CreatorOS release identifier/version, refuses a running CreatorOS-family executable and restores a prior destination if final verification fails. Set `CONTENT_TEMPLATE_INSTALL_ROOT=/tmp/test-Applications` for a disposable dry run.
 
-For interface testing launch with `--data-directory <dedicated disposable temporary folder>`. The app rejects production references and starts empty; create synthetic fixtures inside its isolated root. Do not use the real library as a disposable UI fixture: its destinations and bookmarks reference production data. The optional test-only `--display-name 'Prompter XL'` positions the test window when a disposable data directory is supplied.
+For interface testing launch with `--data-directory <dedicated disposable temporary folder>`. Keep it in the background with `open -g -n -a "/path/to/CreatorOS.app" --args --background --data-directory /private/tmp/creatoros-ui-data`. The app explicitly activates without `--background`; `open -g` alone is insufficient. Check the exact process and its data-directory argument before computer-use inspection, which can relaunch a closed app. The app rejects production references and starts empty; create synthetic fixtures inside its isolated root. Do not use the real library as a disposable UI fixture: its destinations and bookmarks reference production data. The optional test-only `--display-name 'Prompter XL'` positions the test window when a disposable data directory is supplied.
 
 ## Source layout
 
@@ -139,3 +139,10 @@ args = ["/Applications/JuniorOS Apps/CreatorOS.app/Contents/Resources/mcp/creato
 ```
 
 For a disposable build check: `zsh Scripts/check-ai-control.sh "/path/to/CreatorOS.app"`; `python3 Scripts/check-control.py "/path/to/CreatorOS.app"` exercises the socket boundary. `MCP_CLI` overrides the shim's executable for testing. MCP inherits `CREATOROS_DATA_DIRECTORY`. UI gestures, physical disconnected drives, real LucidLink and Adobe relinking need separate acceptance evidence.
+
+
+## 1.4.0 UI fix-round evidence
+
+On the disposable UI worktree, round 2 passes debug/release builds, 483 CoreChecks, 43 packaged AI checks, 26 packaged control checks (including the new completion regression), and the native-provider/durable-save harness. Window-only before/after captures cover every screen, both boards, all Settings tabs and browser modes. Dark/light navigation each passes 10 checks without changing the synthetic library.
+
+The final packaged instance at 150% passed coordinate clicks in Settings and New Project, field typing and Tab navigation, manual/automatic numbering, pointer and keyboard creation, pointer and keyboard Next Project, Browse Project, completed-form reset and unfinished-draft preservation. Settings intentionally stays unscaled. Evidence: `/private/tmp/ship/creatoros-ui-round2-final-pointer.json` and `/private/tmp/ship/creatoros-ui-screens/round-2/`. This is bounded UI evidence, not full keyboard/VoiceOver, drag, physical-drive or Adobe acceptance. The round report records two test-run constraint breaches; it does not certify production-data integrity.
