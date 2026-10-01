@@ -79,11 +79,10 @@ public enum ProjectRename {
                 if values.isDirectory == true { try walk(child) }
                 else if updateHeadings && values.isRegularFile == true && child.pathExtension.lowercased() == "md" {
                     // ponytail: headings in Markdown files up to 8 MiB; leave larger documents unchanged.
-                    guard (try child.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0) <= 8 * 1024 * 1024,
-                          let text = String(data: try Data(contentsOf: child), encoding: .utf8) else { continue }
-                    let bytes = Data(text.utf8)
-                    let lineEnd = bytes.firstIndex(of: 10) ?? bytes.endIndex
-                    let line = String(decoding: bytes[..<lineEnd], as: UTF8.self)
+                    guard (try child.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0) <= 8 * 1024 * 1024 else { continue }
+                    let bytes = try Data(contentsOf: child)
+                    guard String(data: bytes, encoding: .utf8) != nil else { continue }
+                    let line = firstLine(bytes)
                     if line.hasPrefix("#"), line.contains(record.name) { headings.append(ProjectRenameChange(path: relative(child), from: line, to: line.replacingOccurrences(of: record.name, with: newName), heading: true)) }
                 }
             }
@@ -97,18 +96,24 @@ public enum ProjectRename {
     private static func move(_ from: URL, _ to: URL) throws {
         guard renamex_np(from.path, to.path, UInt32(RENAME_EXCL)) == 0 else { throw AppFailure("Cannot rename without overwriting \(to.path): \(String(cString: strerror(errno)))") }
     }
+    private static func firstLine(_ data: Data) -> String {
+        let start = data.starts(with: [0xEF, 0xBB, 0xBF]) ? 3 : 0
+        let end = data.firstIndex(of: 10) ?? data.endIndex
+        return String(decoding: data[start..<end], as: UTF8.self)
+    }
     private static func heading(_ url: URL, from: String, to: String) throws {
         let data = try Data(contentsOf: url)
         guard String(data: data, encoding: .utf8) != nil else { throw AppFailure("Markdown changed since review: \(url.path)") }
-        let lineEnd = data.firstIndex(of: 10) ?? data.endIndex
-        guard String(decoding: data[..<lineEnd], as: UTF8.self) == from else { throw AppFailure("Markdown changed since review: \(url.path)") }
+        guard firstLine(data) == from else { throw AppFailure("Markdown changed since review: \(url.path)") }
         // Write in place: retain inode, Finder metadata and permissions.
         let fd = Darwin.open(url.path, O_WRONLY | O_NOFOLLOW)
         guard fd >= 0 else { throw AppFailure("Cannot update heading at \(url.path)") }
         let file = FileHandle(fileDescriptor: fd, closeOnDealloc: true)
         defer { try? file.close() }
-        var replacement = Data(to.utf8)
-        replacement.append(data.dropFirst(from.utf8.count))
+        let bom = data.starts(with: [0xEF, 0xBB, 0xBF]) ? 3 : 0
+        var replacement = Data(data.prefix(bom))
+        replacement.append(contentsOf: to.utf8)
+        replacement.append(data.dropFirst(bom + from.utf8.count))
         do { try file.write(contentsOf: replacement); try file.truncate(atOffset: UInt64(replacement.count)); try file.synchronize() }
         catch {
             do { try file.seek(toOffset: 0); try file.write(contentsOf: data); try file.truncate(atOffset: UInt64(data.count)); try file.synchronize() }
