@@ -77,7 +77,7 @@ struct FormatButtons: View {
                 Text(label).font(.callout.weight(selection == format ? .semibold : .regular)).lineLimit(1).fixedSize()
             }.padding(.horizontal, 5).padding(.vertical, 5)
         }.buttonStyle(.bordered).tint(selection == format ? .accentColor : .secondary)
-            .help(missing ? "\(label) is not set up in this content template yet" : label)
+            .help(missing ? "\(label) is not set up in this template set yet" : label)
             .accessibilityLabel(label).accessibilityAddTraits(selection == format ? .isSelected : [])
     }
 }

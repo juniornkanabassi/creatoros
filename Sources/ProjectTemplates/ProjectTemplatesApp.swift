@@ -365,7 +365,7 @@ struct RestoreIconsSheet: View {
                             .tag(Optional(candidate.id)).disabled(!candidate.available)
                     }
                 }
-                if candidates.isEmpty { Text("No set has a payload for this format.").foregroundStyle(.secondary) }
+                if candidates.isEmpty { Text("No set has template files for this format.").foregroundStyle(.secondary) }
                 if let reason = selectedCandidate?.reason { Text(reason).font(.caption).foregroundStyle(.orange).textSelection(.enabled) }
                 ForEach(candidates.filter { !$0.available }) { candidate in
                     Text("\(candidate.name): \(candidate.reason ?? "layout mismatch")")
