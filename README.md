@@ -1,6 +1,6 @@
 # CreatorOS
 
-Native SwiftUI/AppKit Mac app that creates correctly named project folders from reusable content templates and tracks them through the content pipeline. **CreatorOS 1.3.0** is released on `main`. Builds do not install, tag or push.
+Native SwiftUI/AppKit Mac app that creates correctly named project folders from reusable content templates and tracks them through the content pipeline. **CreatorOS 1.3.1** is released at `v1.3.1` and installed at `/Applications/JuniorOS Apps/CreatorOS.app`. `main` also contains unshipped cleanup. Builds do not install, tag or push.
 
 CreatorOS keeps the established `local.projecttemplates.mac` identity and `~/Library/Application Support/Project Templates/` data root so existing preferences, templates, bookmarks and catalogue data continue without a lossy copy or merge. The internal executable remains `ProjectTemplates`; that is not a user-facing product name. Explicit `--data-directory` launches and ContentTool remain isolated from the everyday library. A build carrying the old alpha identifier or α channel also selects isolation, never production data.
 
@@ -24,7 +24,7 @@ zsh build.sh
 
 `CoreChecks` prints `RESULT n checks passed` and keeps its disposable fixtures under the temporary directory it prints. The optional `--master` argument runs a read-only import and creation against a real template and verifies every byte and every folder icon afterwards. `--library-copy` copies the supplied JSON into the disposable fixture, exercises its schema upgrade, and checks the byte-exact backup and all stored JSON fields.
 
-`build.sh` builds release, selects the orange icon only for the α channel and the blue/purple icon otherwise, assembles `CreatorOS.app` in a fresh temporary folder, strips bundle-root FinderInfo, signs ad hoc, verifies strictly and writes `../Outputs/CreatorOS <version>.zip`, taking identity and version from `Resources/Info.plist`. It refuses archive overwrite; set `CONTENT_TEMPLATE_OUTPUT_ROOT` for a separate iteration. After the acceptance gate passes, `zsh install.sh` installs only the expected CreatorOS release identifier/version, refuses a running CreatorOS-family executable and restores a prior destination if final verification fails. Set `CONTENT_TEMPLATE_INSTALL_ROOT=/tmp/test-Applications` for a disposable dry run.
+`build.sh` builds release, selects the orange icon only for the α channel and the pastel red slate icon otherwise, assembles `CreatorOS.app` in a fresh temporary folder, strips bundle-root FinderInfo, signs ad hoc, verifies strictly and writes `../Outputs/CreatorOS <version>.zip`, taking identity and version from `Resources/Info.plist`. It refuses archive overwrite; set `CONTENT_TEMPLATE_OUTPUT_ROOT` for a separate iteration. After the acceptance gate passes, `zsh install.sh` installs only the expected CreatorOS release identifier/version, refuses a running CreatorOS-family executable and restores a prior destination if final verification fails. Set `CONTENT_TEMPLATE_INSTALL_ROOT=/tmp/test-Applications` for a disposable dry run.
 
 For interface testing launch with `--data-directory <dedicated disposable temporary folder>`. The app rejects production references and starts empty; create synthetic fixtures inside its isolated root. Do not use the real library as a disposable UI fixture: its destinations and bookmarks reference production data. The optional test-only `--display-name 'Prompter XL'` positions the test window when a disposable data directory is supplied.
 
@@ -61,7 +61,7 @@ Sources/ProjectTemplates/ the app
 Sources/CoreChecks/       assertion suite
 Scripts/build-icon.sh    converts the checked-in stable and alpha PNG artwork to ICNS
 Scripts/notion-backup.py  offline Notion export backup utility with its tests; not part of the app
-Resources/                Info.plist, blue/purple stable AppIcon and orange AppIconAlpha
+Resources/                Info.plist, pastel red slate stable AppIcon and orange AppIconAlpha
 ```
 
 ## Git
