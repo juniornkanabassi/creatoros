@@ -17,7 +17,7 @@ enum Page: String, CaseIterable, Identifiable {
         switch self {
         case .pipeline: "Move recordings and streams through their stages"
         case .projects: "Browse every project, wherever it lives"
-        case .templates: "The content templates and the folders each format copies"
+        case .templates: "Template sets and the folders each format copies"
         }
     }
 }
@@ -410,8 +410,8 @@ enum BadgeColour: String, CaseIterable, Identifiable {
         guard payload != nil || workspaceRecord != nil else {
             preview = nil; plan = nil
             switch variantState {
-            case .missing(let setName): validation = "\(formatLabel) is not set up in \(setName) yet. Import a payload or reuse another format's payload to see the preview."
-            default: validation = library.templates.isEmpty ? "Import a template to see the preview." : "Choose a content template to see the preview."
+            case .missing(let setName): validation = "\(formatLabel) is not set up in \(setName) yet. Import template files or reuse another format's to see the preview."
+            default: validation = library.templates.isEmpty ? "Import a template to see the preview." : "Choose a template to see the preview."
             }
             return
         }
@@ -1094,8 +1094,8 @@ enum BadgeColour: String, CaseIterable, Identifiable {
 
     // MARK: Zoom
 
-    var uiScale: CGFloat { 1 + CGFloat(min(max(zoomLevel, -2), 3)) * 0.1 }
-    func zoom(_ delta: Int) { zoomLevel = min(max(zoomLevel + delta, -2), 3) }
+    var uiScale: CGFloat { 1 + CGFloat(min(max(zoomLevel, -2), 5)) * 0.1 }
+    func zoom(_ delta: Int) { zoomLevel = min(max(zoomLevel + delta, -2), 5) }
 
     // MARK: Browser view modes
 

@@ -88,8 +88,17 @@ struct NewProjectSheet: View {
     @EnvironmentObject var m: AppModel
     var body: some View {
         VStack(spacing: 0) {
-            HStack {
-                Text("New Project").font(.title2.weight(.semibold))
+            HStack(alignment: .top) {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("New Project").font(.title2.weight(.semibold))
+                    Text("Makes a correctly named project folder from one of your templates. Nothing is copied until you press Create Project.")
+                        .font(.callout).foregroundStyle(.secondary)
+                    HStack(spacing: 16) {
+                        Label("Choose a template and format", systemImage: "1.circle")
+                        Label("Name the project", systemImage: "2.circle")
+                        Label("Create it", systemImage: "3.circle")
+                    }.font(.callout).foregroundStyle(Color.accentColor)
+                }
                 Spacer()
                 Button("Close") { m.newProjectPresented = false }.keyboardShortcut(.cancelAction).help("Close without creating anything. What you typed stays for next time.")
             }.padding(.horizontal, 20).padding(.vertical, 14)
@@ -104,7 +113,7 @@ struct NewProjectSheet: View {
                 }
             }
         }
-        .frame(width: 1280, height: 800)
+        .frame(width: max(1280, 920 * m.uiScale), height: 800)
         .onAppear { m.refresh() }
     }
 }
@@ -112,6 +121,7 @@ struct NewProjectSheet: View {
 /// The form side of New Project.
 struct CreationForm: View {
     @EnvironmentObject var m: AppModel
+    @State private var showAdvanced = false
     var body: some View {
         Form {
             if let origin = m.startingFrom.flatMap({ id in m.library.projects.first { $0.id == id } }) {
@@ -119,40 +129,45 @@ struct CreationForm: View {
                     HStack {
                         Label("Starting from the idea “\(origin.name)”", systemImage: "lightbulb").font(.callout)
                         Spacer()
-                        if origin.ideaWorkspace != nil { Button("Refresh Workspace") { m.invalidateStructure(origin.id); m.refresh() }.controlSize(.small).disabled(m.busy) }
+                        if origin.ideaWorkspace != nil {
+                            Button("Refresh Workspace") { m.invalidateStructure(origin.id); m.refresh() }.controlSize(.small).disabled(m.busy)
+                                .help("Read the idea's draft folder again, after adding or changing files in it")
+                        }
                         Button("Forget") { m.forgetStartingIdea() }.controlSize(.small)
+                            .help("Stop starting from this idea and fill in the form from scratch. The idea stays on the board.")
                     }
                 }
             }
             Section {
-                Picker("Content template", selection: $m.selection) {
+                Picker("Template", selection: $m.selection) {
                     if m.library.sets.isEmpty && m.library.unassignedTemplates.isEmpty { Text("None yet").tag(Optional<TemplateSelection>.none) }
                     ForEach(m.library.sets) { set in Text(set.name).tag(Optional(TemplateSelection.set(set.id))) }
                     if !m.library.unassignedTemplates.isEmpty {
                         Divider()
-                        ForEach(m.library.unassignedTemplates) { record in Text("\(record.name) (legacy)").tag(Optional(TemplateSelection.legacy(record.id))) }
+                        ForEach(m.library.unassignedTemplates) { record in Text("\(record.name) (standalone)").tag(Optional(TemplateSelection.legacy(record.id))) }
                     }
                 }.onChange(of: m.selection) { m.changeSelection() }
+                    .accessibilityLabel("Template")
+                    .help("The template set or standalone template the new folder is copied from")
                 variantStatus
             } header: {
-                Text("CONTENT TEMPLATE")
+                Text("1 · Template")
             } footer: {
-                Text("Choose a brand or campaign template set. Each format inside it can have its own folders and starter files.")
+                Text("A template set holds the folders and starter files for one channel or client, for each format.")
             }
-            Section("Content format") {
+            Section("Format") {
                 FormatButtons(selection: $m.format, showReadiness: m.selectedSet != nil).onChange(of: m.format) { m.changeFormat() }
                     .disabled(m.startingFrom != nil)
             }
             Section {
-                TextField("Project Number", text: $m.number, prompt: Text(m.suggestedNumber)).onChange(of: m.number) { m.numberEdited() }
-                TextField("Campaign", text: $m.campaign, prompt: Text("Optional")).onChange(of: m.campaign) { m.fieldChanged() }
-                ForEach(m.library.fieldList) { field in
-                    TextField(field.name, text: Binding(get: { m.extraValues[field.id] ?? "" }, set: { m.extraValues[field.id] = $0 }), prompt: Text(field.includeInName ? "Optional, goes in the folder name" : "Optional"))
-                        .onChange(of: m.extraValues[field.id]) { m.fieldChanged() }
-                }
                 TextField("Project Name", text: $m.title, prompt: Text("Your project title")).onChange(of: m.title) { m.fieldChanged() }
+                    .accessibilityLabel("Project Name")
+                    .help("The title that ends the folder name")
+                TextField("Project Number", text: $m.number, prompt: Text(m.suggestedNumber)).onChange(of: m.number) { m.numberEdited() }
+                    .accessibilityLabel("Project Number")
+                    .help("Starts the folder name. Filled in automatically; type over it if this project needs a different number.")
             } header: {
-                Text("Project")
+                Text("2 · Name")
             } footer: {
                 Text(m.numberIsAutomatic
                      ? "Next \(m.formatLabel) is \(m.suggestedNumber), counted from your \(m.formatLabel) projects. Change it if this one is different."
@@ -164,10 +179,31 @@ struct CreationForm: View {
                         .foregroundStyle(m.destination.isEmpty ? .secondary : .primary).lineLimit(2).truncationMode(.middle).textSelection(.enabled)
                 }
                 Button("Choose…") { m.chooseDestination() }.help("Choose where \(m.formatLabel) projects are created")
-                Toggle("Plain folders (no icons)", isOn: $m.plainFolders)
-                    .help("Creates the project with Finder's plain folders instead of the template's folder icons, for LucidLink and other drives that cannot hold them. The preview shows the result. Restore Folder Icons in Projects puts the icons back later.")
+            }
+            Section {
+                DisclosureGroup("Advanced", isExpanded: $showAdvanced) {
+                    Text("Optional campaign and extra fields for the folder name, and plain folders for drives that cannot hold icons.")
+                        .font(.caption).foregroundStyle(.secondary)
+                    TextField("Campaign", text: $m.campaign, prompt: Text("Optional")).onChange(of: m.campaign) { m.fieldChanged() }
+                        .accessibilityLabel("Campaign")
+                        .help("Optional. When filled in, it goes in the folder name before the project name.")
+                    ForEach(m.library.fieldList) { field in
+                        TextField(field.name, text: Binding(get: { m.extraValues[field.id] ?? "" }, set: { m.extraValues[field.id] = $0 }), prompt: Text(field.includeInName ? "Optional, goes in the folder name" : "Optional"))
+                            .onChange(of: m.extraValues[field.id]) { m.fieldChanged() }
+                            .accessibilityLabel(field.name)
+                            .help(field.includeInName ? "Optional. When filled in, it goes in the folder name." : "Optional. Used only where a template file name asks for it.")
+                    }
+                    Toggle("Plain folders (no icons)", isOn: $m.plainFolders)
+                        .help("Creates the project with Finder's plain folders instead of the template's folder icons, for LucidLink and other drives that cannot hold them. The preview shows the result. Restore Folder Icons in Projects puts the icons back later.")
+                }.accessibilityAction { showAdvanced.toggle() }
             }
         }.formStyle(.grouped)
+            // Opens by itself when it already holds a value, so nothing that goes into the name is hidden.
+            .onAppear {
+                showAdvanced = m.defaults.bool(forKey: "disclosure.creationAdvanced") || !m.campaign.isEmpty || m.plainFolders
+                    || m.extraValues.values.contains { !$0.isEmpty }
+            }
+            .onChange(of: showAdvanced) { m.defaults.set(showAdvanced, forKey: "disclosure.creationAdvanced") }
     }
 
     @ViewBuilder var variantStatus: some View {
@@ -183,14 +219,15 @@ struct CreationForm: View {
             }
         case .legacy(let record):
             VStack(alignment: .leading, spacing: 8) {
-                Label("\(record.name) is a legacy template used directly for every format", systemImage: "clock.arrow.circlepath").font(.callout).foregroundStyle(.secondary)
-                Button("Create Content Template from It…") { m.promptNewSet(mapping: record.id) }
+                Label("\(record.name) is a standalone template used for every format", systemImage: "clock.arrow.circlepath").font(.callout).foregroundStyle(.secondary)
+                Button("Create Template Set from It…") { m.promptNewSet(mapping: record.id) }
+                    .help("Make a template set that starts with this template for all four formats")
             }
         case .none:
             HStack {
-                Text("Import a template or create a content template to begin.").font(.callout).foregroundStyle(.secondary)
+                Text("Start by importing a folder of folders and starter files to use as your template. Your original is never changed.").font(.callout).foregroundStyle(.secondary)
                 Spacer()
-                Button("Import Template…") { m.beginImport() }
+                Button("Import Template…") { m.beginImport() }.help("Choose a template folder or Post Haste package to copy into CreatorOS")
             }
         }
     }
@@ -203,7 +240,8 @@ struct AssignMenu: View {
     let format: String
     var body: some View {
         HStack(spacing: 8) {
-            Button("Import Payload…") { m.beginImport(assigning: PendingAssignment(setID: set.id, format: format)) }
+            Button("Import Template Files…") { m.beginImport(assigning: PendingAssignment(setID: set.id, format: format)) }
+                .help("Choose a folder or Post Haste package to use for \(m.label(for: format)) in \(set.name)")
             Menu("Use Existing") {
                 let others = set.variants.filter { $0.format != format }
                 if !others.isEmpty {
@@ -215,10 +253,10 @@ struct AssignMenu: View {
                         }
                     }
                 }
-                Section("Managed templates") {
+                Section("Imported templates") {
                     ForEach(m.library.templates) { record in Button(record.name) { m.assign(format: format, templateID: record.id, in: set.id) } }
                 }
-            }.fixedSize()
+            }.fixedSize().help("Reuse template files already in CreatorOS, or share another format's")
         }.controlSize(.small)
     }
 }
@@ -228,6 +266,7 @@ struct CreationPreview: View {
     @EnvironmentObject var m: AppModel
     @State private var folder = ""
     @State private var selection: String?
+    @State private var showAdvanced = false
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             HStack(spacing: 14) {
@@ -257,7 +296,6 @@ struct CreationPreview: View {
                                 reloadKey: preview.entries.hashValue &+ (m.plainFolders ? 1 : 0))
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .background(.background, in: RoundedRectangle(cornerRadius: 8))
-                    .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(.quaternary))
                     .onAppear { m.activate(.creationPreview) }.onDisappear { m.deactivate(.creationPreview) }
                 let renamed = preview.renamedEntries
                 if !renamed.isEmpty {
@@ -275,16 +313,18 @@ struct CreationPreview: View {
                     }.font(.callout)
                 }
             } else {
-                ContentUnavailableView(m.validation == "Reading template…" ? "Reading template" : "Nothing to preview yet",
-                                       systemImage: m.validation == "Reading template…" ? "hourglass" : "folder.badge.plus",
-                                       description: Text(m.validation)).frame(maxHeight: .infinity)
+                let reading = m.validation == "Reading template…"
+                ContentUnavailableView(reading ? "Reading template" : "Nothing to preview yet",
+                                       systemImage: reading ? "hourglass" : "folder.badge.plus",
+                                       description: Text(reading ? m.validation : [m.validation, "Once a template is ready, name the project and choose where it goes. The whole folder appears here before anything is copied."]
+                                                            .filter { !$0.isEmpty }.joined(separator: "\n\n")))
+                    .frame(maxHeight: .infinity)
             }
             if let created = m.created {
-                HStack {
+                FlowLayout(spacing: 8) {
                     Label("Project created", systemImage: "checkmark.circle.fill").foregroundStyle(.green)
                     Text(created.lastPathComponent).font(.caption).foregroundStyle(.secondary).lineLimit(1)
-                    Spacer()
-                    Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([created]) }
+                    Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([created]) }.help("Show the new project folder in Finder")
                     Button("Browse Project") {
                         if let record = m.library.projects.first(where: { $0.path == created.path }) { m.selectedProject = record.id; m.page = .projects; m.selectProject() }
                         m.newProjectPresented = false
@@ -292,13 +332,25 @@ struct CreationPreview: View {
                     Button("Next Project") { m.nextProject() }.buttonStyle(.borderedProminent).help("Clear the form for the next project, keeping the template, format and destination")
                 }
             }
+            DisclosureGroup("Advanced", isExpanded: $showAdvanced) {
+                HStack {
+                    Text("Check that every name in this project is safe for LucidLink and other drives before creating it.").font(.caption).foregroundStyle(.secondary)
+                    Spacer()
+                    Button("Check Compatibility…") { m.checkProspectiveCompatibility() }.disabled(m.plan == nil)
+                        .help("Look for file and folder names that LucidLink or other drives cannot hold")
+                }
+            }.font(.callout)
+                .onAppear { showAdvanced = m.defaults.bool(forKey: "disclosure.previewAdvanced") }
+                .onChange(of: showAdvanced) { m.defaults.set(showAdvanced, forKey: "disclosure.previewAdvanced") }
             Divider()
             HStack {
                 Text("The original template stays untouched.").font(.caption).foregroundStyle(.secondary)
                 Spacer()
-                Button("Check Compatibility…") { m.checkProspectiveCompatibility() }.disabled(m.plan == nil)
-                Button("Create Project") { m.create() }.buttonStyle(.borderedProminent).controlSize(.large).disabled(!m.canCreate).keyboardShortcut(.return, modifiers: .command)
-                    .help(m.canCreate ? "Copy the template into the destination as shown in the preview (⌘↩)" : "Fill in the fields above and choose a destination to create the project")
+                // After creation Next Project is the one accent action; Create stays unavailable until the form is cleared.
+                if m.created == nil {
+                    Button("Create Project") { m.create() }.buttonStyle(.borderedProminent).controlSize(.large).disabled(!m.canCreate).keyboardShortcut(.return, modifiers: .command)
+                        .help(m.canCreate ? "Copy the template into the destination as shown in the preview (⌘↩)" : "Fill in the fields on the left and choose a destination to create the project")
+                }
             }
             if m.startingFrom.flatMap({ id in m.library.projects.first { $0.id == id } })?.ideaWorkspace != nil {
                 Text("This project's source is the existing idea workspace. Media names may change; Premiere Pro, OBS or Watchtower references may need relinking. The old workspace is kept until you explicitly put it in the Bin.").font(.caption).foregroundStyle(.secondary)
