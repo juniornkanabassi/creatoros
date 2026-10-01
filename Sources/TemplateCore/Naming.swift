@@ -12,7 +12,6 @@ public struct PreviewName: Sendable {
     public let missing: [String]
     public let issues: [String]
     public let tokens: [String: String]
-    public var isComplete: Bool { missing.isEmpty && issues.isEmpty }
 }
 
 /// A value for a user-defined naming parameter. Included in the folder name only when the field says so.
