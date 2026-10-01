@@ -966,9 +966,7 @@ enum BadgeColour: String, CaseIterable, Identifiable {
     }
     func setFinderTags(_ enabled: Bool) { attempt { try mutate { $0.finderTags = enabled } } }
     func stageColour(_ stage: String) -> Color {
-        switch library.colour(of: stage) {
-        case .none: .secondary; case .gray: .gray; case .green: .green; case .purple: .purple; case .blue: .blue; case .yellow: .yellow; case .red: .red; case .orange: .orange
-        }
+        BadgeColour(rawValue: library.colour(of: stage).rawValue)?.colour ?? .secondary
     }
 
     // MARK: Icons

@@ -203,6 +203,6 @@ private struct StageSettingsRow: View {
     }
     func save() { var s = stages; guard s.indices.contains(index) else { return }; s[index] = name; m.setStages(s, for: kind) }
     func colourValue(_ colour: StageColour) -> Color {
-        switch colour { case .none: .secondary; case .gray: .gray; case .green: .green; case .purple: .purple; case .blue: .blue; case .yellow: .yellow; case .red: .red; case .orange: .orange }
+        BadgeColour(rawValue: colour.rawValue)?.colour ?? .secondary
     }
 }
