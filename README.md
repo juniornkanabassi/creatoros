@@ -1,6 +1,6 @@
 # CreatorOS
 
-Native SwiftUI/AppKit Mac app that creates correctly named project folders from reusable content templates and tracks them through the content pipeline. Current source targets **CreatorOS 1.3.0** on `release-2026-09-30`. The installed app remains 1.2.0 at `/Applications/JuniorOS Apps/CreatorOS.app`; this build does not install, tag or push.
+Native SwiftUI/AppKit Mac app that creates correctly named project folders from reusable content templates and tracks them through the content pipeline. Current source targets **CreatorOS 1.3.1** on `release/1.3.1-icon`, an icon-only patch based on released 1.3.0. The installed app remains 1.3.0 at `/Applications/JuniorOS Apps/CreatorOS.app` until installation; this build does not install, tag or push.
 
 CreatorOS keeps the established `local.projecttemplates.mac` identity and `~/Library/Application Support/Project Templates/` data root so existing preferences, templates, bookmarks and catalogue data continue without a lossy copy or merge. The internal executable remains `ProjectTemplates`; that is not a user-facing product name. Explicit `--data-directory` launches and ContentTool remain isolated from the everyday library. A build carrying the old alpha identifier or α channel also selects isolation, never production data.
 
@@ -62,7 +62,7 @@ Sources/CoreChecks/       assertion suite
 Scripts/render-icon.swift historical app icon drawing; build-icon.sh converts the stable and alpha PNG artwork to ICNS
 Scripts/configure-library.swift one-time personal setup (Notion stages and default destinations), run with the app closed
 Scripts/notion-backup.py  offline Notion export backup utility with its tests; not part of the app
-Resources/                Info.plist, blue/purple stable AppIcon and orange AppIconAlpha
+Resources/                Info.plist, pastel red slate stable AppIcon and orange AppIconAlpha
 ```
 
 ## Git
