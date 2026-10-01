@@ -188,7 +188,7 @@ extension AppModel {
         }
         let record = try controlRecord(params)
         if action == "project.status" {
-            let inspection = record.isPlanned ? nil : Catalogue.availability(record)
+            let inspection = record.isPlanned ? nil : await Task.detached { Catalogue.availability(record) }.value
             var result = controlSummary(record)
             result["title"] = ProjectRename.fields(of: record)?.title ?? record.title
             result["campaign"] = record.campaign as Any? ?? NSNull(); result["available"] = inspection?.available ?? false
