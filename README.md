@@ -59,7 +59,7 @@ Sources/ProjectTemplates/ the app
   SettingsView.swift      Settings window
   ProjectTemplatesApp.swift scene, menus, main split view, import sheet
 Sources/CoreChecks/       assertion suite
-Scripts/render-icon.swift historical app icon drawing; build-icon.sh converts the stable and alpha PNG artwork to ICNS
+Scripts/build-icon.sh    converts the checked-in stable and alpha PNG artwork to ICNS
 Scripts/configure-library.swift one-time personal setup (Notion stages and default destinations), run with the app closed
 Scripts/notion-backup.py  offline Notion export backup utility with its tests; not part of the app
 Resources/                Info.plist, blue/purple stable AppIcon and orange AppIconAlpha
