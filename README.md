@@ -60,7 +60,6 @@ Sources/ProjectTemplates/ the app
   ProjectTemplatesApp.swift scene, menus, main split view, import sheet
 Sources/CoreChecks/       assertion suite
 Scripts/build-icon.sh    converts the checked-in stable and alpha PNG artwork to ICNS
-Scripts/configure-library.swift one-time personal setup (Notion stages and default destinations), run with the app closed
 Scripts/notion-backup.py  offline Notion export backup utility with its tests; not part of the app
 Resources/                Info.plist, blue/purple stable AppIcon and orange AppIconAlpha
 ```
@@ -95,7 +94,7 @@ Alpha `library.json` uses schema 6 with optional owned idea workspace references
 
 ## Personal setup and Notion backup utilities
 
-`Scripts/configure-library.swift` is the one-time personal setup Codex ran on 3 September 2026 with the app closed: it imported Notion stages, campaigns, series and page links from the export audit into blank fields only and set the four default destinations, with a backup. `Scripts/notion-backup.py` is the offline, standard-library-only utility that wrote the verified `01 Documents/Notion Backup/` snapshots; run `python3 -B -m unittest discover -s Scripts -p test_notion_backup.py` for its 11 tests. The results and exceptions are in `../Outputs/Notion Audit/Exports 2026-09-03/README.md`. Do not repeat those writes.
+The retired one-time personal setup script was run by Codex on 3 September 2026 with the app closed: it imported Notion stages, campaigns, series and page links from the export audit into blank fields only and set the four default destinations, with a backup. `Scripts/notion-backup.py` is the offline, standard-library-only utility that wrote the verified `01 Documents/Notion Backup/` snapshots; run `python3 -B -m unittest discover -s Scripts -p test_notion_backup.py` for its 11 tests. The results and exceptions are in `../Outputs/Notion Audit/Exports 2026-09-03/README.md`. Do not repeat those writes.
 
 ## Limits worth knowing
 
