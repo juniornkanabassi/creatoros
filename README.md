@@ -1,6 +1,6 @@
 # CreatorOS
 
-Native SwiftUI/AppKit Mac app that creates correctly named project folders from reusable content templates and tracks them through the content pipeline. **CreatorOS 1.3.1** is released at `v1.3.1` and installed at `/Applications/JuniorOS Apps/CreatorOS.app`. `main` also contains unshipped cleanup. Builds do not install, tag or push.
+Native SwiftUI/AppKit Mac app that creates correctly named project folders from reusable content templates and tracks them through the content pipeline. **CreatorOS 1.4.0** is the local UI simplification candidate on `ui-simplify`. The installed release remains 1.3.1; this candidate has not been installed, tagged or pushed. Builds do not install, tag or push.
 
 CreatorOS keeps the established `local.projecttemplates.mac` identity and `~/Library/Application Support/Project Templates/` data root so existing preferences, templates, bookmarks and catalogue data continue without a lossy copy or merge. The internal executable remains `ProjectTemplates`; that is not a user-facing product name. Explicit `--data-directory` launches and ContentTool remain isolated from the everyday library. A build carrying the old alpha identifier or α channel also selects isolation, never production data.
 
@@ -90,7 +90,9 @@ Resources/                Info.plist, pastel red slate stable AppIcon and orange
 
 ## Data
 
-Released CreatorOS and alpha `library.json` use schema 6 with optional owned idea workspace references. They load schemas 1–6 and refuse newer; upgrades retain a backup. Alpha and stable storage stay separate. Retained export records stay unused; see `../00 Project State/Deferred features.md`. Interface state lives in isolated `UserDefaults`; a `--data-directory` run uses its own defaults suite.
+Released CreatorOS and alpha `library.json` use schema 6 with optional owned idea workspace references. They load schemas 1–6 and refuse newer; upgrades retain a backup. Alpha and stable storage stay separate. Retained export records stay unused; see `../00 Project State/Deferred features.md`. The first empty Projects screen explains the three steps: choose a template, name the project and create it. Projects and both pipeline boards offer Create Project; Templates offers Import Template. Optional creation fields, folder-icon choices and compatibility checks are under Advanced. Template sets group the formats for a channel or client; standalone templates remain usable directly. Expert controls remain reachable in Advanced and the existing menus.
+
+Interface state lives in isolated `UserDefaults`; a `--data-directory` run uses its own defaults suite.
 
 ## Personal setup and Notion backup utilities
 
@@ -98,7 +100,7 @@ The retired one-time personal setup script was run by Codex on 3 September 2026 
 
 ## Limits worth knowing
 
-Ad-hoc signed, not Developer ID or notarised; do not distribute it as a finished release. Column view widths are fixed. Folder artwork is macOS metadata and does not travel to Windows or phones. The copy engine is not a security boundary against templates being modified adversarially while copying. Whole-folder drag import, branch exclusion, managed payload editing, portable sharing and Post Haste recents remain unbuilt.
+Ad-hoc signed, not Developer ID or notarised; do not distribute it as a finished release. Column dividers resize and double-click fits or resets the width. Folder artwork is macOS metadata and does not travel to Windows or phones. The copy engine is not a security boundary against templates being modified adversarially while copying. Whole-folder drag import, branch exclusion, managed payload editing, portable sharing and Post Haste recents remain unbuilt.
 
 ## AI control
 
