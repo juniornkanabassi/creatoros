@@ -219,7 +219,13 @@ extension AppModel {
             return ["id": record.id.uuidString, "oldName": plan.oldName, "newName": plan.newName, "oldPath": result.oldRoot.path, "newPath": result.newRoot.path,
                     "renamed": result.changes.count, "manifest": result.manifest.path, "warnings": plan.warnings]
         }
-        if action == "project.open" { search = ""; formatFilter = "All formats"; excludedStages = []; selectedProject = record.id; page = .projects; selectProject(); return ["id": record.id.uuidString, "name": record.name, "selected": true] }
+        if action == "project.open" {
+            if !search.isEmpty && !record.searchableText.localizedCaseInsensitiveContains(search) && !deepMatches.contains(record.id) { search = "" }
+            if formatFilter != "All formats" && formatFilter != record.format { formatFilter = "All formats" }
+            excludedStages.remove(effectiveStage(record))
+            selectedProject = record.id; page = .projects; selectProject()
+            return ["id": record.id.uuidString, "name": record.name, "selected": true]
+        }
         if action == "project.reveal" {
             let url = try projectFolderForAction(record)
             let config = NSWorkspace.OpenConfiguration(); config.activates = params["show"] as? Bool == true

@@ -31,6 +31,16 @@ import TemplateCore
         precondition(model.extraValues[extra.id] == "Cancelled form" && model.plainFolders)
         model.format = "Short"; model.changeFormat()
         precondition(!model.plainFolders)
-        print("PASS 6 control model checks: destination and format share Plain folders; CLI clears extras and restores form")
+        let ref = result["id"] as! String
+        let record = model.library.projects.first { $0.id.uuidString == ref }!
+        let stage = model.effectiveStage(record)
+        model.search = "Clean"; model.formatFilter = "Short"; model.excludedStages = [stage, "Editing"]
+        _ = try await model.controlAction("project.open", ["project": ref])
+        precondition(model.search == "Clean" && model.formatFilter == "Short" && model.excludedStages == ["Editing"])
+        precondition(model.defaults.stringArray(forKey: "excludedStages") == ["Editing"])
+        model.search = "Unrelated"; model.formatFilter = "Long"
+        _ = try await model.controlAction("project.open", ["project": ref])
+        precondition(model.search.isEmpty && model.formatFilter == "All formats" && model.excludedStages == ["Editing"])
+        print("PASS 9 control model checks: destination and format share Plain folders; CLI clears extras and restores form; open preserves unrelated and saved filters")
     }
 }
