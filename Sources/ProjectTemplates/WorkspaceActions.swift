@@ -165,7 +165,6 @@ struct CompatibilitySheet: View {
                         Text(destination?.path ?? "Choose an alpha output folder").font(.caption).textSelection(.enabled)
                         Button("Choose Destination…") { destination = m.folderPanel(title: "Choose an output folder inside the alpha workspace") }
                     }
-                    Text("Alpha copies stay inside \(m.runtime.root.path).").font(.caption).foregroundStyle(.secondary)
                 } else { Text("This report cannot make a corrected copy. Prospective previews are read-only; scan the actual folder for a repair proposal.").font(.caption).foregroundStyle(.secondary) }
                 HStack {
                     Button(m.busy ? "Cancel Copy" : "Done") { if m.busy { m.cancellation.cancel() } else { m.compatibilityPresented = false } }.keyboardShortcut(.cancelAction)
@@ -212,7 +211,6 @@ struct WorkspaceSheet: View {
                 ForEach(m.library.templates) { template in Text(template.name).tag(Optional(template.id)) }
             }
             HStack { Text((root ?? m.runtime.ideas).path).font(.caption).textSelection(.enabled); Button("Choose Ideas Folder…") { root = m.folderPanel(title: "Choose a local Ideas folder inside the alpha workspace") } }
-            Text("Alpha workspaces stay inside \(m.runtime.root.path).").font(.caption).foregroundStyle(.secondary)
             HStack {
                 Button(m.busy ? "Cancel Creation" : "Cancel") { if m.busy { m.cancellation.cancel() } else { m.workspacePrompt = nil } }
                 if m.busy { ProgressView(value: m.fraction) }
