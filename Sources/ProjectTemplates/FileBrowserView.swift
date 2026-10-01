@@ -184,11 +184,6 @@ struct FileBrowserView: View {
     func activate(_ node: FileBrowserNode) {
         if node.browsable { folder = node.id; selection = nil } else { onActivate(node) }
     }
-    func goToParent() {
-        guard !folder.isEmpty else { return }
-        let previous = folder
-        folder = (folder as NSString).deletingLastPathComponent; selection = previous
-    }
 
     // MARK: List
 
