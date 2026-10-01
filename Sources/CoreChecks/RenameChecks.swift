@@ -3,6 +3,9 @@ import Darwin
 import TemplateCore
 
 func renameChecks(base: URL, iconData: Data) throws {
+    try rejects("rename refuses unsupported exclusive rename volumes") { try ProjectRename.requireExclusiveRenaming(false) }
+    try rejects("rename refuses unknown exclusive rename support") { try ProjectRename.requireExclusiveRenaming(nil) }
+    try ProjectRename.requireExclusiveRenaming(true)
     let area = base.appendingPathComponent("Rename")
     let runtime = try AppRuntime(root: area)
     let root = area.appendingPathComponent("001 — Short — Old")

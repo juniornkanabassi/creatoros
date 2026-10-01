@@ -23,6 +23,9 @@ public struct ProjectRenameResult: Sendable {
 }
 
 public enum ProjectRename {
+    public static func requireExclusiveRenaming(_ supported: Bool?) throws {
+        guard supported == true else { throw AppFailure("This drive cannot rename safely. Rename in Finder, then use Locate Folder in CreatorOS.") }
+    }
     public static func fields(of record: ProjectRecord) -> ProjectFields? {
         let parts = record.name.components(separatedBy: " — ")
         guard !record.isPlanned, parts.count == 3 || parts.count == 4,
@@ -46,6 +49,7 @@ public enum ProjectRename {
         try runtime.requireWritable(root)
         guard root.lastPathComponent == record.name,
               try root.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey]).isDirectory == true else { throw AppFailure("The project moved or is unavailable. Locate Folder before renaming.") }
+        try requireExclusiveRenaming(root.resourceValues(forKeys: [.volumeSupportsExclusiveRenamingKey]).volumeSupportsExclusiveRenaming)
         // Reuse the browser's ancestor/symlink/package validation without reading media.
         _ = try BrowserTransfer.dragURL(root: root.deletingLastPathComponent(), relative: root.lastPathComponent)
         let fm = FileManager.default

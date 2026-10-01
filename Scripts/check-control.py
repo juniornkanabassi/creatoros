@@ -1,6 +1,10 @@
 #!/usr/bin/env python3
 """Disposable built-app socket checks; no foreground UI or production data."""
 import json, os, pathlib, socket, subprocess, sys, tempfile, time
+rename_source = pathlib.Path('Sources/TemplateCore/ProjectRename.swift').read_text()
+volume_guard = 'try requireExclusiveRenaming(root.resourceValues(forKeys: [.volumeSupportsExclusiveRenamingKey]).volumeSupportsExclusiveRenaming)'
+assert volume_guard in rename_source and rename_source.index(volume_guard) < rename_source.index('try walk(root)')
+print('PASS 1 rename plan checks volume support before walking', flush=True)
 # Reuse the existing isolated AppModel harness, without launching or interacting with UI.
 scratch = pathlib.Path(sys.argv[2] if len(sys.argv) > 2 else '/private/tmp/creatoros-fix2-build')
 objects = scratch if (scratch / 'out').exists() else scratch / (os.uname().machine + '-apple-macosx/debug')
