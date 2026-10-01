@@ -63,15 +63,6 @@ public enum BrowserTransfer {
         try transferFiles(sources, into: destination, runtime: runtime, forceCopy: true, cancellation: cancellation, progress: progress)
     }
 
-    /// First slice of in-app folder moves: one ordinary folder, same volume only, renamed in place after every
-    /// guard passes. No copying across volumes, no merging, no overwrite. Returns the folder's new URL.
-    // ponytail: same-volume rename only; add a copy-then-verify path if Junior asks for cross-volume folder moves.
-    public static func moveFolder(_ source: URL, into destination: URL, runtime: AppRuntime) throws -> URL {
-        let target = try folderMoveTarget(source, into: destination, runtime: runtime)
-        try FileManager.default.moveItem(at: source, to: target)
-        return target
-    }
-
     private static func folderMoveTarget(_ source: URL, into destination: URL, runtime: AppRuntime) throws -> URL {
         let source = try ordinaryPath(source, directory: true)
         try runtime.requireWritable(destination)

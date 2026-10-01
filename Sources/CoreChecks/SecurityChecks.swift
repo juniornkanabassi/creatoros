@@ -17,8 +17,8 @@ func securityChecks(base: URL) throws {
     try fm.createDirectory(at: runtime.root, withIntermediateDirectories: true)
     let target = root.appendingPathComponent("Destination")
     try fm.createDirectory(at: target, withIntermediateDirectories: true)
-    try rejects("drop cannot move library root with a writable parent") { _ = try BrowserTransfer.moveFolder(runtime.root, into: target, runtime: runtime) }
-    try rejects("drop cannot move ancestor of library") { _ = try BrowserTransfer.moveFolder(root, into: base, runtime: runtime) }
+    try rejects("drop cannot move library root with a writable parent") { _ = try BrowserTransfer.transfer([runtime.root], into: target, runtime: runtime) }
+    try rejects("drop cannot move ancestor of library") { _ = try BrowserTransfer.transfer([root], into: base, runtime: runtime) }
     for suffix in ["terminal", "fileloc", "webloc", "inetloc", "jar", "mobileconfig", "mpkg"] {
         try check(ProjectBrowser.unsafeExtensions.contains(suffix), "browser refuses launchable ." + suffix)
     }

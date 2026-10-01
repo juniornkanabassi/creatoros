@@ -26,13 +26,13 @@ func browserTransferChecks(base: URL) throws {
     let folder = area.appendingPathComponent("Project/Raw")
     let inner = folder.appendingPathComponent("clip.txt")
     try put(Data("clip".utf8), at: inner)
-    try rejects("folder move into itself") { _ = try BrowserTransfer.moveFolder(folder, into: folder, runtime: runtime) }
-    try rejects("folder move into own descendant") { _ = try BrowserTransfer.moveFolder(folder, into: inner.deletingLastPathComponent(), runtime: runtime) }
+    try rejects("folder move into itself") { _ = try BrowserTransfer.transfer([folder], into: folder, runtime: runtime) }
+    try rejects("folder move into own descendant") { _ = try BrowserTransfer.transfer([folder], into: inner.deletingLastPathComponent(), runtime: runtime) }
     try fm.createDirectory(at: destination.appendingPathComponent("raw"), withIntermediateDirectories: true)
-    try rejects("folder move case-folded name collision") { _ = try BrowserTransfer.moveFolder(folder, into: destination, runtime: runtime) }
+    try rejects("folder move case-folded name collision") { _ = try BrowserTransfer.transfer([folder], into: destination, runtime: runtime) }
     try fm.removeItem(at: destination.appendingPathComponent("raw"))
-    try rejects("folder move outside the writable root") { _ = try BrowserTransfer.moveFolder(folder, into: fm.temporaryDirectory, runtime: runtime) }
-    let movedFolder = try BrowserTransfer.moveFolder(folder, into: destination, runtime: runtime)
+    try rejects("folder move outside the writable root") { _ = try BrowserTransfer.transfer([folder], into: fm.temporaryDirectory, runtime: runtime) }
+    let movedFolder = try BrowserTransfer.transfer([folder], into: destination, runtime: runtime)[0]
     try check(movedFolder.lastPathComponent == "Raw" && fm.fileExists(atPath: destination.appendingPathComponent("Raw").path) && !fm.fileExists(atPath: folder.path)
               && Data(contentsOf: movedFolder.appendingPathComponent("clip.txt")) == Data("clip".utf8), "folder move renames within the volume and keeps contents")
     // Dropped folder row: the shared transfer entry moves it as a folder, drags resolve folder rows, Option is refused.
@@ -63,10 +63,10 @@ func browserTransferChecks(base: URL) throws {
         _ = try BrowserTransfer.transfer([mixedFolder, mixedFile], into: destination, runtime: runtime, cancellation: cancelledMixed, progress: { _, _ in cancelledMixed.cancel() })
     } catch { throw AppFailure("Unexpected completed mixed batch failure: " + error.localizedDescription) }
     try check(fm.fileExists(atPath: destination.appendingPathComponent("Mixed/inside.txt").path), "valid mixed batch moves folder and file")
-    try rejects("library root cannot move") { _ = try BrowserTransfer.moveFolder(area, into: destination, runtime: runtime) }
+    try rejects("library root cannot move") { _ = try BrowserTransfer.transfer([area], into: destination, runtime: runtime) }
     let protectedRuntime = try AppRuntime(root: area.appendingPathComponent("Library"))
     try fm.createDirectory(at: protectedRuntime.root, withIntermediateDirectories: true)
-    try rejects("library ancestor cannot move") { _ = try BrowserTransfer.moveFolder(area, into: base.appendingPathComponent("Downloads"), runtime: protectedRuntime) }
+    try rejects("library ancestor cannot move") { _ = try BrowserTransfer.transfer([area], into: base.appendingPathComponent("Downloads"), runtime: protectedRuntime) }
     let rollbackFolder = area.appendingPathComponent("Inbox/Rollback")
     let rollbackFirst = area.appendingPathComponent("Inbox/rollback-first.txt")
     let rollbackSecond = area.appendingPathComponent("Inbox/rollback-second.txt")
