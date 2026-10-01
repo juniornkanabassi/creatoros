@@ -1,6 +1,6 @@
 # CreatorOS
 
-Native SwiftUI/AppKit Mac app that creates correctly named project folders from reusable content templates and tracks them through the content pipeline. Current source targets **CreatorOS 1.3.0** on `release-2026-09-30`. The installed app remains 1.2.0 at `/Applications/JuniorOS Apps/CreatorOS.app`; this build does not install, tag or push.
+Native SwiftUI/AppKit Mac app that creates correctly named project folders from reusable content templates and tracks them through the content pipeline. **CreatorOS 1.3.0** is released on `main`. Builds do not install, tag or push.
 
 CreatorOS keeps the established `local.projecttemplates.mac` identity and `~/Library/Application Support/Project Templates/` data root so existing preferences, templates, bookmarks and catalogue data continue without a lossy copy or merge. The internal executable remains `ProjectTemplates`; that is not a user-facing product name. Explicit `--data-directory` launches and ContentTool remain isolated from the everyday library. A build carrying the old alpha identifier or α channel also selects isolation, never production data.
 
@@ -90,7 +90,7 @@ Resources/                Info.plist, blue/purple stable AppIcon and orange AppI
 
 ## Data
 
-Alpha `library.json` uses schema 6 with optional owned idea workspace references. It loads schemas 1–6 and refuses newer; upgrades retain a backup. Stable 0.11.0 understands only up to schema 5, so alpha and stable storage must stay separate. Retained export records stay unused; see `../00 Project State/Deferred features.md`. Interface state lives in isolated `UserDefaults`; a `--data-directory` run uses its own defaults suite.
+Released CreatorOS and alpha `library.json` use schema 6 with optional owned idea workspace references. They load schemas 1–6 and refuse newer; upgrades retain a backup. Alpha and stable storage stay separate. Retained export records stay unused; see `../00 Project State/Deferred features.md`. Interface state lives in isolated `UserDefaults`; a `--data-directory` run uses its own defaults suite.
 
 ## Personal setup and Notion backup utilities
 
