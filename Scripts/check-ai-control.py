@@ -33,7 +33,11 @@ library = {'schema':6, 'projects':[], 'templates':[{'id':template,'name':'Fixtur
 (root / 'library.json').write_text(json.dumps(library))
 proc = None
 if app.suffix == '.app':
-    check(command('library','stats')['templates'] == 1, 'stopped built app launches via background CLI')
+    linked_cli = root / 'creatoros'
+    linked_cli.symlink_to(cli)
+    os.environ["PATH"] = str(root) + os.pathsep + os.environ["PATH"]
+    cli = pathlib.Path("creatoros")
+    check(command('library','stats')['templates'] == 1, 'stopped built app launches through CLI symlink')
     pid = command('status')['pid']
 else:
     proc = subprocess.Popen([str(exe), '--background','--data-directory',str(root)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)

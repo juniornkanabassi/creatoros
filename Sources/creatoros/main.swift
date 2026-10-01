@@ -87,7 +87,7 @@ do {
     if connection == nil && action == "status" { print(wantsJSON ? json(["running": false]) : "CreatorOS is not running."); exit(0) }
     if connection == nil {
         let launch = Process(); launch.executableURL = URL(fileURLWithPath: "/usr/bin/open")
-        let executable = URL(fileURLWithPath: CommandLine.arguments[0]).resolvingSymlinksInPath()
+        let executable = Bundle.main.executableURL!.resolvingSymlinksInPath()
         let bundle = executable.deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
         var launchArgs = ["-g", "-n"]
         launchArgs += bundle.pathExtension == "app" ? ["-a", bundle.path] : ["-b", "local.projecttemplates.mac"]
