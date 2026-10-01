@@ -62,7 +62,8 @@ try:
     check(command('project','list','--limit','0',code=2)['error']['code'] == 'usage', 'CLI usage exit 2')
     created = command('project','create','--format','Short','--title','Socket test','--campaign','Temporary campaign','--request-id','create-1')
     check(pathlib.Path(created['path']).is_dir(), 'project create writes folder and durable record')
-    check(command('project','create','--format','Short','--title','Socket test','--request-id','create-1')['id'] == created['id'], 'create session idempotency')
+    check(command('project','create','--format','Short','--title','Socket test','--campaign','Temporary campaign','--request-id','create-1')['id'] == created['id'], 'create session idempotency')
+    check(command('project','create','--format','Short','--title','Different','--request-id','create-1',code=1)['error']['code'] == 'invalid_params', 'reused create id rejects changed parameters')
     next_created = command('project','create','--format','Short','--title','Next socket test')
     check(next_created['number'] == '002', 'CLI create advances saved automatic number in same format')
     ref = created['id']
@@ -78,11 +79,12 @@ try:
     manifest = json.loads(subprocess.check_output([str(cli),'mcp-manifest']))
     expected_tools = {'status','library_stats','project_list','project_status','project_open','project_reveal','project_create','project_rename'}
     check({tool['name'] for tool in manifest['tools']} == expected_tools, 'mcp-manifest contains the exact eight shipped tools')
-    preview = command('project','rename',ref,'--title','Renamed test','--dry-run')
+    preview = command('project','rename',ref,'--title','Renamed test','--dry-run','--request-id','rename-1')
     check(preview['dryRun'] and pathlib.Path(created['path']).exists(), 'rename dry-run changes nothing')
     renamed = command('project','rename',ref,'--title','Renamed test','--request-id','rename-1')
     check(pathlib.Path(renamed['newPath']).is_dir() and not pathlib.Path(created['path']).exists(), 'rename updates disk and record')
     check(command('project','rename',ref,'--title','Renamed test','--request-id','rename-1')['newPath'] == renamed['newPath'], 'rename session idempotency')
+    check(command('project','rename',ref,'--title','Different','--request-id','rename-1',code=1)['error']['code'] == 'invalid_params', 'reused rename id rejects changed parameters')
     check(command('status')['selectedProject']['name'] == renamed['newName'], 'CLI rename updates GUI selection name')
     for tool in manifest['tools']:
         words = tool['name'].split('_')

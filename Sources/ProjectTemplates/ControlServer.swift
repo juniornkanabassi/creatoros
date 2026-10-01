@@ -95,8 +95,12 @@ extension AppModel {
                   let params = request["params"] as? [String: Any] else { throw ControlFailure(code: "bad_request", message: "Send id, action and params as a JSON object.") }
             guard let command = ControlCommand.all.first(where: { $0.action == action }) else { throw ControlFailure(code: "unknown_action", message: "Unknown action: \(action)") }
             do { try command.validate(params) } catch { throw ControlFailure(code: "invalid_params", message: error.localizedDescription) }
-            let key = (params["requestId"] as? String).map { action + ":" + $0 }
-            if let key, let result = controlResults[key] { return ["id": id, "ok": true, "result": result] }
+            let key = params["dryRun"] as? Bool == true ? nil : (params["requestId"] as? String).map { action + ":" + $0 }
+            let parameters = try JSONSerialization.data(withJSONObject: params, options: [.sortedKeys])
+            if let key, let cached = controlResults[key] {
+                guard cached.parameters == parameters else { throw ControlFailure(code: "invalid_params", message: "requestId was already used with different parameters; use a new requestId.") }
+                return ["id": id, "ok": true, "result": cached.result]
+            }
             if let key, controlPending.contains(key) { throw ControlFailure(code: "busy", message: "This request is still running; retry the same requestId.") }
             if let key { guard controlResults.count < 4096 else { throw ControlFailure(code: "busy", message: "Session request cache is full; restart before creating more projects.") }; controlPending.insert(key) }
             defer { if let key { controlPending.remove(key) } }
@@ -107,7 +111,7 @@ extension AppModel {
             }
             defer { if mutating { controlMutating = false } }
             let result = try await controlAction(action, params)
-            if let key { controlResults[key] = result }
+            if let key { controlResults[key] = (parameters, result) }
             if params["show"] as? Bool == true, action != "project.reveal" { NSApp.activate(ignoringOtherApps: true) }
             return ["id": id, "ok": true, "result": result]
         } catch {

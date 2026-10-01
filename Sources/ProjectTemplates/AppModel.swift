@@ -177,7 +177,7 @@ enum BadgeColour: String, CaseIterable, Identifiable {
     @Published var workspaceCleanup: ProjectRecord?
     @Published var renamePrompt: ProjectRecord?
     var controlServer: ControlServer?
-    var controlResults: [String: [String: Any]] = [:]
+    var controlResults: [String: (parameters: Data, result: [String: Any])] = [:]
     var controlPending = Set<String>()
     var controlMutating = false
     @Published var restoreIconsPrompt: ProjectRecord?
