@@ -164,7 +164,7 @@ extension AppModel {
                 title = saved.4; campaign = saved.5; extraValues = saved.6; destination = saved.7; plainFolders = saved.8
                 refresh()
             }
-            format = requestedFormat; changeFormat()
+            format = requestedFormat; changeFormat(); extraValues = [:]
             if let template = params["template"] as? String {
                 let sets = library.sets.filter { $0.id.uuidString.lowercased() == template.lowercased() || $0.name == template }
                 let templates = library.templates.filter { $0.id.uuidString.lowercased() == template.lowercased() || $0.name == template }

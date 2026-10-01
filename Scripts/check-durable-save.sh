@@ -63,7 +63,7 @@ cp Sources/ProjectTemplates/ProjectTemplatesApp.swift "$check_dir/ProjectTemplat
 sed -i '' 's/^@main struct ContentTemplateApp/struct ContentTemplateApp/' "$check_dir/ProjectTemplatesApp.swift"
 swiftc -parse-as-library -module-name CreatorOSDurableCheck -I "$module_dir" \
     Sources/ProjectTemplates/^ProjectTemplatesApp.swift(.N) \
-    "$check_dir/ProjectTemplatesApp.swift" Scripts/check-durable-save.swift \
+    "$check_dir/ProjectTemplatesApp.swift" "${CONTENT_TEMPLATE_CHECK_SOURCE:-Scripts/check-durable-save.swift}" \
     "${objects[@]}" -o "$check_dir/check"
 "$check_dir/check" --data-directory "$check_dir/Data"
 print "Disposable evidence retained: $check_dir"

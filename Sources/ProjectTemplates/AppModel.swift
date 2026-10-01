@@ -122,7 +122,7 @@ enum BadgeColour: String, CaseIterable, Identifiable {
     @Published var campaign = ""
     @Published var title = ""
     @Published var extraValues: [UUID: String] = [:]
-    @Published var destination = ""
+    @Published var destination = "" { didSet { updatePlainFolders() } }
     @Published var preview: PreviewRendering?
     @Published var plan: CopyPlan?
     @Published var validation = ""
@@ -375,6 +375,7 @@ enum BadgeColour: String, CaseIterable, Identifiable {
             destination = url.path
         }
     }
+    func updatePlainFolders() { plainFolders = ProjectLocation(path: destination).label == "LucidLink" }
     func changeFormat() {
         created = nil; editingIcon = false
         destination = preset.destination
@@ -386,6 +387,7 @@ enum BadgeColour: String, CaseIterable, Identifiable {
                 destination = url.path
             } catch { destination = ""; self.error = "Destination is unavailable. Choose it again. \(error.localizedDescription)" }
         }
+        updatePlainFolders()
         // Each format starts with its own sequence; a manual override applies to that form only.
         numberIsAutomatic = true
         applySuggestedNumber()

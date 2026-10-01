@@ -167,7 +167,6 @@ struct CreationForm: View {
                 Text("Alpha projects stay inside \(m.runtime.root.path).").font(.caption).foregroundStyle(.secondary)
                 Toggle("Plain folders (no icons)", isOn: $m.plainFolders)
                     .help("Creates the project with Finder's plain folders instead of the template's folder icons, for LucidLink and other drives that cannot hold them. The preview shows the result. Restore Folder Icons in Projects puts the icons back later.")
-                    .onChange(of: m.destination) { if ProjectLocation(path: m.destination).label == "LucidLink" { m.plainFolders = true } }
             }
         }.formStyle(.grouped)
     }

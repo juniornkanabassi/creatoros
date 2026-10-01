@@ -1,6 +1,11 @@
 #!/usr/bin/env python3
 """Disposable built-app socket checks; no foreground UI or production data."""
 import json, os, pathlib, socket, subprocess, sys, tempfile, time
+# Reuse the existing isolated AppModel harness, without launching or interacting with UI.
+scratch = pathlib.Path(sys.argv[2] if len(sys.argv) > 2 else '/private/tmp/creatoros-fix2-build')
+objects = scratch if (scratch / 'out').exists() else scratch / (os.uname().machine + '-apple-macosx/debug')
+subprocess.run(['zsh', 'Scripts/check-durable-save.sh', str(objects)],
+               env=dict(os.environ, CONTENT_TEMPLATE_CHECK_SOURCE='Scripts/check-control-model.swift'), check=True)
 app = pathlib.Path(sys.argv[1]).resolve()
 exe = app / 'Contents/MacOS/ProjectTemplates' if app.suffix == '.app' else app
 root = pathlib.Path(tempfile.mkdtemp(prefix='cos-control-', dir='/private/tmp'))
