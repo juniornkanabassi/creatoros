@@ -549,6 +549,7 @@ enum BadgeColour: String, CaseIterable, Identifiable {
         let destination = URL(fileURLWithPath: destination); let name = preview.outerFolderName
         let icon = preset.icon; let format = format; let payloadID = payload?.id
         let campaignAtCreation = campaign
+        let fromSheet = newProjectPresented
         let origin = startingFrom.flatMap { id in library.projects.first { $0.id == id } }
         let fields = fields; let runtime = runtime
         let plain = plainFolders
@@ -591,12 +592,14 @@ enum BadgeColour: String, CaseIterable, Identifiable {
                 guard let record = self.library.projects.first(where: { $0.id == savedID }) else { return }
                 self.tagFolder(record)
                 self.refreshMounts()
-                // The sheet closes and Projects shows the new folder, selected, with its files; the form is cleared so
-                // the next ⌘N starts on the following number.
+                // Keep an ordinary UI creation's completion visible. CLI creation clears its temporary form;
+                // workspace promotion still closes the sheet before offering the old-workspace review.
                 self.search = ""
                 self.selectedProject = record.id; self.page = .projects; self.selectProject()
-                self.newProjectPresented = false
-                self.nextProject()
+                if !fromSheet || !self.newProjectPresented || record.ideaWorkspace != nil {
+                    self.newProjectPresented = false
+                    self.nextProject()
+                }
                 if record.ideaWorkspace != nil { self.workspaceCleanup = record }
                 onFinish?(.success(record))
             } catch { onFinish?(.failure(error)); self.error = "The project exists at \(url.path), but history could not be saved. Do not create it again. Resolve the storage issue, restart the app, then use Add Existing Project to recover. \(error.localizedDescription)" }

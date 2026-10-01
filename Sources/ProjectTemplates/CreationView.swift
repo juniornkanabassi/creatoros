@@ -100,14 +100,15 @@ struct NewProjectSheet: View {
                     }.font(.callout).foregroundStyle(Color.accentColor)
                 }
                 Spacer()
-                Button("Close") { m.newProjectPresented = false }.keyboardShortcut(.cancelAction).help("Close without creating anything. What you typed stays for next time.")
+                Button("Close") { m.newProjectPresented = false }.keyboardShortcut(.cancelAction).disabled(m.busy)
+                    .help(m.created == nil ? "Close without creating anything. What you typed stays for next time." : "Close and show the created project in Projects. The next project starts with a clear form.")
             }.padding(.horizontal, 20).padding(.vertical, 14)
             Divider()
             // A plain HStack, not HSplitView: an AppKit split view inside the zoom transform draws in one place and
             // takes clicks in another, which left the whole sheet dead at any zoom other than Actual Size.
             ZoomedInterface(scale: m.uiScale, minimumWidth: 900) {
                 HStack(spacing: 0) {
-                    CreationForm().frame(width: 440)
+                    CreationForm().frame(width: 440).disabled(m.busy || m.created != nil)
                     Divider()
                     CreationPreview().frame(maxWidth: .infinity)
                 }
@@ -115,6 +116,7 @@ struct NewProjectSheet: View {
         }
         .frame(width: max(1280, 920 * m.uiScale), height: 800)
         .onAppear { m.refresh() }
+        .onDisappear { if m.created != nil && !m.busy { m.nextProject() } }
     }
 }
 
@@ -242,7 +244,7 @@ struct AssignMenu: View {
         HStack(spacing: 8) {
             Button("Import Template Files…") { m.beginImport(assigning: PendingAssignment(setID: set.id, format: format)) }
                 .help("Choose a folder or Post Haste package to use for \(m.label(for: format)) in \(set.name)")
-            Menu("Use Existing") {
+            Menu("Use Existing Template Files") {
                 let others = set.variants.filter { $0.format != format }
                 if !others.isEmpty {
                     Section("Same as another format in \(set.name)") {
@@ -329,8 +331,9 @@ struct CreationPreview: View {
                         if let record = m.library.projects.first(where: { $0.path == created.path }) { m.selectedProject = record.id; m.page = .projects; m.selectProject() }
                         m.newProjectPresented = false
                     }.help("Close this sheet and show the new project in Projects")
-                    Button("Next Project") { m.nextProject() }.buttonStyle(.borderedProminent).help("Clear the form for the next project, keeping the template, format and destination")
-                }
+                    Button("Next Project") { m.nextProject() }.buttonStyle(.borderedProminent).keyboardShortcut(.return, modifiers: .command)
+                        .help("Clear the form for the next project, keeping the template, format and destination (⌘↩)")
+                }.disabled(m.busy || !m.storeUsable)
             }
             DisclosureGroup("Advanced", isExpanded: $showAdvanced) {
                 HStack {
