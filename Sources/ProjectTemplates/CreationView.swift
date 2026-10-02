@@ -100,7 +100,8 @@ struct NewProjectSheet: View {
                     }.font(.callout).foregroundStyle(Color.accentColor)
                 }
                 Spacer()
-                Button("Close") { m.newProjectPresented = false }.keyboardShortcut(.cancelAction).disabled(m.busy)
+                // While copying, Escape belongs to the progress row's Cancel below.
+                Button("Close") { m.newProjectPresented = false }.keyboardShortcut(m.busy ? nil : .cancelAction).disabled(m.busy)
                     .help(m.created == nil ? "Close without creating anything. What you typed stays for next time." : "Close and show the created project in Projects. The next project starts with a clear form.")
             }.padding(.horizontal, 20).padding(.vertical, 14)
             Divider()
@@ -113,8 +114,20 @@ struct NewProjectSheet: View {
                     CreationPreview().frame(maxWidth: .infinity)
                 }
             }
+            if m.busy {
+                Divider()
+                HStack(spacing: 12) {
+                    ProgressView(value: m.fraction).frame(width: 160)
+                    Text(m.status).lineLimit(1).font(.caption).foregroundStyle(.secondary)
+                    Spacer()
+                    // Once the folder exists only the history save remains, which cannot be cancelled.
+                    Button("Cancel") { m.cancellation.cancel() }.keyboardShortcut(.cancelAction).disabled(m.created != nil)
+                        .help("Stop creating. Nothing is created or registered, and the form keeps what you typed.")
+                }.padding(.horizontal, 20).padding(.vertical, 10).background(.bar)
+            }
         }
-        .frame(width: max(1280, 920 * m.uiScale), height: 800)
+        // Larger zooms scroll horizontally inside ZoomedInterface instead of widening the sheet past the screen.
+        .frame(width: min(1280, (NSScreen.main?.visibleFrame.width ?? 1280) - 40), height: min(800, (NSScreen.main?.visibleFrame.height ?? 800) - 40))
         .onAppear { m.refresh() }
         .onDisappear { if m.created != nil && !m.busy { m.nextProject() } }
     }
@@ -183,7 +196,7 @@ struct CreationForm: View {
                 Button("Choose…") { m.chooseDestination() }.help("Choose where \(m.formatLabel) projects are created")
             }
             Section {
-                DisclosureGroup("Advanced", isExpanded: $showAdvanced) {
+                DisclosureGroup("Advanced", isExpanded: userAdvanced) {
                     Text("Optional campaign and extra fields for the folder name, and plain folders for drives that cannot hold icons.")
                         .font(.caption).foregroundStyle(.secondary)
                     TextField("Campaign", text: $m.campaign, prompt: Text("Optional")).onChange(of: m.campaign) { m.fieldChanged() }
@@ -197,15 +210,18 @@ struct CreationForm: View {
                     }
                     Toggle("Plain folders (no icons)", isOn: $m.plainFolders)
                         .help("Creates the project with Finder's plain folders instead of the template's folder icons, for LucidLink and other drives that cannot hold them. The preview shows the result. Restore Folder Icons in Projects puts the icons back later.")
-                }.accessibilityAction { showAdvanced.toggle() }
+                }.accessibilityAction { userAdvanced.wrappedValue.toggle() }
             }
         }.formStyle(.grouped)
             // Opens by itself when it already holds a value, so nothing that goes into the name is hidden.
+            // That automatic opening stays local; only the user's own toggles are remembered.
             .onAppear {
                 showAdvanced = m.defaults.bool(forKey: "disclosure.creationAdvanced") || !m.campaign.isEmpty || m.plainFolders
                     || m.extraValues.values.contains { !$0.isEmpty }
             }
-            .onChange(of: showAdvanced) { m.defaults.set(showAdvanced, forKey: "disclosure.creationAdvanced") }
+    }
+    private var userAdvanced: Binding<Bool> {
+        Binding(get: { showAdvanced }, set: { showAdvanced = $0; m.defaults.set($0, forKey: "disclosure.creationAdvanced") })
     }
 
     @ViewBuilder var variantStatus: some View {

@@ -64,5 +64,24 @@ import TemplateCore
         while model.busy { await Task.yield() }
         precondition(model.created == nil && model.title.isEmpty && model.number == "004")
         print("PASS 1 sheet completion check: saved project remains visible; Next Project resets only the form; background creation still resets if a sheet opens during its copy")
+        var idea = ProjectRecord(planned: "Promoted idea", format: "Short", stage: "Idea", campaign: "Kept")
+        idea.notes = "Kept notes"
+        try await model.commitDurably { $0.projects.append(idea) }
+        model.startPlanned(idea)
+        await model.refreshTask?.value
+        precondition(model.startingFrom == idea.id && model.newProjectPresented)
+        let promoted: ProjectRecord = try await withCheckedThrowingContinuation { done in model.create { done.resume(with: $0) } }
+        while model.busy { await Task.yield() }
+        precondition(model.newProjectPresented && model.created?.path == promoted.path && model.startingFrom == nil)
+        precondition(promoted.id == idea.id && !promoted.isPlanned && promoted.notes == "Kept notes" && promoted.campaign == "Kept")
+        precondition(model.library.projects.filter { $0.id == idea.id }.count == 1 && model.workspaceCleanup == nil)
+        model.nextProject()
+        model.title = "After idea"; model.fieldChanged()
+        await model.refreshTask?.value
+        let ordinary: ProjectRecord = try await withCheckedThrowingContinuation { done in model.create { done.resume(with: $0) } }
+        while model.busy { await Task.yield() }
+        precondition(ordinary.id != idea.id && ordinary.campaign == nil && model.startingFrom == nil)
+        precondition(model.library.projects.first { $0.id == idea.id }?.path == promoted.path)
+        print("PASS 1 idea promotion check: kept-open sheet clears the idea link; identity and metadata kept; Next Project is ordinary creation")
     }
 }

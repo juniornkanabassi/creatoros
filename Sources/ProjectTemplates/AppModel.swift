@@ -596,6 +596,8 @@ enum BadgeColour: String, CaseIterable, Identifiable {
                 // workspace promotion still closes the sheet before offering the old-workspace review.
                 self.search = ""
                 self.selectedProject = record.id; self.page = .projects; self.selectProject()
+                // The idea is now this project, so a kept-open sheet must not still claim to start from it.
+                if self.startingFrom == origin?.id { self.startingFrom = nil }
                 if !fromSheet || !self.newProjectPresented || record.ideaWorkspace != nil {
                     self.newProjectPresented = false
                     self.nextProject()
