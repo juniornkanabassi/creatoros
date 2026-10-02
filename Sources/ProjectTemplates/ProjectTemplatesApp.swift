@@ -228,7 +228,8 @@ struct MainView: View {
                 }
             }
             .listStyle(.sidebar)
-            .navigationSplitViewColumnWidth(min: 190 * m.uiScale, ideal: 215 * m.uiScale, max: 280 * m.uiScale)
+            // Keep the window minimum stable; enlarged pane content scrolls in ZoomedInterface.
+            .navigationSplitViewColumnWidth(min: 190, ideal: max(190, 215 * m.uiScale), max: 280 * m.uiScale)
             .safeAreaInset(edge: .bottom) {
                 VStack(alignment: .leading, spacing: 3) {
                     Text(AppInfo.name).font(.caption.weight(.medium))
@@ -248,7 +249,7 @@ struct MainView: View {
                 }
             }
             }
-            .navigationSplitViewColumnWidth(min: 360 * m.uiScale, ideal: 440 * m.uiScale, max: 600 * m.uiScale)
+            .navigationSplitViewColumnWidth(min: 360, ideal: max(360, 440 * m.uiScale), max: 600 * m.uiScale)
         } detail: {
             ZoomedInterface(scale: m.uiScale, minimumWidth: 360) {
             VStack(spacing: 0) {
@@ -270,7 +271,7 @@ struct MainView: View {
                 }
             }
             }
-            .navigationSplitViewColumnWidth(min: 420 * m.uiScale, ideal: 640 * m.uiScale)
+            .navigationSplitViewColumnWidth(min: 420, ideal: 640 * m.uiScale)
         }
         .navigationTitle(m.page.rawValue)
         .disabled(!m.storeUsable)
