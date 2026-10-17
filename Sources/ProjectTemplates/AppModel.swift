@@ -356,11 +356,21 @@ enum BadgeColour: String, CaseIterable, Identifiable {
 
     // MARK: Destinations and formats
 
+    /// An Open panel saves its size and last folder in the standard defaults domain, which an isolated launch shares with
+    /// the production app. Put back whatever it changed there, at once and again after AppKit's later writes.
+    func runPanel(_ panel: NSOpenPanel) -> NSApplication.ModalResponse {
+        guard runtime.isIsolated, let domain = Bundle.main.bundleIdentifier else { return panel.runModal() }
+        let snapshot = UserDefaults.standard.persistentDomain(forName: domain) ?? [:]
+        let result = panel.runModal()
+        UserDefaults.standard.restore(domain: domain, to: snapshot)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2) { UserDefaults.standard.restore(domain: domain, to: snapshot) }
+        return result
+    }
     func folderPanel(title: String) -> URL? {
         let panel = NSOpenPanel(); panel.title = title; panel.canChooseFiles = false
         panel.canChooseDirectories = true; panel.canCreateDirectories = true
         panel.directoryURL = runtime.root
-        return panel.runModal() == .OK ? panel.url : nil
+        return runPanel(panel) == .OK ? panel.url : nil
     }
     func chooseDestination() {
         guard let url = folderPanel(title: "Choose where \(formatLabel) projects go") else { return }
@@ -454,7 +464,7 @@ enum BadgeColour: String, CaseIterable, Identifiable {
     func beginImport(assigning: PendingAssignment? = nil) {
         let panel = NSOpenPanel(); panel.title = "Choose a template folder or Post Haste package"
         panel.canChooseFiles = true; panel.canChooseDirectories = true
-        guard panel.runModal() == .OK, let source = panel.url else { return }
+        guard runPanel(panel) == .OK, let source = panel.url else { return }
         pendingAssignment = assigning
         importSource = source
         importName = source.pathExtension.lowercased() == "pht" ? source.deletingPathExtension().lastPathComponent : source.lastPathComponent
@@ -645,7 +655,7 @@ enum BadgeColour: String, CaseIterable, Identifiable {
     func chooseIcon(fromFolder: Bool) {
         let panel = NSOpenPanel(); panel.title = fromFolder ? "Choose a folder whose icon you want" : "Choose an icon image"
         panel.canChooseDirectories = fromFolder; panel.canChooseFiles = !fromFolder
-        guard panel.runModal() == .OK, let url = panel.url else { return }
+        guard runPanel(panel) == .OK, let url = panel.url else { return }
         let image = fromFolder ? NSWorkspace.shared.icon(forFile: url.path) : NSImage(contentsOf: url)
         guard let data = image?.tiffRepresentation else { error = "That file could not be read as an image."; return }
         attempt {

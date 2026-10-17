@@ -136,3 +136,19 @@ public struct AppRuntime: Sendable {
         try requireWritable(url)
     }
 }
+
+extension UserDefaults {
+    /// Puts every key of `domain` back to its value in `snapshot`, removing keys the snapshot did not have. An isolated
+    /// launch shares the stable app's defaults domain, so AppKit state saved there during a test is undone with this.
+    /// ponytail: reverts any key that changed, so a production instance writing the same key at that moment loses it.
+    public func restore(domain: String, to snapshot: [String: Any]) {
+        let current = persistentDomain(forName: domain) ?? [:]
+        for key in Set(snapshot.keys).union(current.keys) {
+            switch (snapshot[key], current[key]) {
+            case (nil, nil): continue
+            case let (old?, new?) where (old as AnyObject).isEqual(new): continue
+            default: set(snapshot[key], forKey: key)
+            }
+        }
+    }
+}
