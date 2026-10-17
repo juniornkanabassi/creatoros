@@ -28,6 +28,21 @@ private func dataRootArgument(_ arguments: [String]) -> String? {
     return URL(fileURLWithPath: arguments[index + 1]).standardizedFileURL.path
 }
 
+/// SwiftUI names the main window and its split view for frame autosave, and AppKit then reads and writes those frames in
+/// the standard defaults domain, which an isolated launch of the stable app shares with production. Clearing the names
+/// once the window was up lost a race in Junior's real run, so an isolated launch refuses them before any window exists.
+enum FrameAutosave {
+    static func refuse() {
+        swap(NSWindow.self, #selector(NSWindow.setFrameAutosaveName(_:)), #selector(NSWindow.refuseFrameAutosaveName(_:)))
+        swap(NSSplitView.self, #selector(setter: NSSplitView.autosaveName), #selector(NSSplitView.refuseAutosaveName(_:)))
+    }
+    private static func swap(_ type: AnyClass, _ original: Selector, _ replacement: Selector) {
+        method_exchangeImplementations(class_getInstanceMethod(type, original)!, class_getInstanceMethod(type, replacement)!)
+    }
+}
+extension NSWindow { @objc func refuseFrameAutosaveName(_ name: String) -> Bool { false } }
+extension NSSplitView { @objc func refuseAutosaveName(_ name: String?) {} }
+
 @main struct ContentTemplateApp: App {
     @StateObject private var model = AppModel()
     @NSApplicationDelegateAdaptor(CreatorOSDelegate.self) private var delegate
@@ -35,6 +50,7 @@ private func dataRootArgument(_ arguments: [String]) -> String? {
         // macOS restores the windows an app had when it quit; after Junior closed the window and quit, that was none,
         // so a relaunch from Spotlight showed nothing. Always open the main window instead; it keeps its own frame below.
         UserDefaults.standard.register(defaults: ["ApplePersistenceIgnoreState": true])
+        if dataRootArgument(ProcessInfo.processInfo.arguments) != nil { FrameAutosave.refuse() }
         // A second launch should activate the running app, not open a second
         // writer over the same library. Test bundles use a separate identifier.
         // A copy that is still finishing its quit (saving the library) must not swallow the new launch: Junior's
@@ -169,25 +185,8 @@ struct ZoomedInterface<Content: View>: View {
 enum WindowSetup {
     private static var keyMonitor: Any?
     private static var positionedTestWindow = false
-    private static var keyWindowObserver: Any?
-    private static func stopFrameAutosave(_ window: NSWindow) {
-        window.setFrameAutosaveName("")
-        func clear(_ view: NSView) { (view as? NSSplitView)?.autosaveName = nil; view.subviews.forEach(clear) }
-        window.contentView.map(clear)
-    }
     static func apply(zoom: @escaping (Int) -> Void, reset: @escaping () -> Void) {
         let args = ProcessInfo.processInfo.arguments
-        // AppKit saves window and split-view frames to the standard defaults domain, which an isolated launch shares
-        // with the production app. Stop that before the test window is positioned, or the move is saved too.
-        // Windows opened later, such as Settings, are caught when they first become key, before they can be moved.
-        if args.contains("--data-directory") {
-            NSApp.windows.forEach(stopFrameAutosave)
-            if keyWindowObserver == nil {
-                keyWindowObserver = NotificationCenter.default.addObserver(forName: NSWindow.didBecomeKeyNotification, object: nil, queue: .main) { note in
-                    if let window = note.object as? NSWindow { MainActor.assumeIsolated { stopFrameAutosave(window) } }
-                }
-            }
-        }
         if !positionedTestWindow, args.contains("--data-directory"), let index = args.firstIndex(of: "--display-name"), args.indices.contains(index + 1),
            let screen = NSScreen.screens.first(where: { $0.localizedName == args[index + 1] }),
            let window = NSApp.windows.first(where: { $0.styleMask.contains(.titled) }) {

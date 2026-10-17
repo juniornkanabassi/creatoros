@@ -20,6 +20,11 @@ trap cleanup EXIT
 /usr/bin/ditto "$app" "$stage/CreatorOS.app"
 /usr/libexec/PlistBuddy -c "Set CFBundleIdentifier $id" "$stage/CreatorOS.app/Contents/Info.plist"
 /usr/bin/codesign --force --sign - "$stage/CreatorOS.app" >/dev/null 2>&1
+# Seed a saved main-window frame of a size nothing else uses, as Junior's real preferences have one. An isolated window
+# that adopts it has autosave attached, and AppKit will later write the frame back, so the check fails on it.
+frame_key='NSWindow Frame SwiftUI.WindowGroup<SwiftUI.ModifiedContent<SwiftUI.ModifiedContent<SwiftUI.ModifiedContent<ProjectTemplates.MainView, SwiftUI._EnvironmentKeyWritingModifier<Swift.Optional<ProjectTemplates.AppModel>>>, SwiftUI._FlexFrameLayout>, SwiftUI._AppearanceActionModifier>>-1-AppWindow-1'
+defaults write "$id" "$frame_key" "100 100 1111 777 0 0 1512 900 "
+seeded=$(defaults export "$id" - | plutil -convert json -o - -)
 # --display-name runs the test-window positioning path, which moves the window after it opens. Prefer a screen other
 # than the one the window opens on, so the move is real; print its name and its top-left-origin rectangle. The app
 # picks the first screen with the given name, so only a screen that is the first of its name is a usable target.
@@ -41,16 +46,20 @@ sleep 3   # let the window open, position itself and autosave if it is going to
 import CoreGraphics
 let a = CommandLine.arguments, pid = Int(a[1])!, r = a[2].split(separator: " ").prefix(4).map { Double($0)! }
 let windows = CGWindowListCopyWindowInfo([.optionAll], kCGNullWindowID) as! [[String: Any]]
-let placed = windows.contains { w in
+let bounds = windows.compactMap { w -> [String: Double]? in
   guard w[kCGWindowOwnerPID as String] as? Int == pid, w[kCGWindowLayer as String] as? Int == 0,
-        let b = w[kCGWindowBounds as String] as? [String: Double], b["Width"]! > 500 else { return false }
+        let b = w[kCGWindowBounds as String] as? [String: Double], b["Width"]! > 500 else { return nil }
+  return b
+}
+if bounds.contains(where: { $0["Width"] == 1111 }) { print("FAIL the test window took the saved production-style frame, so autosave is attached"); exit(1) }
+let placed = bounds.contains { b in
   let x = b["X"]! + b["Width"]! / 2, y = b["Y"]! + b["Height"]! / 2
   return x >= r[0] && x <= r[2] && y >= r[1] && y <= r[3]
 }
 if !placed { print("FAIL the test window was not positioned on the target display"); exit(1) }' "$pid" "$target"
 kill -TERM "$pid"; wait "$pid" 2>/dev/null || true; pid=""
-written=$(defaults export "$id" - | plutil -convert json -o - - | /usr/bin/python3 -c 'import json,sys; print("\n".join(sorted(json.load(sys.stdin))))')
-if [[ -n "$written" ]]; then
-  print -u2 "FAIL isolated launch wrote to its app defaults domain:"; print -u2 -- "$written"; exit 1
+after=$(defaults export "$id" - | plutil -convert json -o - -)
+if [[ "$after" != "$seeded" ]]; then
+  print -u2 "FAIL isolated launch changed its app defaults domain:"; print -u2 -- "$after" | cut -c1-400; exit 1
 fi
 print "PASS isolated launch leaves the app defaults domain untouched"
