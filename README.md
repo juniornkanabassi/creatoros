@@ -1,6 +1,6 @@
 # CreatorOS
 
-Native SwiftUI/AppKit Mac app that creates correctly named project folders from reusable content templates and tracks them through the content pipeline. **CreatorOS 1.4.0** is the local UI simplification candidate on `ui-simplify`. The installed release remains 1.3.1; this candidate has not been installed, tagged or pushed. Builds do not install, tag or push.
+Native SwiftUI/AppKit Mac app that creates correctly named project folders from reusable content templates and tracks them through the content pipeline. **CreatorOS 1.4.0** (the UI simplification) is released at `v1.4.0` and installed at `/Applications/JuniorOS Apps/CreatorOS.app`. Builds do not install, tag or push.
 
 CreatorOS keeps the established `local.projecttemplates.mac` identity and `~/Library/Application Support/Project Templates/` data root so existing preferences, templates, bookmarks and catalogue data continue without a lossy copy or merge. The internal executable remains `ProjectTemplates`; that is not a user-facing product name. Explicit `--data-directory` launches and ContentTool remain isolated from the everyday library. A build carrying the old alpha identifier or α channel also selects isolation, never production data.
 
