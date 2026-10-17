@@ -37,12 +37,6 @@ func runtimeChecks(base: URL) throws {
     try rejects("alpha refuses symlink data root") { _ = try AppRuntime(root: alias, stableRoot: base.appendingPathComponent("OtherStable")) }
     var imported = Library(); imported.presets[0].destination = stable.path
     try rejects("alpha refuses imported external destination before background work") { try runtime.validate(imported) }
-    let suite = "local.creatoros.check." + UUID().uuidString, defaults = UserDefaults(suiteName: suite)!
-    defaults.set("kept", forKey: "Kept"); defaults.set("original", forKey: "Changed")
-    let snapshot = defaults.persistentDomain(forName: suite) ?? [:]
-    defaults.set("panel", forKey: "Changed"); defaults.set("{880, 448}", forKey: "NSNavPanelExpandedSizeForOpenMode")
-    defaults.restore(domain: suite, to: snapshot)
-    try check(NSDictionary(dictionary: defaults.persistentDomain(forName: suite) ?? [:]).isEqual(to: snapshot), "restoring a defaults snapshot undoes changed and added keys")
-    defaults.removePersistentDomain(forName: suite)
+    try check(runtime.sharesProductionPreferences(bundleIdentifier: "local.projecttemplates.mac") && !runtime.sharesProductionPreferences(bundleIdentifier: AppRuntime.alphaIdentifier) && !production.sharesProductionPreferences(bundleIdentifier: "local.projecttemplates.mac"), "only an isolated stable-bundle launch shares the production preferences domain")
     try check(runtime.defaultsSuite != (try AppRuntime(root: base.appendingPathComponent("Alpha2"), stableRoot: stable)).defaultsSuite, "disposable alpha roots use separate preferences")
 }

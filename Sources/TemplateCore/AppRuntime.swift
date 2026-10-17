@@ -12,6 +12,8 @@ public struct AppRuntime: Sendable {
     public static var alphaRoot: URL { FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("CreatorOS Alpha") }
     public var defaultsSuite: String { Self.alphaIdentifier + "." + Data(root.path.utf8).base64EncodedString() }
     public var isIsolated: Bool { scope == .isolated }
+    /// An isolated launch of the stable bundle still shares its defaults domain, which AppKit writes to directly.
+    public func sharesProductionPreferences(bundleIdentifier: String?) -> Bool { isIsolated && bundleIdentifier == "local.projecttemplates.mac" }
     public var projects: URL { root.appendingPathComponent("Projects") }
     public var ideas: URL { root.appendingPathComponent("Ideas") }
 
@@ -137,18 +139,3 @@ public struct AppRuntime: Sendable {
     }
 }
 
-extension UserDefaults {
-    /// Puts every key of `domain` back to its value in `snapshot`, removing keys the snapshot did not have. An isolated
-    /// launch shares the stable app's defaults domain, so AppKit state saved there during a test is undone with this.
-    /// ponytail: reverts any key that changed, so a production instance writing the same key at that moment loses it.
-    public func restore(domain: String, to snapshot: [String: Any]) {
-        let current = persistentDomain(forName: domain) ?? [:]
-        for key in Set(snapshot.keys).union(current.keys) {
-            switch (snapshot[key], current[key]) {
-            case (nil, nil): continue
-            case let (old?, new?) where (old as AnyObject).isEqual(new): continue
-            default: set(snapshot[key], forKey: key)
-            }
-        }
-    }
-}

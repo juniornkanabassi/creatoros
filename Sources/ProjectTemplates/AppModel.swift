@@ -356,15 +356,14 @@ enum BadgeColour: String, CaseIterable, Identifiable {
 
     // MARK: Destinations and formats
 
-    /// An Open panel saves its size and last folder in the standard defaults domain, which an isolated launch shares with
-    /// the production app. Put back whatever it changed there, at once and again after AppKit's later writes.
+    /// An Open panel saves its size and last folder in the standard defaults domain, which an isolated launch of the stable
+    /// app shares with production. There is no way to point AppKit elsewhere, so such a launch does not open panels.
     func runPanel(_ panel: NSOpenPanel) -> NSApplication.ModalResponse {
-        guard runtime.isIsolated, let domain = Bundle.main.bundleIdentifier else { return panel.runModal() }
-        let snapshot = UserDefaults.standard.persistentDomain(forName: domain) ?? [:]
-        let result = panel.runModal()
-        UserDefaults.standard.restore(domain: domain, to: snapshot)
-        DispatchQueue.main.asyncAfter(deadline: .now() + 2) { UserDefaults.standard.restore(domain: domain, to: snapshot) }
-        return result
+        guard !runtime.sharesProductionPreferences(bundleIdentifier: Bundle.main.bundleIdentifier) else {
+            error = "Open panels are off in a --data-directory run of CreatorOS, because they would write the everyday app's preferences. Use the alpha build to test them."
+            return .cancel
+        }
+        return panel.runModal()
     }
     func folderPanel(title: String) -> URL? {
         let panel = NSOpenPanel(); panel.title = title; panel.canChooseFiles = false
