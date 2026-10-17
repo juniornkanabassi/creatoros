@@ -169,8 +169,25 @@ struct ZoomedInterface<Content: View>: View {
 enum WindowSetup {
     private static var keyMonitor: Any?
     private static var positionedTestWindow = false
+    private static var keyWindowObserver: Any?
+    private static func stopFrameAutosave(_ window: NSWindow) {
+        window.setFrameAutosaveName("")
+        func clear(_ view: NSView) { (view as? NSSplitView)?.autosaveName = nil; view.subviews.forEach(clear) }
+        window.contentView.map(clear)
+    }
     static func apply(zoom: @escaping (Int) -> Void, reset: @escaping () -> Void) {
         let args = ProcessInfo.processInfo.arguments
+        // AppKit saves window and split-view frames to the standard defaults domain, which an isolated launch shares
+        // with the production app. Stop that before the test window is positioned, or the move is saved too.
+        // Windows opened later, such as Settings, are caught when they first become key, before they can be moved.
+        if args.contains("--data-directory") {
+            NSApp.windows.forEach(stopFrameAutosave)
+            if keyWindowObserver == nil {
+                keyWindowObserver = NotificationCenter.default.addObserver(forName: NSWindow.didBecomeKeyNotification, object: nil, queue: .main) { note in
+                    if let window = note.object as? NSWindow { MainActor.assumeIsolated { stopFrameAutosave(window) } }
+                }
+            }
+        }
         if !positionedTestWindow, args.contains("--data-directory"), let index = args.firstIndex(of: "--display-name"), args.indices.contains(index + 1),
            let screen = NSScreen.screens.first(where: { $0.localizedName == args[index + 1] }),
            let window = NSApp.windows.first(where: { $0.styleMask.contains(.titled) }) {

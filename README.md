@@ -1,6 +1,6 @@
 # CreatorOS
 
-Native SwiftUI/AppKit Mac app that creates correctly named project folders from reusable content templates and tracks them through the content pipeline. **CreatorOS 1.4.0** (the UI simplification) is released at `v1.4.0` and installed at `/Applications/JuniorOS Apps/CreatorOS.app`. Builds do not install, tag or push.
+Native SwiftUI/AppKit Mac app that creates correctly named project folders from reusable content templates and tracks them through the content pipeline. **CreatorOS 1.4.1** (1.4.0's UI simplification, plus isolated launches no longer writing the production preferences) is released at `v1.4.1` and installed at `/Applications/JuniorOS Apps/CreatorOS.app`. Builds do not install, tag or push.
 
 CreatorOS keeps the established `local.projecttemplates.mac` identity and `~/Library/Application Support/Project Templates/` data root so existing preferences, templates, bookmarks and catalogue data continue without a lossy copy or merge. The internal executable remains `ProjectTemplates`; that is not a user-facing product name. Explicit `--data-directory` launches and ContentTool remain isolated from the everyday library. A build carrying the old alpha identifier or α channel also selects isolation, never production data.
 
@@ -92,7 +92,7 @@ Resources/                Info.plist, pastel red slate stable AppIcon and orange
 
 Released CreatorOS and alpha `library.json` use schema 6 with optional owned idea workspace references. They load schemas 1–6 and refuse newer; upgrades retain a backup. Alpha and stable storage stay separate. Retained export records stay unused; see `../00 Project State/Deferred features.md`. The first empty Projects screen explains the three steps: choose a template, name the project and create it. Projects and both pipeline boards offer Create Project; Templates offers Import Template. Optional creation fields, folder-icon choices and compatibility checks are under Advanced. Template sets group the formats for a channel or client; standalone templates remain usable directly. Expert controls remain reachable in Advanced and the existing menus.
 
-Interface state lives in isolated `UserDefaults`; a `--data-directory` run uses its own defaults suite.
+Interface state lives in isolated `UserDefaults`; a `--data-directory` run uses its own defaults suite, and turns off AppKit's window and split-view frame autosave, which would otherwise write into the production `local.projecttemplates.mac` domain.
 
 ## Personal setup and Notion backup utilities
 
@@ -138,7 +138,7 @@ command = "node"
 args = ["/Applications/JuniorOS Apps/CreatorOS.app/Contents/Resources/mcp/creatoros-mcp.mjs"]
 ```
 
-For a disposable build check: `zsh Scripts/check-ai-control.sh "/path/to/CreatorOS.app"`; `python3 Scripts/check-control.py "/path/to/CreatorOS.app"` exercises the socket boundary. `MCP_CLI` overrides the shim's executable for testing. MCP inherits `CREATOROS_DATA_DIRECTORY`. UI gestures, physical disconnected drives, real LucidLink and Adobe relinking need separate acceptance evidence.
+For a disposable build check: `zsh Scripts/check-ai-control.sh "/path/to/CreatorOS.app"`; `zsh Scripts/check-isolated-defaults.sh "/path/to/CreatorOS.app"` launches a re-identified copy with `--data-directory` and fails if anything reaches its defaults domain (it never touches the production domain); `python3 Scripts/check-control.py "/path/to/CreatorOS.app"` exercises the socket boundary. `MCP_CLI` overrides the shim's executable for testing. MCP inherits `CREATOROS_DATA_DIRECTORY`. UI gestures, physical disconnected drives, real LucidLink and Adobe relinking need separate acceptance evidence.
 
 
 ## 1.4.0 UI fix-round evidence
