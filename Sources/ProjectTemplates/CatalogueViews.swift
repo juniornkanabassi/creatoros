@@ -28,7 +28,15 @@ struct ProjectList: View {
             .onChange(of: m.selectedProject) { m.selectProject() }
             .overlay {
                 if m.library.projects.isEmpty {
-                    ContentUnavailableView("No projects yet", systemImage: "externaldrive", description: Text("Create a project, or add a folder of existing projects. Files stay where they are."))
+                    ContentUnavailableView {
+                        Label("No projects yet", systemImage: "externaldrive")
+                    } description: {
+                        Text("CreatorOS makes correctly named project folders from your templates, then tracks them through your pipeline.\n\n1. Import a template in Templates.\n2. Press Create Project and name it.\n3. Follow it on the Pipeline board.\n\nAlready have projects? Use Add Existing. Files stay where they are.")
+                    } actions: {
+                        if m.library.templates.isEmpty {
+                            Button("Import Template…") { m.beginImport() }.help("Choose a template folder or Post Haste package to copy into CreatorOS. Your original is never changed.")
+                        }
+                    }
                 } else if m.filteredProjects.isEmpty {
                     ContentUnavailableView.search(text: m.search)
                 }
@@ -41,17 +49,20 @@ struct ProjectList: View {
                         Spacer()
                         Button("Scan Again") { m.rescanLocation(location) }.font(.caption).help("Look through this location again for projects that are not in the list yet")
                         Button { m.removeLocation(location) } label: { Image(systemName: "minus.circle") }.buttonStyle(.plain).help("Forget this location. Projects already registered stay.")
+                            .accessibilityLabel("Forget \(location.name)")
                     }
                 }
                 if (m.library.locations ?? []).isEmpty { Text("None saved").font(.caption).foregroundStyle(.secondary) }
             } label: {
                 Text("\(m.filteredProjects.count) projects · \((m.library.locations ?? []).count) saved locations").font(.caption).foregroundStyle(.secondary)
             }.padding(.horizontal, 16).padding(.vertical, 8)
+                .help("Folders and drives you added with Add Existing. Scan one again to pick up new projects.")
         }
         .searchable(text: $m.search, placement: .toolbar, prompt: "Search projects, notes and documents")
         .toolbar {
             ToolbarItemGroup(placement: .primaryAction) {
-                Button { m.newProjectPresented = true } label: { Label("New Project", systemImage: "folder.badge.plus") }.help("Create a project from a content template (⌘N)")
+                Button { m.newProjectPresented = true } label: { Label("Create Project", systemImage: "folder.badge.plus").labelStyle(.titleAndIcon) }
+                    .buttonStyle(.borderedProminent).help("Create a project folder from a template (⌘N)")
                 Button { m.relinkAll() } label: {
                     if m.relinkBatchRunning { ProgressView().controlSize(.small).frame(width: 18) } else { Label("Find Missing Projects", systemImage: "arrow.triangle.2.circlepath") }
                 }
@@ -118,19 +129,20 @@ struct ProjectActions: View {
         // Read the pin state live: the menu bar keeps this view alive across library changes.
         let pinned = m.library.projects.first { $0.id == record.id }?.isPinned ?? record.isPinned
         Button(pinned ? "Unpin" : "Pin") { m.togglePin(record.id) }.keyboardShortcut("p", modifiers: [.command, .shift]).help("Pinned projects stay at the top of the list")
-        Button("Rename Project…") { m.requestRename(record) }.disabled(m.busy)
-        Button("Open in Finder") { m.open(record) }.keyboardShortcut("o")
+        Button("Rename Project…") { m.requestRename(record) }.disabled(m.busy).help("Rename the folder and the files named after it, after reviewing every change")
+        Button("Open in Finder") { m.open(record) }.keyboardShortcut("o").help("Open the project folder in Finder")
         Button("Show in Pipeline") { m.pipelineSelection = record.id; m.page = .pipeline }.keyboardShortcut("p", modifiers: [.command, .option]).help("Select this project on the Pipeline board")
         if showStages { Menu("Move to Stage") { ForEach(m.moveTargets(for: record), id: \.self) { stage in Button(stage) { m.setStage(stage, for: record.id) }.disabled(stage == m.effectiveStage(record)) } } }
+        Section("Advanced") {
+            Button("Find Moved Folder") { m.relink(record) }.keyboardShortcut("r", modifiers: [.command, .option]).help("Search the connected drives for a folder with this project's name")
+            Button("Locate Folder…") { m.locate(record) }.keyboardShortcut("l", modifiers: [.command, .option]).help("Point the record at the folder yourself")
+            Button("Remove Folder Icons") { m.removeFolderIcons(record) }.help("Take the folder icons off so the project can be copied to LucidLink; Restore Folder Icons puts them back")
+            Button("Restore Folder Icons") { m.restoreIcons(record) }.help("Put the template's folder icons back after the project lived on a drive that cannot hold them")
+            Button("Check LucidLink Compatibility…") { m.checkCompatibility(record) }.disabled(m.busy).help("Look for file and folder names that LucidLink cannot hold")
+            if record.ideaWorkspace != nil { Button("Review Old Idea Workspace…") { m.workspaceCleanup = record }.help("Decide whether to keep the draft folder this project started from") }
+        }
         Divider()
-        Button("Find Moved Folder") { m.relink(record) }.keyboardShortcut("r", modifiers: [.command, .option]).help("Search the connected drives for a folder with this project's name")
-        Button("Locate Folder…") { m.locate(record) }.keyboardShortcut("l", modifiers: [.command, .option]).help("Point the record at the folder yourself")
-        Button("Remove Folder Icons") { m.removeFolderIcons(record) }.help("Take the folder icons off so the project can be copied to LucidLink; Restore Folder Icons puts them back")
-        Button("Restore Folder Icons") { m.restoreIcons(record) }.help("Put the content template's folder icons back after the project lived on a drive that cannot hold them")
-        Button("Check LucidLink Compatibility…") { m.checkCompatibility(record) }.disabled(m.busy)
-        if record.ideaWorkspace != nil { Button("Review Old Idea Workspace…") { m.workspaceCleanup = record } }
-        Divider()
-        Button("Remove from List", role: .destructive) { m.removeProject(record.id) }
+        Button("Remove from List", role: .destructive) { m.removeProject(record.id) }.help("Forget this project. Its folder is not touched.")
     }
 }
 
@@ -175,29 +187,31 @@ struct ProjectInspector: View {
                     Text("Created \(record.effectiveDate.formatted(date: .long, time: .omitted))").font(.caption).foregroundStyle(.secondary)
                 }
                 Spacer()
-                Button { m.togglePin(record.id) } label: { Image(systemName: record.isPinned ? "pin.fill" : "pin") }.help(record.isPinned ? "Unpin" : "Pin to the top of the list")
+                Button { m.togglePin(record.id) } label: { Image(systemName: record.isPinned ? "pin.fill" : "pin") }.help(record.isPinned ? "Unpin (⇧⌘P)" : "Pin to the top of the list (⇧⌘P)")
+                    .accessibilityLabel(record.isPinned ? "Unpin" : "Pin")
             }
             Text(record.path).font(.caption).foregroundStyle(.secondary).lineLimit(2).truncationMode(.middle).textSelection(.enabled)
             if let candidates = m.relinkCandidates[record.id], !candidates.isEmpty {
                 VStack(alignment: .leading, spacing: 6) {
                     Label("Found \(candidates.count) folders with this name. Choose the right one:", systemImage: "arrow.triangle.2.circlepath").font(.callout)
                     ForEach(candidates, id: \.path) { url in
-                        HStack { Text(url.path).font(.caption).lineLimit(1).truncationMode(.middle); Spacer(); Button("Relink") { m.relink(record, to: url) }.controlSize(.small) }
+                        HStack { Text(url.path).font(.caption).lineLimit(1).truncationMode(.middle); Spacer(); Button("Relink") { m.relink(record, to: url) }.controlSize(.small).help("Point this project at this folder") }
                     }
                 }.padding(10).background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 8))
             }
-            HStack {
-                Button("Rename Project…") { m.requestRename(record) }.disabled(m.busy)
-        Button("Open in Finder") { m.open(record) }.help("Open the project folder in Finder, showing what is inside it")
+            // Rename lives in More with the other shared project actions; this row keeps the everyday ones.
+            FlowLayout(spacing: 8) {
+                Button("Open in Finder") { m.open(record) }.help("Open the project folder in Finder, showing what is inside it (⌘O)")
                 Button { findPremiere() } label: {
                     if findingPremiere { ProgressView().controlSize(.small) } else { Text("Open Premiere Project") }
                 }
                 .disabled(findingPremiere || inspection?.available != true)
                 .help("Open the Premiere project directly, or choose one when this folder contains several")
+                .accessibilityLabel("Open Premiere Project")
                 Menu("More") {
                     Button("Refresh Project") { m.refreshProject() }.keyboardShortcut("r").help("Read this folder again, check it is still there, and look for any moved projects")
                     ProjectActions(record: record, showStages: false)
-                }.fixedSize().help("Pin, relink and other actions for this project, with their keyboard shortcuts")
+                }.fixedSize().help("Rename, pin, relink and other actions for this project, with their keyboard shortcuts")
             }
             DisclosureGroup(isExpanded: $showStatus) {
                 ProjectStatusEditor(record: record).padding(.top, 6)
@@ -288,7 +302,7 @@ struct RelinkReportSheet: View {
                 List { ForEach(report.outcomes) { row($0).id($0.kind) } }
                 if open == 0 { Label("Everything is linked again.", systemImage: "checkmark.seal.fill").foregroundStyle(.green) }
             }
-            HStack { Spacer(); Button("Done") { m.relinkReport = nil }.keyboardShortcut(.defaultAction) }
+            HStack { Spacer(); Button("Done") { m.relinkReport = nil }.keyboardShortcut(.defaultAction).help("Close this list. Projects still missing stay in your list.") }
         }.padding(24).frame(width: 760, height: report.outcomes.isEmpty ? 340 : 580)
     }
     func record(_ outcome: RelinkOutcome) -> ProjectRecord? { m.library.projects.first { $0.id == outcome.id } }
@@ -310,7 +324,7 @@ struct RelinkReportSheet: View {
                     HStack {
                         Text("Missing: not found in any place you use on the ticked drives.").font(.caption).foregroundStyle(.red)
                         Spacer()
-                        Button("Locate Folder…") { if let record = record(outcome) { m.locate(record) } }.controlSize(.small)
+                        Button("Locate Folder…") { if let record = record(outcome) { m.locate(record) } }.controlSize(.small).help("Point the record at the folder yourself")
                     }
                 }
             }
@@ -327,7 +341,7 @@ struct RelinkReportSheet: View {
         HStack {
             Text(url.path).font(.caption).lineLimit(1).truncationMode(.middle)
             Spacer()
-            Button("Use This Folder") { if let record = record(outcome) { m.relink(record, to: url) } }.controlSize(.small)
+            Button("Use This Folder") { if let record = record(outcome) { m.relink(record, to: url) } }.controlSize(.small).help("Point this project at this folder")
         }
     }
 }
@@ -358,7 +372,7 @@ struct DuplicatesSheet: View {
                                         Text("Folder from " + record.effectiveDate.formatted(date: .abbreviated, time: .omitted)).font(.caption2).foregroundStyle(.tertiary)
                                     }
                                     Spacer()
-                                    Button("Show") { m.selectedProject = record.id; m.page = .projects; m.selectProject(); m.duplicatesPresented = false }.controlSize(.small)
+                                    Button("Show") { m.selectedProject = record.id; m.page = .projects; m.selectProject(); m.duplicatesPresented = false }.controlSize(.small).help("Close this list and select this copy in Projects")
                                     Button("Remove from List") { m.removeProject(record.id) }.controlSize(.small).help("Forget this copy. Its folder stays where it is.")
                                 }.padding(.vertical, 2)
                             }
@@ -366,7 +380,7 @@ struct DuplicatesSheet: View {
                     }
                 }
             }
-            HStack { Spacer(); Button("Done") { m.duplicatesPresented = false }.keyboardShortcut(.defaultAction) }
+            HStack { Spacer(); Button("Done") { m.duplicatesPresented = false }.keyboardShortcut(.defaultAction).help("Close this list") }
         }.padding(24).frame(width: 760, height: 560)
     }
 }
@@ -386,9 +400,10 @@ struct DiscoveryView: View {
             if let notes = m.discovery?.notes, !notes.isEmpty { DisclosureGroup("Scan notes") { ScrollView { Text(notes.joined(separator: "\n")).font(.caption) }.frame(maxHeight: 80) } }
             if m.discovery?.projects.isEmpty == true { Text("No projects recognised. Add one existing project manually, or choose a smaller folder.").font(.callout) }
             HStack {
-                Button("Cancel") { m.discoveryPresented = false }.keyboardShortcut(.cancelAction)
+                Button("Cancel") { m.discoveryPresented = false }.keyboardShortcut(.cancelAction).help("Close without adding anything")
                 Spacer()
                 Button("Register \(m.discoverySelection.count) Projects") { m.registerDiscovery() }.buttonStyle(.borderedProminent).disabled(m.discoverySelection.isEmpty)
+                    .help("Add the ticked folders to your project list. Nothing on disk changes.")
             }
         }.padding(24).frame(width: 760, height: 560)
     }

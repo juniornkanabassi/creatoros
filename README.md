@@ -1,6 +1,6 @@
 # CreatorOS
 
-Native SwiftUI/AppKit Mac app that creates correctly named project folders from reusable content templates and tracks them through the content pipeline. **CreatorOS 1.3.1** is released at `v1.3.1` and installed at `/Applications/JuniorOS Apps/CreatorOS.app`. `main` also contains unshipped cleanup. Builds do not install, tag or push.
+Native SwiftUI/AppKit Mac app that creates correctly named project folders from reusable content templates and tracks them through the content pipeline. **CreatorOS 1.4.0** is the local UI simplification candidate on `ui-simplify`. The installed release remains 1.3.1; this candidate has not been installed, tagged or pushed. Builds do not install, tag or push.
 
 CreatorOS keeps the established `local.projecttemplates.mac` identity and `~/Library/Application Support/Project Templates/` data root so existing preferences, templates, bookmarks and catalogue data continue without a lossy copy or merge. The internal executable remains `ProjectTemplates`; that is not a user-facing product name. Explicit `--data-directory` launches and ContentTool remain isolated from the everyday library. A build carrying the old alpha identifier or α channel also selects isolation, never production data.
 
@@ -26,7 +26,7 @@ zsh build.sh
 
 `build.sh` builds release, selects the orange icon only for the α channel and the pastel red slate icon otherwise, assembles `CreatorOS.app` in a fresh temporary folder, strips bundle-root FinderInfo, signs ad hoc, verifies strictly and writes `../Outputs/CreatorOS <version>.zip`, taking identity and version from `Resources/Info.plist`. It refuses archive overwrite; set `CONTENT_TEMPLATE_OUTPUT_ROOT` for a separate iteration. After the acceptance gate passes, `zsh install.sh` installs only the expected CreatorOS release identifier/version, refuses a running CreatorOS-family executable and restores a prior destination if final verification fails. Set `CONTENT_TEMPLATE_INSTALL_ROOT=/tmp/test-Applications` for a disposable dry run.
 
-For interface testing launch with `--data-directory <dedicated disposable temporary folder>`. The app rejects production references and starts empty; create synthetic fixtures inside its isolated root. Do not use the real library as a disposable UI fixture: its destinations and bookmarks reference production data. The optional test-only `--display-name 'Prompter XL'` positions the test window when a disposable data directory is supplied.
+For interface testing launch with `--data-directory <dedicated disposable temporary folder>`. Keep it in the background with `open -g -n -a "/path/to/CreatorOS.app" --args --background --data-directory /private/tmp/creatoros-ui-data`. The app explicitly activates without `--background`; `open -g` alone is insufficient. Check the exact process and its data-directory argument before computer-use inspection, which can relaunch a closed app. The app rejects production references and starts empty; create synthetic fixtures inside its isolated root. Do not use the real library as a disposable UI fixture: its destinations and bookmarks reference production data. The optional test-only `--display-name 'Prompter XL'` positions the test window when a disposable data directory is supplied.
 
 ## Source layout
 
@@ -73,7 +73,7 @@ Resources/                Info.plist, pastel red slate stable AppIcon and orange
 - A **content template** is a brand, client or campaign set. Each of Long, Short, Podcast and Live can point at its own managed payload, or share another format's. A set plus a format resolves to one payload or to a setup state; there is no fallback.
 - **Legacy templates** (managed copies not in any set) are still usable directly, and one button turns one into a set with all four formats on that payload.
 - **Import** a folder or a Post Haste `.pht` as files and folders or as folder structure only, with a tree preview and size before copying. The original is never touched.
-- **New Project** shows the whole prospective folder as soon as a set and format are chosen, with `[Project Number]` and `[Project Name]` placeholders, and re-renders on every keystroke from a cached structural scan. Create is enabled only when the rendering is executable and a destination is chosen.
+- **New Project** shows the whole prospective folder as soon as a set and format are chosen, with `[Project Number]` and `[Project Name]` placeholders, and re-renders on every keystroke from a cached structural scan. Create is enabled only when the rendering is executable and a destination is chosen. After creation, the sheet confirms the saved project and offers Next Project (⌘↩) or Browse Project. Closing clears the completed form; unfinished drafts stay. Idea-workspace promotion closes directly to its existing workspace review.
 - **Naming**: Project Number, Content Format, optional Campaign, Project Name joined by ` — `. Files starting with `Template` take the full name; `[template]` and the four field tokens work; `[Conent Form]` is mapped for the old misspelling. Contents are never rewritten and package internals are never renamed.
 - **Icons**: the saved format icon goes on the outer folder; every nested `Icon\r` resource fork is preserved and hidden.
 - **Numbering**: the next number per format comes from the projects already in the list and can be typed over.
@@ -90,7 +90,9 @@ Resources/                Info.plist, pastel red slate stable AppIcon and orange
 
 ## Data
 
-Released CreatorOS and alpha `library.json` use schema 6 with optional owned idea workspace references. They load schemas 1–6 and refuse newer; upgrades retain a backup. Alpha and stable storage stay separate. Retained export records stay unused; see `../00 Project State/Deferred features.md`. Interface state lives in isolated `UserDefaults`; a `--data-directory` run uses its own defaults suite.
+Released CreatorOS and alpha `library.json` use schema 6 with optional owned idea workspace references. They load schemas 1–6 and refuse newer; upgrades retain a backup. Alpha and stable storage stay separate. Retained export records stay unused; see `../00 Project State/Deferred features.md`. The first empty Projects screen explains the three steps: choose a template, name the project and create it. Projects and both pipeline boards offer Create Project; Templates offers Import Template. Optional creation fields, folder-icon choices and compatibility checks are under Advanced. Template sets group the formats for a channel or client; standalone templates remain usable directly. Expert controls remain reachable in Advanced and the existing menus.
+
+Interface state lives in isolated `UserDefaults`; a `--data-directory` run uses its own defaults suite.
 
 ## Personal setup and Notion backup utilities
 
@@ -98,7 +100,7 @@ The retired one-time personal setup script was run by Codex on 3 September 2026 
 
 ## Limits worth knowing
 
-Ad-hoc signed, not Developer ID or notarised; do not distribute it as a finished release. Column view widths are fixed. Folder artwork is macOS metadata and does not travel to Windows or phones. The copy engine is not a security boundary against templates being modified adversarially while copying. Whole-folder drag import, branch exclusion, managed payload editing, portable sharing and Post Haste recents remain unbuilt.
+Ad-hoc signed, not Developer ID or notarised; do not distribute it as a finished release. Column dividers resize and double-click fits or resets the width. Folder artwork is macOS metadata and does not travel to Windows or phones. The copy engine is not a security boundary against templates being modified adversarially while copying. Whole-folder drag import, branch exclusion, managed payload editing, portable sharing and Post Haste recents remain unbuilt.
 
 ## AI control
 
@@ -137,3 +139,10 @@ args = ["/Applications/JuniorOS Apps/CreatorOS.app/Contents/Resources/mcp/creato
 ```
 
 For a disposable build check: `zsh Scripts/check-ai-control.sh "/path/to/CreatorOS.app"`; `python3 Scripts/check-control.py "/path/to/CreatorOS.app"` exercises the socket boundary. `MCP_CLI` overrides the shim's executable for testing. MCP inherits `CREATOROS_DATA_DIRECTORY`. UI gestures, physical disconnected drives, real LucidLink and Adobe relinking need separate acceptance evidence.
+
+
+## 1.4.0 UI fix-round evidence
+
+On the disposable UI worktree, round 2 passes debug/release builds, 483 CoreChecks, 43 packaged AI checks, 26 packaged control checks (including the new completion regression), and the native-provider/durable-save harness. Window-only before/after captures cover every screen, both boards, all Settings tabs and browser modes. Dark/light navigation each passes 10 checks without changing the synthetic library.
+
+The final packaged instance at 150% passed coordinate clicks in Settings and New Project, field typing and Tab navigation, manual/automatic numbering, pointer and keyboard creation, pointer and keyboard Next Project, Browse Project, completed-form reset and unfinished-draft preservation. Settings intentionally stays unscaled. Evidence: `/private/tmp/ship/creatoros-ui-round2-final-pointer.json` and `/private/tmp/ship/creatoros-ui-screens/round-2/`. This is bounded UI evidence, not full keyboard/VoiceOver, drag, physical-drive or Adobe acceptance. The round report records two test-run constraint breaches; it does not certify production-data integrity.

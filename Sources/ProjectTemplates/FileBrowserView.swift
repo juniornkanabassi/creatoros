@@ -87,8 +87,11 @@ struct ViewModePicker: View {
     let surface: BrowserSurface
     var body: some View {
         Picker("View", selection: Binding(get: { m.viewMode(surface) }, set: { m.setViewMode($0, for: surface) })) {
-            ForEach(BrowserViewMode.allCases) { mode in Image(systemName: mode.systemImage).help(mode.title + " (⌘" + String(mode.shortcut.character) + ")").tag(mode) }
+            ForEach(BrowserViewMode.allCases) { mode in
+                Image(systemName: mode.systemImage).help(mode.title + " (⌘" + String(mode.shortcut.character) + ")").accessibilityLabel(mode.title).tag(mode)
+            }
         }.pickerStyle(.segmented).labelsHidden().fixedSize().accessibilityLabel("View mode")
+            .help("Show files as icons, a list or columns (⌘1, ⌘2, ⌘3)")
     }
 }
 
@@ -308,7 +311,8 @@ struct FileBrowserView: View {
         return max(Self.defaultColumnWidth, (widest + 20 * m.uiScale + 8 + 24 + 28).rounded(.up))
     }
     var emptyLabel: some View {
-        Text(filter.isEmpty ? "Empty folder" : "No matches").font(.callout).foregroundStyle(.secondary)
+        Text(!filter.isEmpty ? "No matches" : fileDrop.receive == nil ? "Empty folder" : "Empty folder. Drag files here to add them.")
+            .font(.callout).foregroundStyle(.secondary)
     }
 }
 

@@ -17,7 +17,7 @@ enum Page: String, CaseIterable, Identifiable {
         switch self {
         case .pipeline: "Move recordings and streams through their stages"
         case .projects: "Browse every project, wherever it lives"
-        case .templates: "The content templates and the folders each format copies"
+        case .templates: "Template sets and the folders each format copies"
         }
     }
 }
@@ -410,8 +410,8 @@ enum BadgeColour: String, CaseIterable, Identifiable {
         guard payload != nil || workspaceRecord != nil else {
             preview = nil; plan = nil
             switch variantState {
-            case .missing(let setName): validation = "\(formatLabel) is not set up in \(setName) yet. Import a payload or reuse another format's payload to see the preview."
-            default: validation = library.templates.isEmpty ? "Import a template to see the preview." : "Choose a content template to see the preview."
+            case .missing(let setName): validation = "\(formatLabel) is not set up in \(setName) yet. Import template files or reuse another format's to see the preview."
+            default: validation = library.templates.isEmpty ? "Import a template to see the preview." : "Choose a template to see the preview."
             }
             return
         }
@@ -549,6 +549,7 @@ enum BadgeColour: String, CaseIterable, Identifiable {
         let destination = URL(fileURLWithPath: destination); let name = preview.outerFolderName
         let icon = preset.icon; let format = format; let payloadID = payload?.id
         let campaignAtCreation = campaign
+        let fromSheet = newProjectPresented
         let origin = startingFrom.flatMap { id in library.projects.first { $0.id == id } }
         let fields = fields; let runtime = runtime
         let plain = plainFolders
@@ -591,12 +592,16 @@ enum BadgeColour: String, CaseIterable, Identifiable {
                 guard let record = self.library.projects.first(where: { $0.id == savedID }) else { return }
                 self.tagFolder(record)
                 self.refreshMounts()
-                // The sheet closes and Projects shows the new folder, selected, with its files; the form is cleared so
-                // the next ⌘N starts on the following number.
+                // Keep an ordinary UI creation's completion visible. CLI creation clears its temporary form;
+                // workspace promotion still closes the sheet before offering the old-workspace review.
                 self.search = ""
                 self.selectedProject = record.id; self.page = .projects; self.selectProject()
-                self.newProjectPresented = false
-                self.nextProject()
+                // The idea is now this project, so a kept-open sheet must not still claim to start from it.
+                if self.startingFrom == origin?.id { self.startingFrom = nil }
+                if !fromSheet || !self.newProjectPresented || record.ideaWorkspace != nil {
+                    self.newProjectPresented = false
+                    self.nextProject()
+                }
                 if record.ideaWorkspace != nil { self.workspaceCleanup = record }
                 onFinish?(.success(record))
             } catch { onFinish?(.failure(error)); self.error = "The project exists at \(url.path), but history could not be saved. Do not create it again. Resolve the storage issue, restart the app, then use Add Existing Project to recover. \(error.localizedDescription)" }
@@ -1094,8 +1099,8 @@ enum BadgeColour: String, CaseIterable, Identifiable {
 
     // MARK: Zoom
 
-    var uiScale: CGFloat { 1 + CGFloat(min(max(zoomLevel, -2), 3)) * 0.1 }
-    func zoom(_ delta: Int) { zoomLevel = min(max(zoomLevel + delta, -2), 3) }
+    var uiScale: CGFloat { 1 + CGFloat(min(max(zoomLevel, -2), 5)) * 0.1 }
+    func zoom(_ delta: Int) { zoomLevel = min(max(zoomLevel + delta, -2), 5) }
 
     // MARK: Browser view modes
 

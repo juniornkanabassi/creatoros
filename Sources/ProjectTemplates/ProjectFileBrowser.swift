@@ -30,26 +30,29 @@ struct FolderBrowserHost: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             if managedTemplate {
-                Label("Managed template. Opening a document lets its editor change this reusable copy.", systemImage: "info.circle")
+                Label("Reusable template files. Saving an opened document changes future projects.", systemImage: "info.circle")
                     .font(.caption).foregroundStyle(.secondary)
             }
-            HStack(spacing: 8) {
+            FlowLayout(spacing: 8) {
                 Picker("Show", selection: $projectFilesOnly) { Text("All files").tag(false); Text("Project documents").tag(true) }
                     .pickerStyle(.segmented).labelsHidden().fixedSize().onChange(of: projectFilesOnly) { if projectFilesOnly { loadDocuments() } }
-                Spacer()
+                    .accessibilityLabel("Files to show").help("Browse every file, or show only editing documents such as Premiere and Photoshop projects.")
                 if !projectFilesOnly { ViewModePicker(surface: surface) }
                 Button { refreshCount += 1; if projectFilesOnly { loadDocuments() } } label: { Image(systemName: "arrow.clockwise") }
-                    .help("Refresh").accessibilityLabel("Refresh")
+                    .help("Read this folder again, keeping your place in the browser.").accessibilityLabel("Refresh files")
             }
             HStack(spacing: 8) {
                 Button { goUp() } label: { Image(systemName: "chevron.up") }.disabled(folder.isEmpty || projectFilesOnly).help("Enclosing folder").accessibilityLabel("Enclosing folder")
                 Button("Root") { folder = ""; selection = nil; projectFilesOnly = false }.disabled(folder.isEmpty && !projectFilesOnly)
+                    .help("Return to the top of this project's folder.")
                 Button { if let root { NSWorkspace.shared.activateFileViewerSelecting([root.appendingPathComponent(selection ?? folder)]) } } label: { Image(systemName: "arrow.up.forward.app") }
                     .disabled(root == nil).help("Reveal in Finder: the selected item, or this folder when nothing is selected, ready to drag into YouTube or anywhere else")
+                    .accessibilityLabel("Reveal in Finder")
                 Text(projectFilesOnly ? "Premiere, After Effects, Photoshop and audio projects" : (folder.isEmpty ? title : folder))
                     .font(.caption).lineLimit(1).truncationMode(.middle).textSelection(.enabled)
                 Spacer()
                 TextField(projectFilesOnly ? "Search documents" : "Search this folder", text: $query).textFieldStyle(.roundedBorder).frame(maxWidth: 220)
+                    .accessibilityLabel(projectFilesOnly ? "Search documents" : "Search this folder").help("Filter the names shown in this browser.")
             }
             if !managedTemplate && !projectFilesOnly, root != nil {
                 Label("Drop files anywhere below into \(folder.isEmpty ? title : folder). Hold Option to copy.", systemImage: "square.and.arrow.down")
@@ -72,13 +75,13 @@ struct FolderBrowserHost: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .background(.background, in: RoundedRectangle(cornerRadius: 8))
-            .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(.quaternary))
             .contentShape(Rectangle())
             .onDrop(of: [UTType.fileURL.identifier], delegate: fileDrop)
             HStack {
                 Text(selection.map { ($0 as NSString).lastPathComponent } ?? "Nothing selected").font(.caption).foregroundStyle(.secondary).lineLimit(1)
                 Spacer()
                 Button("Open in Default App") { if let selection { requestOpen(path: selection) } }.disabled(selection == nil || selection == folder)
+                    .buttonStyle(.bordered).help("Open the selected document in its usual app. Template files ask for confirmation.")
             }
         }
         .task(id: refreshCount) { resolve() }

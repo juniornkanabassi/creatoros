@@ -221,13 +221,15 @@ struct MainView: View {
                 ForEach(Page.allCases) { page in
                     HStack(spacing: 10 * m.uiScale) {
                         Image(systemName: page.systemImage).font(.system(size: 17 * m.uiScale)).frame(width: 26 * m.uiScale, alignment: .center)
+                            .foregroundStyle(Color.accentColor)
                         Text(page.rawValue).font(.system(size: 15 * m.uiScale, weight: .medium))
                     }
                     .padding(.vertical, 6 * m.uiScale).tag(page).help(page.hint)
                 }
             }
             .listStyle(.sidebar)
-            .navigationSplitViewColumnWidth(min: 190 * m.uiScale, ideal: 215 * m.uiScale, max: 280 * m.uiScale)
+            // Keep the window minimum stable; enlarged pane content scrolls in ZoomedInterface.
+            .navigationSplitViewColumnWidth(min: 190, ideal: max(190, 215 * m.uiScale), max: 280 * m.uiScale)
             .safeAreaInset(edge: .bottom) {
                 VStack(alignment: .leading, spacing: 3) {
                     Text(AppInfo.name).font(.caption.weight(.medium))
@@ -247,7 +249,7 @@ struct MainView: View {
                 }
             }
             }
-            .navigationSplitViewColumnWidth(min: 360 * m.uiScale, ideal: 440 * m.uiScale, max: 600 * m.uiScale)
+            .navigationSplitViewColumnWidth(min: 360, ideal: max(360, 440 * m.uiScale), max: 600 * m.uiScale)
         } detail: {
             ZoomedInterface(scale: m.uiScale, minimumWidth: 360) {
             VStack(spacing: 0) {
@@ -264,12 +266,12 @@ struct MainView: View {
                         if m.busy { ProgressView(value: m.fraction).frame(width: 160) }
                         Text(m.status).lineLimit(1).font(.caption).foregroundStyle(.secondary)
                         Spacer()
-                        if m.busy { Button("Cancel") { m.cancellation.cancel() }.keyboardShortcut(.cancelAction) }
+                        if m.busy { Button("Cancel") { m.cancellation.cancel() }.keyboardShortcut(.cancelAction).help("Stop the current operation") }
                     }.padding(.horizontal, 20).padding(.vertical, 10).background(.bar)
                 }
             }
             }
-            .navigationSplitViewColumnWidth(min: 420 * m.uiScale, ideal: 640 * m.uiScale)
+            .navigationSplitViewColumnWidth(min: 420, ideal: 640 * m.uiScale)
         }
         .navigationTitle(m.page.rawValue)
         .disabled(!m.storeUsable)
@@ -284,9 +286,10 @@ struct MainView: View {
         .sheet(item: $m.restoreIconsPrompt) { record in RestoreIconsSheet(record: record) }
         .sheet(item: $m.workspaceToBrowse) { record in
             VStack(alignment: .leading, spacing: 12) {
-                HStack { Text(record.name).font(.title2); Spacer(); Button("Done") { m.workspaceToBrowse = nil } }
-                Text("Add attachments by opening this owned workspace in Finder. Start Project will copy this folder without merging another template.").font(.caption)
+                HStack { Text(record.name).font(.title2); Spacer(); Button("Done") { m.workspaceToBrowse = nil }.help("Close this window") }
+                Text("This is the idea's draft folder. Add notes and attachments by opening it in Finder. Start Project will copy this folder without merging another template.").font(.caption)
                 Button("Open Workspace in Finder") { m.attempt { let root = try IdeaWorkspaceEngine.resolve(for: record); try m.runtime.requireWritable(root); NSWorkspace.shared.open(root) } }
+                    .help("Open the idea's draft folder in Finder")
                 FolderBrowserHost(title: record.name, resolveRoot: { [runtime = m.runtime] in let url = try IdeaWorkspaceEngine.resolve(for: record); try runtime.requireWritable(url); return url })
             }.padding(20).frame(width: 820, height: 640)
         }
@@ -295,7 +298,12 @@ struct MainView: View {
                 Text("Keep the old idea workspace?").font(.title2)
                 Text("The project has been saved. Its original workspace remains at \(record.ideaWorkspace?.path ?? "").").textSelection(.enabled)
                 Text("Keep Folder and Detach leaves both folders intact and removes the old workspace link from this project. You can then remove the project from the list independently.").font(.caption)
-                HStack { Button("Decide Later") { m.workspaceCleanup = nil }; Button("Keep Folder and Detach") { m.keepAndDetachWorkspace(record) }; Spacer(); Button("Review Bin Action…") { m.requestWorkspaceCleanup(record) } }.disabled(m.busy)
+                HStack {
+                    Button("Decide Later") { m.workspaceCleanup = nil }.help("Close this. You can review the old workspace later from the project's More menu.")
+                    Button("Keep Folder and Detach") { m.keepAndDetachWorkspace(record) }.help("Keep both folders and stop linking the old workspace to this project")
+                    Spacer()
+                    Button("Review Bin Action…") { m.requestWorkspaceCleanup(record) }.help("Review moving only the old workspace to the recoverable Bin")
+                }.disabled(m.busy)
             }.padding(24).frame(width: 620)
         }
         .confirmationDialog(m.binIdea?.isPlanned == false ? "Put the old workspace in the Bin?" : "Bin this idea?", isPresented: Binding(get: { m.binIdea != nil }, set: { if !$0 { m.binIdea = nil } }), titleVisibility: .visible) {
@@ -310,10 +318,10 @@ struct MainView: View {
                 HStack {
                     VStack(alignment: .leading, spacing: 2) {
                         Text(record.name).font(.title2.weight(.semibold))
-                        Text("Managed template · \(record.mode.title)").font(.caption).foregroundStyle(.secondary)
+                        Text("Template files · \(record.mode.title)").font(.caption).foregroundStyle(.secondary)
                     }
                     Spacer()
-                    Button("Done") { m.finishedBrowsingTemplate() }.keyboardShortcut(.cancelAction)
+                    Button("Done") { m.finishedBrowsingTemplate() }.keyboardShortcut(.cancelAction).help("Close and refresh the New Project preview")
                 }
                 FolderBrowserHost(title: record.name, resolveRoot: { [store = m.store] in
                     let url = store.payload(record)
@@ -358,7 +366,7 @@ struct RestoreIconsSheet: View {
                             .tag(Optional(candidate.id)).disabled(!candidate.available)
                     }
                 }
-                if candidates.isEmpty { Text("No set has a payload for this format.").foregroundStyle(.secondary) }
+                if candidates.isEmpty { Text("No set has template files for this format.").foregroundStyle(.secondary) }
                 if let reason = selectedCandidate?.reason { Text(reason).font(.caption).foregroundStyle(.orange).textSelection(.enabled) }
                 ForEach(candidates.filter { !$0.available }) { candidate in
                     Text("\(candidate.name): \(candidate.reason ?? "layout mismatch")")
@@ -367,7 +375,7 @@ struct RestoreIconsSheet: View {
             }
             Spacer()
             HStack {
-                Button("Cancel") { m.restoreIconsPrompt = nil }.keyboardShortcut(.cancelAction)
+                Button("Cancel") { m.restoreIconsPrompt = nil }.keyboardShortcut(.cancelAction).help("Close without changing any folder icons")
                 Spacer()
                 Button("Restore") {
                     guard let selectedSet else { return }
@@ -375,6 +383,7 @@ struct RestoreIconsSheet: View {
                     m.restoreIconsPrompt = nil
                 }.keyboardShortcut(.defaultAction)
                     .disabled(!Library.formats.contains(format) || selectedCandidate?.available != true || m.busy)
+                    .help("Put the chosen set's folder icons back on this project")
             }
         }
         .padding(22).frame(width: 520, height: 300)
@@ -393,12 +402,14 @@ struct ImportSheet: View {
     @State private var selection: String?
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            Text(m.pendingAssignment == nil ? "Import an independent template" : "Import a payload for \(m.label(for: m.pendingAssignment!.format)) in \(m.library.set(m.pendingAssignment!.setID)?.name ?? "")")
+            Text(m.pendingAssignment == nil ? "Import a template" : "Import template files for \(m.label(for: m.pendingAssignment!.format)) in \(m.library.set(m.pendingAssignment!.setID)?.name ?? "")")
                 .font(.title2.weight(.semibold))
             Text(m.importSource?.path ?? "").font(.caption).foregroundStyle(.secondary).lineLimit(2).truncationMode(.middle).textSelection(.enabled)
             TextField("Template name", text: $m.importName).textFieldStyle(.roundedBorder).accessibilityLabel("Template name")
+                .help("The name this template has in CreatorOS. Your original folder keeps its name.")
             Picker("Import", selection: $m.importMode) { ForEach(ImportMode.allCases, id: \.self) { Text($0.title).tag($0) } }
                 .pickerStyle(.segmented).labelsHidden().onChange(of: m.importMode) { m.scanImport() }.disabled(m.busy)
+                .accessibilityLabel("What to copy").help("Copy files and folders, or only the folder structure")
             if let plan = m.importPlan {
                 Text("\(plan.visible.count) items · \(ByteCountFormatter.string(fromByteCount: plan.bytes, countStyle: .file)) of file data, plus Finder metadata").font(.caption).foregroundStyle(.secondary)
                 FileBrowserView(dataSource: PreviewDataSource(rendering: PreviewRenderer.render(structure: plan, fields: ProjectFields(number: "", format: "", title: ""))),
@@ -415,7 +426,9 @@ struct ImportSheet: View {
                 if m.busy { ProgressView(value: m.fraction).frame(width: 140); Text(m.status).font(.caption).lineLimit(1) }
                 Spacer()
                 Button(m.busy ? "Cancel Import" : "Cancel") { if m.busy { m.cancellation.cancel() } else { m.importPresented = false; m.pendingAssignment = nil } }.keyboardShortcut(.cancelAction)
+                    .help(m.busy ? "Stop copying. Nothing is added." : "Close without importing")
                 Button("Import Copy") { m.commitImport() }.buttonStyle(.borderedProminent).keyboardShortcut(.defaultAction).disabled(m.busy || m.importPlan == nil || m.importName.isEmpty)
+                    .help("Copy this template into CreatorOS. The original stays untouched.")
             }
         }.padding(24).frame(width: 720, height: 620).interactiveDismissDisabled(m.busy)
     }

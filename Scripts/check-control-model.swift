@@ -42,5 +42,46 @@ import TemplateCore
         _ = try await model.controlAction("project.open", ["project": ref])
         precondition(model.search.isEmpty && model.formatFilter == "All formats" && model.excludedStages == ["Editing"])
         print("PASS 9 control model checks: destination and format share Plain folders; CLI clears extras and restores form; open preserves unrelated and saved filters")
+        model.newProjectPresented = true
+        model.extraValues = [:]; model.title = "Sheet completion"; model.fieldChanged()
+        await model.refreshTask?.value
+        let created: ProjectRecord = try await withCheckedThrowingContinuation { done in model.create { done.resume(with: $0) } }
+        while model.busy { await Task.yield() }
+        precondition(model.newProjectPresented && model.created?.path == created.path && !model.canCreate)
+        precondition(model.title == "Sheet completion" && model.selectedProject == created.id)
+        let saved = try Data(contentsOf: model.store.file)
+        model.nextProject()
+        await model.refreshTask?.value
+        precondition(model.newProjectPresented && model.created == nil && model.title.isEmpty && model.number == "003")
+        let afterReset = try Data(contentsOf: model.store.file)
+        precondition(afterReset == saved)
+        model.newProjectPresented = false; model.title = "Background completion"; model.fieldChanged()
+        await model.refreshTask?.value
+        let _: ProjectRecord = try await withCheckedThrowingContinuation { done in
+            model.create { done.resume(with: $0) }
+            model.newProjectPresented = true
+        }
+        while model.busy { await Task.yield() }
+        precondition(model.created == nil && model.title.isEmpty && model.number == "004")
+        print("PASS 1 sheet completion check: saved project remains visible; Next Project resets only the form; background creation still resets if a sheet opens during its copy")
+        var idea = ProjectRecord(planned: "Promoted idea", format: "Short", stage: "Idea", campaign: "Kept")
+        idea.notes = "Kept notes"
+        try await model.commitDurably { $0.projects.append(idea) }
+        model.startPlanned(idea)
+        await model.refreshTask?.value
+        precondition(model.startingFrom == idea.id && model.newProjectPresented)
+        let promoted: ProjectRecord = try await withCheckedThrowingContinuation { done in model.create { done.resume(with: $0) } }
+        while model.busy { await Task.yield() }
+        precondition(model.newProjectPresented && model.created?.path == promoted.path && model.startingFrom == nil)
+        precondition(promoted.id == idea.id && !promoted.isPlanned && promoted.notes == "Kept notes" && promoted.campaign == "Kept")
+        precondition(model.library.projects.filter { $0.id == idea.id }.count == 1 && model.workspaceCleanup == nil)
+        model.nextProject()
+        model.title = "After idea"; model.fieldChanged()
+        await model.refreshTask?.value
+        let ordinary: ProjectRecord = try await withCheckedThrowingContinuation { done in model.create { done.resume(with: $0) } }
+        while model.busy { await Task.yield() }
+        precondition(ordinary.id != idea.id && ordinary.campaign == nil && model.startingFrom == nil)
+        precondition(model.library.projects.first { $0.id == idea.id }?.path == promoted.path)
+        print("PASS 1 idea promotion check: kept-open sheet clears the idea link; identity and metadata kept; Next Project is ordinary creation")
     }
 }
