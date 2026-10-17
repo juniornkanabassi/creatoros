@@ -92,7 +92,7 @@ Resources/                Info.plist, pastel red slate stable AppIcon and orange
 
 Released CreatorOS and alpha `library.json` use schema 6 with optional owned idea workspace references. They load schemas 1–6 and refuse newer; upgrades retain a backup. Alpha and stable storage stay separate. Retained export records stay unused; see `../00 Project State/Deferred features.md`. The first empty Projects screen explains the three steps: choose a template, name the project and create it. Projects and both pipeline boards offer Create Project; Templates offers Import Template. Optional creation fields, folder-icon choices and compatibility checks are under Advanced. Template sets group the formats for a channel or client; standalone templates remain usable directly. Expert controls remain reachable in Advanced and the existing menus.
 
-Interface state lives in isolated `UserDefaults`; a `--data-directory` run uses its own defaults suite, and turns off AppKit's window and split-view frame autosave, which would otherwise write into the production `local.projecttemplates.mac` domain.
+Interface state lives in isolated `UserDefaults`; a `--data-directory` run uses its own defaults suite, and refuses AppKit's window and split-view frame saving, which would otherwise write into the production `local.projecttemplates.mac` domain. For the same reason Open panels (Import Template, Choose Destination, Choose Icon) are off in an isolated run of the stable app; test them in the alpha build, which has its own domain.
 
 ## Personal setup and Notion backup utilities
 
