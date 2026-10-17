@@ -21,10 +21,13 @@ trap cleanup EXIT
 /usr/libexec/PlistBuddy -c "Set CFBundleIdentifier $id" "$stage/CreatorOS.app/Contents/Info.plist"
 /usr/bin/codesign --force --sign - "$stage/CreatorOS.app" >/dev/null 2>&1
 # --display-name runs the test-window positioning path, which moves the window after it opens. Prefer a screen other
-# than the one the window opens on, so the move is real; print its name and its top-left-origin rectangle.
+# than the one the window opens on, so the move is real; print its name and its top-left-origin rectangle. The app
+# picks the first screen with the given name, so only a screen that is the first of its name is a usable target.
 target=$(/usr/bin/swift -e '
 import AppKit
-let screens = NSScreen.screens, s = screens.first { $0 != NSScreen.main } ?? screens[0], f = s.frame, h = screens[0].frame.height
+let screens = NSScreen.screens
+let usable = screens.filter { s in screens.first { $0.localizedName == s.localizedName } == s }
+let s = usable.first { $0 != NSScreen.main } ?? screens[0], f = s.frame, h = screens[0].frame.height
 print("\(Int(f.minX)) \(Int(h - f.maxY)) \(Int(f.maxX)) \(Int(h - f.minY)) \(s.localizedName)")')
 display=${target#* * * * }
 [[ -n "$display" ]] || { print -u2 "FAIL could not read a display name"; exit 1; }
