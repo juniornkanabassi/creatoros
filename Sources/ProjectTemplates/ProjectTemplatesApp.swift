@@ -30,17 +30,22 @@ private func dataRootArgument(_ arguments: [String]) -> String? {
 
 /// SwiftUI names the main window and its split view for frame autosave, and AppKit then reads and writes those frames in
 /// the standard defaults domain, which an isolated launch of the stable app shares with production. Clearing the names
-/// once the window was up lost a race in Junior's real run, so an isolated launch refuses them before any window exists.
+/// once the window was up lost a race in Junior's real run, and SwiftUI also saves the frame by name when the app quits,
+/// so an isolated launch refuses both before any window exists.
 enum FrameAutosave {
     static func refuse() {
         swap(NSWindow.self, #selector(NSWindow.setFrameAutosaveName(_:)), #selector(NSWindow.refuseFrameAutosaveName(_:)))
+        swap(NSWindow.self, #selector(NSWindow.saveFrame(usingName:)), #selector(NSWindow.refuseSaveFrame(usingName:)))
         swap(NSSplitView.self, #selector(setter: NSSplitView.autosaveName), #selector(NSSplitView.refuseAutosaveName(_:)))
     }
     private static func swap(_ type: AnyClass, _ original: Selector, _ replacement: Selector) {
         method_exchangeImplementations(class_getInstanceMethod(type, original)!, class_getInstanceMethod(type, replacement)!)
     }
 }
-extension NSWindow { @objc func refuseFrameAutosaveName(_ name: String) -> Bool { false } }
+extension NSWindow {
+    @objc func refuseFrameAutosaveName(_ name: String) -> Bool { false }
+    @objc func refuseSaveFrame(usingName name: String) {}
+}
 extension NSSplitView { @objc func refuseAutosaveName(_ name: String?) {} }
 
 @main struct ContentTemplateApp: App {

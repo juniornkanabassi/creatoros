@@ -36,7 +36,8 @@ let s = usable.first { $0 != NSScreen.main } ?? screens[0], f = s.frame, h = scr
 print("\(Int(f.minX)) \(Int(h - f.maxY)) \(Int(f.maxX)) \(Int(h - f.minY)) \(s.localizedName)")')
 display=${target#* * * * }
 [[ -n "$display" ]] || { print -u2 "FAIL could not read a display name"; exit 1; }
-"$stage/CreatorOS.app/Contents/MacOS/ProjectTemplates" --background --data-directory "$root" --display-name "$display" >/dev/null 2>&1 &
+# A foreground launch and a normal quit, as in real use: SwiftUI saves the frame itself on the way out.
+"$stage/CreatorOS.app/Contents/MacOS/ProjectTemplates" --data-directory "$root" --display-name "$display" >/dev/null 2>&1 &
 pid=$!
 for _ in {1..100}; do [[ -S "$root/control.sock" ]] && break; sleep 0.1; done
 [[ -S "$root/control.sock" ]] || { print -u2 "FAIL isolated app did not start"; exit 1; }
@@ -57,7 +58,10 @@ let placed = bounds.contains { b in
   return x >= r[0] && x <= r[2] && y >= r[1] && y <= r[3]
 }
 if !placed { print("FAIL the test window was not positioned on the target display"); exit(1) }' "$pid" "$target"
-kill -TERM "$pid"; wait "$pid" 2>/dev/null || true; pid=""
+/usr/bin/swift -e 'import AppKit; _ = NSRunningApplication(processIdentifier: pid_t(CommandLine.arguments[1])!)?.terminate()' "$pid"
+for _ in {1..100}; do kill -0 "$pid" 2>/dev/null || break; sleep 0.1; done
+kill -0 "$pid" 2>/dev/null && { print -u2 "FAIL isolated app did not quit"; exit 1; }
+pid=""
 after=$(defaults export "$id" - | plutil -convert json -o - -)
 if [[ "$after" != "$seeded" ]]; then
   print -u2 "FAIL isolated launch changed its app defaults domain:"; print -u2 -- "$after" | cut -c1-400; exit 1
