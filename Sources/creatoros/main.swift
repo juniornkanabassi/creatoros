@@ -3,7 +3,12 @@ import Darwin
 import TemplateCore
 
 func json(_ value: Any) -> String { String(data: try! JSONSerialization.data(withJSONObject: value, options: [.sortedKeys, .fragmentsAllowed]), encoding: .utf8)! }
-let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "development"
+/// The bundle's version, read from the Info.plist beside the real executable (a symlink to the CLI has no bundle of its own).
+let version: String = {
+    let executable = (Bundle.main.executableURL ?? URL(fileURLWithPath: CommandLine.arguments[0])).resolvingSymlinksInPath()
+    let plist = executable.deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("Info.plist")
+    return NSDictionary(contentsOf: plist)?["CFBundleShortVersionString"] as? String ?? "development"
+}()
 func help() {
     print("""
     creatoros \(version) — local CreatorOS control (exit 0 success, 1 action/transport error, 2 usage)
