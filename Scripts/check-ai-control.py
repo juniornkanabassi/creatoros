@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Run every control command on synthetic data in the supplied build, with no input events."""
+import instances
 import base64, concurrent.futures, json, os, pathlib, signal, socket, subprocess, sys, tempfile, time, uuid
 app = pathlib.Path(sys.argv[1]).resolve()
 cli = app / 'Contents/MacOS/creatoros' if app.suffix == '.app' else app.parent / 'creatoros'
@@ -7,6 +8,7 @@ exe = app / 'Contents/MacOS/ProjectTemplates' if app.suffix == '.app' else app
 shim = app / 'Contents/Resources/mcp/creatoros-mcp.mjs' if app.suffix == '.app' else pathlib.Path('mcp/creatoros-mcp.mjs').resolve()
 root = pathlib.Path(tempfile.mkdtemp(prefix='cos-ai-', dir='/private/tmp'))
 checks = 0
+roots = [root]  # every data directory this run launches an app for; all are swept at the end
 
 def check(condition, label):
     global checks
@@ -47,6 +49,8 @@ try:
         if (root / 'control.sock').exists(): break
         assert proc is None or proc.poll() is None, 'test app exited'; time.sleep(.1)
     check(command('status')['pid'] == pid, 'status targets disposable built app')
+    check(instances.pids(root) == [pid], 'exactly one test instance is alive')
+    check(instances.activation_type(pid) in ('UIElement', 'BackgroundOnly'), 'the isolated test instance has no Dock tile (activation type %s)' % instances.activation_type(pid))
     if app.suffix == '.app':
         other_root = pathlib.Path(tempfile.mkdtemp(prefix='cos-ai-second-', dir='/private/tmp'))
         def other_command(*args):
@@ -56,7 +60,9 @@ try:
         other_command('library','stats')
         other_state = other_command('status')
         check(other_state['isolated'] and other_state['dataRoot'] == str(other_root) and other_state['pid'] != pid, 'separate isolated launch starts beside existing instance')
-        os.kill(other_state['pid'], signal.SIGTERM)
+        roots.append(other_root)
+        instances.quit_all(other_root)  # the deliberate second instance goes at once
+        check(not instances.pids(other_root) and len(instances.pids(root)) == 1, 'the second isolated instance is gone and exactly one test instance is alive')
     check(command('library','stats')['templates'] == 1, 'library stats')
     check(command('project','list')['total'] == 0, 'project list empty')
     check(command('project','list','--limit','0',code=2)['error']['code'] == 'usage', 'CLI usage exit 2')
@@ -620,8 +626,11 @@ try:
             kind = props[key]['type']
             args[key] = False if kind == 'boolean' else ([] if kind == 'array' else ({} if kind == 'object' else 'x'))
         calls.append({'jsonrpc': '2.0', 'id': 1000 + i, 'method': 'tools/call', 'params': {'name': tool['name'], 'arguments': args}})
-    sweep = subprocess.run(['node', str(shim)], input=''.join(json.dumps(c) + '\n' for c in calls), capture_output=True, text=True, env=env, timeout=300)
-    answers = {r['id']: r for r in map(json.loads, sweep.stdout.splitlines())}
+    answers = {}
+    for start in range(0, len(calls), 6):  # a few at a time, like a real client; never a flood of launches
+        batch = calls[start:start + 6]
+        sweep = subprocess.run(['node', str(shim)], input=''.join(json.dumps(c) + '\n' for c in batch), capture_output=True, text=True, env=env, timeout=300)
+        answers.update({r['id']: r for r in map(json.loads, sweep.stdout.splitlines())})
     routed = 0
     for c in calls:
         answer = answers[c['id']]
@@ -681,11 +690,15 @@ try:
         check(command('status')['selectedProject'] == selected_before, 'rename save failure retains GUI record')
     finally:
         (root / 'library.json').rmdir(); (root / 'library.json').write_bytes(saved_library)
-    print('RESULT', checks, 'AI control checks passed; fixture',root)
+    check(len(instances.pids(root)) == 1, 'still exactly one test instance after the whole run')
+    result_line = ('RESULT', checks + 1, 'AI control checks passed; fixture', root)
 finally:
+    # Quit what this run launched, wait for it to exit, then sweep anything left on its own data directories.
     if proc is not None:
-        proc.terminate(); proc.wait(timeout=10)
-    else:
-        state = command('status')
-        assert state['pid'] == pid and state['dataRoot'] == str(root), state
-        os.kill(pid, signal.SIGTERM)
+        proc.terminate()
+        try: proc.wait(timeout=10)
+        except subprocess.TimeoutExpired: pass
+    instances.quit_all(*roots)
+    instances.assert_none_alive(*roots)
+print(*result_line)
+print('PASS no test instance with a data directory of this run is still running', flush=True)

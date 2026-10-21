@@ -31,7 +31,7 @@ final class ControlServer: @unchecked Sendable {
         listener = socket(AF_UNIX, SOCK_STREAM, 0)
         guard listener >= 0 else { throw AppFailure("Cannot create control socket.") }
         let bound = withUnsafePointer(to: &address) { $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { bind(listener, $0, socklen_t(MemoryLayout<sockaddr_un>.size)) } }
-        guard bound == 0, chmod(path, 0o600) == 0, listen(listener, 8) == 0 else { close(listener); listener = -1; throw AppFailure("Cannot bind private control socket.") }
+        guard bound == 0, chmod(path, 0o600) == 0, listen(listener, 128) == 0 else { close(listener); listener = -1; throw AppFailure("Cannot bind private control socket.") }
         DispatchQueue.global(qos: .utility).async { [self] in
             while true {
                 let client = accept(listener, nil, nil)

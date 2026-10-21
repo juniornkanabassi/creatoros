@@ -12,6 +12,9 @@ root=$(mktemp -d /private/tmp/cos-defaults-root.XXXXXX)
 pid=""
 cleanup() {
   [[ -n "$pid" ]] && kill "$pid" 2>/dev/null || true
+  # Sweep anything still running on this run's own throwaway data directory (never an instance without one).
+  for stray in $(/usr/bin/pgrep -f -- "ProjectTemplates --data-directory $root" || true); do kill "$stray" 2>/dev/null || true; done
+  for _ in {1..50}; do /usr/bin/pgrep -f -- "ProjectTemplates --data-directory $root" >/dev/null || break; sleep 0.1; done
   defaults delete "$id" >/dev/null 2>&1 || true
   rm -f ~/Library/Preferences/"$id".plist
   rm -rf "$stage" "$root"
@@ -41,6 +44,8 @@ display=${target#* * * * }
 pid=$!
 for _ in {1..100}; do [[ -S "$root/control.sock" ]] && break; sleep 0.1; done
 [[ -S "$root/control.sock" ]] || { print -u2 "FAIL isolated app did not start"; exit 1; }
+type=$(/usr/bin/lsappinfo info -app "$pid" 2>/dev/null | sed -n 's/.*type="\([A-Za-z]*\)".*/\1/p' | head -1)
+[[ "$type" == "UIElement" || "$type" == "BackgroundOnly" ]] || { print -u2 "FAIL the isolated app has a Dock tile (ApplicationType=$type)"; exit 1; }
 sleep 3   # let the window open, position itself and autosave if it is going to
 # The window must have moved onto the target display, or the positioning path was skipped and a PASS proves nothing.
 /usr/bin/swift -e '
@@ -62,6 +67,7 @@ if !placed { print("FAIL the test window was not positioned on the target displa
 for _ in {1..100}; do kill -0 "$pid" 2>/dev/null || break; sleep 0.1; done
 kill -0 "$pid" 2>/dev/null && { print -u2 "FAIL isolated app did not quit"; exit 1; }
 pid=""
+/usr/bin/pgrep -f -- "ProjectTemplates --data-directory $root" >/dev/null && { print -u2 "FAIL a test instance is still running on $root"; exit 1; }
 after=$(defaults export "$id" - | plutil -convert json -o - -)
 if [[ "$after" != "$seeded" ]]; then
   print -u2 "FAIL isolated launch changed its app defaults domain:"; print -u2 -- "$after" | cut -c1-400; exit 1

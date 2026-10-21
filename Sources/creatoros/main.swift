@@ -107,6 +107,12 @@ do {
     let path = root.appendingPathComponent("control.sock").path
     guard path.utf8.count < 104 else { throw fail("usage", "Socket path is too long; use a shorter data directory.") }
     var connection = connectSocket(path)
+    // A busy app can refuse a connection for a moment (its queue of waiting callers is full). A socket file that exists
+    // means an app owns it, so wait a few seconds before concluding that nothing is running and launching another copy.
+    if connection == nil, FileManager.default.fileExists(atPath: path) {
+        let patience = Date().addingTimeInterval(4)
+        while connection == nil && Date() < patience { Thread.sleep(forTimeInterval: 0.1); connection = connectSocket(path) }
+    }
     if connection == nil && action == "status" { print(wantsJSON ? json(["running": false]) : "CreatorOS is not running."); exit(0) }
     if connection == nil {
         let launch = Process(); launch.executableURL = URL(fileURLWithPath: "/usr/bin/open")
