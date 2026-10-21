@@ -44,7 +44,7 @@ extension AppModel {
             onFinish(.success(output))
         } failure: { onFinish(.failure(AppFailure($0))) }
     }
-    func createWorkspace(for idea: ProjectRecord, root: URL, templateID: UUID?, onFinish: ((Result<ProjectRecord, Error>) -> Void)? = nil) {
+    func createWorkspace(for idea: ProjectRecord, root: URL, templateID: UUID?, showBrowser: Bool = true, onFinish: ((Result<ProjectRecord, Error>) -> Void)? = nil) {
         let runtime = runtime
         let source = templateID.flatMap { library.template($0) }.map { store.payload($0) }
         run("Creating idea workspace", cancelNote: "Nothing was registered; check the Ideas folder for a partial workspace.") { token, progress in
@@ -52,7 +52,7 @@ extension AppModel {
             return try IdeaWorkspaceEngine.create(for: idea, root: root, payload: source, cancellation: token, progress: progress)
         } completion: { workspace in
             self.busy = true
-            Task {
+            self.continueHolding {
                 defer { self.busy = false }
                 do {
                     try await self.commitDurably { library in
@@ -61,8 +61,10 @@ extension AppModel {
                         library.projects[i].ideaWorkspace = workspace
                     }
                     self.workspacePrompt = nil
-                    self.workspaceToBrowse = self.library.projects.first { $0.id == idea.id }
-                    if let saved = self.workspaceToBrowse { onFinish?(.success(saved)) }
+                    // The app shows the new workspace; a command does not leave a window open that would block its next command.
+                    let saved = self.library.projects.first { $0.id == idea.id }
+                    if showBrowser { self.workspaceToBrowse = saved }
+                    if let saved { onFinish?(.success(saved)) }
                 } catch {
                     let failure = AppFailure("Workspace created at \(workspace.path), but its reference could not be saved. Keep it for recovery. \(error.localizedDescription)")
                     self.error = failure.localizedDescription
@@ -102,9 +104,12 @@ extension AppModel {
     }
     /// Keeps the old workspace folder and stops linking it to the started project. Saved before it returns.
     func detachWorkspace(_ record: ProjectRecord) async throws {
-        guard !writeLocked else { throw AppFailure(Self.writeLockedMessage) }
+        try await withWriter { try await detachWorkspaceHoldingSlot(record) }
+    }
+    private func detachWorkspaceHoldingSlot(_ record: ProjectRecord) async throws {
         busy = true
         defer { busy = false }
+        await writePauseForTests?()
         do {
             try await commitDurably { lib in
                 guard let i = lib.projects.firstIndex(where: { $0.id == record.id }), !lib.projects[i].isPlanned else {
@@ -120,7 +125,9 @@ extension AppModel {
     @discardableResult
     func trashWorkspace(_ record: ProjectRecord, at confirmed: URL, removingRecord: Bool) async throws -> URL? {
         // Refused before anything goes to the Bin when another writer holds the slot.
-        guard !writeLocked else { throw AppFailure(Self.writeLockedMessage) }
+        try await withWriter { try await trashWorkspaceHoldingSlot(record, at: confirmed, removingRecord: removingRecord) }
+    }
+    private func trashWorkspaceHoldingSlot(_ record: ProjectRecord, at confirmed: URL, removingRecord: Bool) async throws -> URL? {
         busy = true
         defer { busy = false }
         var trashed = false

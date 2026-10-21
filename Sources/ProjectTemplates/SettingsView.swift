@@ -104,7 +104,7 @@ struct SettingsView: View {
             }
             Section {
                 DisclosureGroup("Advanced", isExpanded: $showPipelineAdvanced) {
-                    Text("Projects already in a renamed stage keep their old stage name until you move them. Abandoned is for projects that never saw the light of day. Resetting puts back the original stages.")
+                    Text("Renaming a stage moves its cards, its colour and the Finder tags on their folders with it. Abandoned is for projects that never saw the light of day. Resetting puts back the original stages.")
                         .font(.callout).foregroundStyle(.secondary)
                     Button("Reset Recording Stages to \(Library.defaultStages.joined(separator: ", "))") { m.setStages(Library.defaultStages, for: .recordings) }
                         .help("Replace the recording stages with the original list")

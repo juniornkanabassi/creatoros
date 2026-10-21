@@ -12,6 +12,9 @@ print('PASS 1 rename plan checks volume support before walking', flush=True)
 control_source = pathlib.Path('Sources/ProjectTemplates/ControlServer.swift').read_text()
 assert 'await Task.detached { Catalogue.availability(record) }.value' in control_source
 print('PASS 1 status filesystem check stays off the main actor', flush=True)
+settings_text = pathlib.Path('Sources/ProjectTemplates/SettingsView.swift').read_text()
+assert 'keep their old stage name' not in settings_text and 'Renaming a stage moves its cards' in settings_text
+print('PASS 1 Settings text says a renamed stage takes its cards and Finder tags with it', flush=True)
 # Reuse the existing isolated AppModel harness, without launching or interacting with UI.
 scratch = pathlib.Path(sys.argv[2] if len(sys.argv) > 2 else '/private/tmp/creatoros-fix2-build')
 objects = scratch if (scratch / 'out').exists() else scratch / (os.uname().machine + '-apple-macosx/debug')

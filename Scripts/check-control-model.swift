@@ -107,10 +107,10 @@ import TemplateCore
         model.importPresented = true
         await expect("template.import", ["path": model.runtime.root.path, "name": "Blocked", "mode": "full"], "form_in_use")
         model.importPresented = false
-        model.busy = true
+        let guiHold = try model.acquireWriter(); model.busy = true
         let pinned = await refusal("project.pin", ["project": target.id.uuidString]); precondition(pinned != "form_in_use" && pinned != "busy" || pinned == "busy")
         await expect("project.icons-strip", ["project": target.id.uuidString], "busy")
-        model.busy = false
+        model.busy = false; model.releaseWriter(guiHold)
         let unchanged = try Data(contentsOf: model.store.file) == snapshot
         precondition(unchanged)
         print("PASS 1 sheet collision check: icon, form, import and busy states refuse control actions with form_in_use or busy and leave the library untouched")
@@ -139,11 +139,11 @@ import TemplateCore
             return (reply["error"] as? [String: Any])?["code"] as? String
         }
         let fieldsBefore = model.library.fieldList.count
-        model.busy = true
+        let guiHold2 = try model.acquireWriter(); model.busy = true
         let refused1 = await controlCode("field.add", ["name": "During GUI copy"]); precondition(refused1 == "busy")
         let refused2 = await controlCode("set.create", ["name": "During GUI copy"]); precondition(refused2 == "busy")
         let refused3 = await controlCode("settings.finder-tags", ["enabled": true]); precondition(refused3 == "busy")
-        model.busy = false
+        model.busy = false; model.releaseWriter(guiHold2)
         precondition(model.library.fieldList.count == fieldsBefore)
         print("PASS 1 busy guard check: field, set and settings mutations are refused while the GUI is busy")
         // Hiding a location while a deep search is waiting hides its projects from the answer too.
@@ -222,28 +222,19 @@ import TemplateCore
         print("PASS 1 open form check: set, template, field, format and stage-list changes are refused with form_in_use while a form is open, dry runs are not")
         // One writer at a time: while a command is changing the library, the app's own writes are told to retry.
         let lockedTarget = model.library.projects.first { !$0.isPlanned }!
+        // Tag All Folders only reaches the slot with a staged folder on a connected drive and tags switched on.
+        model.library.finderTags = true
+        model.mountedLocations.insert(lockedTarget.location.key)
+        if lockedTarget.stage == nil { try model.modifyProject(lockedTarget.id) { $0.stage = "Writing" } }
+        await model.saveTaskForWorkspace()
         let lockedBefore = try Data(contentsOf: model.store.file)
         let lockedSnapshot = model.library.projects.count
-        model.controlMutating = true
+        var expectedBusy = false  // busy is true while the operation under test holds the slot, and must not change
         func retryRefused(_ name: String, _ work: () throws -> Void) {
             do { try work(); preconditionFailure("\(name) was not refused while a command was writing") }
             catch let failure as AppFailure { precondition(failure.localizedDescription.contains("retry"), "\(name): \(failure.localizedDescription)") }
             catch { preconditionFailure("\(name): \(error)") }
         }
-        retryRefused("pin") { try model.setPinned(true, for: lockedTarget.id) }
-        retryRefused("stage") { _ = try model.moveToStage("Idea", for: lockedTarget.id) }
-        retryRefused("details") { try model.saveDetails(lockedTarget.id, notes: "x") }
-        retryRefused("settings") { try model.applyFinderTags(false) }
-        retryRefused("set") { _ = try model.createSet(named: "Locked", mapping: nil) }
-        retryRefused("field") { _ = try model.addField("Locked") }
-        retryRefused("remove") { try model.removeRecord(lockedTarget.id) }
-        retryRefused("relocate") { _ = try model.relocate(lockedTarget, to: URL(fileURLWithPath: lockedTarget.path)) }
-        model.error = nil
-        model.stripFolderIcons(lockedTarget)
-        precondition(model.error?.contains("retry") == true && !model.busy, "icons were not refused while a command was writing")
-        model.error = nil
-        let quiet = await model.searchForMoved(lockedTarget, quietly: true)
-        if case .stillThere = quiet {} else { preconditionFailure("a quiet relink ran while a command was writing") }
         // Every other entry point that writes, waits or runs is refused the same way, and the library is untouched.
         func retryRefusedAsync(_ name: String, _ work: () async throws -> Void) async {
             do { try await work(); preconditionFailure("\(name) was not refused while a command was writing") }
@@ -252,7 +243,7 @@ import TemplateCore
         }
         func runRefused(_ name: String, _ start: () -> Void) {
             model.error = nil; start()
-            precondition(model.error?.contains("retry") == true && !model.busy, "\(name) was not refused while a command was writing: \(String(describing: model.error))")
+            precondition(model.error?.contains("retry") == true && model.busy == expectedBusy, "\(name) was not refused while a command was writing: \(String(describing: model.error))")
         }
         let someTemplate = model.library.templates.first!
         let someLocation = try CatalogueLocation(url: model.runtime.root)
@@ -261,50 +252,89 @@ import TemplateCore
         let someDiscovery = try Catalogue.discover(root: emptyFolder)
         let somePlan = try TemplateReader.scan(emptyFolder)
         let someSetID = UUID()
-        retryRefused("move all") { _ = try model.moveAll(ids: [lockedTarget.id], to: "Idea") }
-        retryRefused("stage list") { try model.applyStages(["A", "B"], for: .recordings) }
-        retryRefused("stage colour") { _ = try model.applyStageColour(.red, for: "Idea") }
-        retryRefused("rename set") { try model.applySetName(someSetID, to: "x") }
-        retryRefused("assign") { try model.assignTemplate(format: "Short", templateID: someTemplate.id, in: someSetID) }
-        retryRefused("unassign") { try model.unassignTemplate(format: "Short", in: someSetID) }
-        retryRefused("delete set") { try model.deleteSet(someSetID) }
-        retryRefused("update field") { try model.replaceField(CustomField(name: "Locked")) }
-        retryRefused("delete field") { try model.deleteField(UUID()) }
-        retryRefused("add idea") { _ = try model.addIdeaRecord(title: "Locked", format: "Short", campaign: "", notes: "") }
-        retryRefused("destination") { try model.setDestination(model.runtime.projects, for: "Short") }
-        retryRefused("format icon") { try model.setFormatIcon(from: model.runtime.root, fromFolder: true, for: "Short") }
-        retryRefused("forget location") { try model.forgetLocation(someLocation) }
-        retryRefused("register discovery") { try model.registerDiscovered(someDiscovery) }
-        await retryRefusedAsync("stage rename") { _ = try await model.renameStageCore("Idea", to: "Locked", on: .recordings) }
-        await retryRefusedAsync("template delete") { _ = try await model.deleteTemplate(someTemplate) }
-        await retryRefusedAsync("workspace bin") { _ = try await model.trashWorkspace(lockedTarget, at: model.runtime.root, removingRecord: false) }
-        await retryRefusedAsync("workspace detach") { try await model.detachWorkspace(lockedTarget) }
-        await retryRefusedAsync("commit") { try await model.commitDurably { $0.projects.removeAll() } }
-        runRefused("import") { model.registerImport(plan: somePlan, name: "Locked", mode: .full, assigning: nil) { _ in } }
-        runRefused("discovery") { model.discoverProjects(root: model.runtime.root) { _ in } }
-        runRefused("register existing") { model.registerExisting(model.runtime.root) }
-        runRefused("workspace create") { model.createWorkspace(for: ProjectRecord(planned: "Locked", format: "Short", stage: "Idea"), root: model.runtime.ideas, templateID: nil) }
-        runRefused("compat scan") { model.scanCompatibility(model.runtime.root) { _ in } }
-        runRefused("icon restore") { model.restoreIcons(lockedTarget, format: "Short", setID: someSetID) }
-        runRefused("project rename") { model.renameProject(lockedTarget.id, number: "001", campaign: "", title: "Locked", updateHeadings: false) }
-        // What a running command sees cannot be changed under it either.
-        let hiddenBefore = model.hiddenLocations, colourBefore = model.badgeColour(lockedTarget.location)
-        model.error = nil
-        model.setHidden(true, for: lockedTarget.location)
-        precondition(model.hiddenLocations == hiddenBefore && model.error?.contains("retry") == true, "hiding a location was allowed while a command was writing")
-        model.error = nil
-        model.setBadgeColour(colourBefore == .red ? .blue : .red, for: lockedTarget.location)
-        precondition(model.badgeColour(lockedTarget.location) == colourBefore && model.error?.contains("retry") == true, "a badge colour changed while a command was writing")
+        func entryPointsRefused(_ who: String) async {
+            expectedBusy = model.busy
+            model.error = nil
+            retryRefused("pin") { try model.setPinned(true, for: lockedTarget.id) }
+            retryRefused("stage") { _ = try model.moveToStage("Idea", for: lockedTarget.id) }
+            retryRefused("details") { try model.saveDetails(lockedTarget.id, notes: "x") }
+            retryRefused("settings") { try model.applyFinderTags(false) }
+            retryRefused("set") { _ = try model.createSet(named: "Locked", mapping: nil) }
+            retryRefused("field") { _ = try model.addField("Locked") }
+            retryRefused("remove") { try model.removeRecord(lockedTarget.id) }
+            retryRefused("relocate") { _ = try model.relocate(lockedTarget, to: URL(fileURLWithPath: lockedTarget.path)) }
+            model.error = nil
+            model.stripFolderIcons(lockedTarget)
+            precondition(model.error?.contains("retry") == true && model.busy == expectedBusy, "icons were not refused while a command was writing")
+            model.error = nil
+            let quiet = await model.searchForMoved(lockedTarget, quietly: true)
+            if case .stillThere = quiet {} else { preconditionFailure("a quiet relink ran while a command was writing") }
+            retryRefused("move all") { _ = try model.moveAll(ids: [lockedTarget.id], to: "Idea") }
+            retryRefused("stage list") { try model.applyStages(["A", "B"], for: .recordings) }
+            retryRefused("stage colour") { _ = try model.applyStageColour(.red, for: "Idea") }
+            retryRefused("rename set") { try model.applySetName(someSetID, to: "x") }
+            retryRefused("assign") { try model.assignTemplate(format: "Short", templateID: someTemplate.id, in: someSetID) }
+            retryRefused("unassign") { try model.unassignTemplate(format: "Short", in: someSetID) }
+            retryRefused("delete set") { try model.deleteSet(someSetID) }
+            retryRefused("update field") { try model.replaceField(CustomField(name: "Locked")) }
+            retryRefused("delete field") { try model.deleteField(UUID()) }
+            retryRefused("add idea") { _ = try model.addIdeaRecord(title: "Locked", format: "Short", campaign: "", notes: "") }
+            retryRefused("destination") { try model.setDestination(model.runtime.projects, for: "Short") }
+            retryRefused("format icon") { try model.setFormatIcon(from: model.runtime.root, fromFolder: true, for: "Short") }
+            retryRefused("forget location") { try model.forgetLocation(someLocation) }
+            retryRefused("register discovery") { try model.registerDiscovered(someDiscovery) }
+            await retryRefusedAsync("stage rename") { _ = try await model.renameStageCore("Idea", to: "Locked", on: .recordings) }
+            await retryRefusedAsync("template delete") { _ = try await model.deleteTemplate(someTemplate) }
+            await retryRefusedAsync("workspace bin") { _ = try await model.trashWorkspace(lockedTarget, at: model.runtime.root, removingRecord: false) }
+            await retryRefusedAsync("workspace detach") { try await model.detachWorkspace(lockedTarget) }
+            await retryRefusedAsync("commit") { try await model.commitDurably { $0.projects.removeAll() } }
+            runRefused("import") { model.registerImport(plan: somePlan, name: "Locked", mode: .full, assigning: nil) { _ in } }
+            runRefused("discovery") { model.discoverProjects(root: model.runtime.root) { _ in } }
+            runRefused("register existing") { model.registerExisting(model.runtime.root) }
+            runRefused("workspace create") { model.createWorkspace(for: ProjectRecord(planned: "Locked", format: "Short", stage: "Idea"), root: model.runtime.ideas, templateID: nil) }
+            runRefused("compat scan") { model.scanCompatibility(model.runtime.root) { _ in } }
+            runRefused("icon restore") { model.restoreIcons(lockedTarget, format: "Short", setID: someSetID) }
+            runRefused("project rename") { model.renameProject(lockedTarget.id, number: "001", campaign: "", title: "Locked", updateHeadings: false) }
+            // What a running command sees cannot be changed under it either.
+            let hiddenBefore = model.hiddenLocations, colourBefore = model.badgeColour(lockedTarget.location)
+            model.error = nil
+            model.setHidden(true, for: lockedTarget.location)
+            precondition(model.hiddenLocations == hiddenBefore && model.error?.contains("retry") == true, "hiding a location was allowed while a command was writing")
+            model.error = nil
+            model.setBadgeColour(colourBefore == .red ? .blue : .red, for: lockedTarget.location)
+            precondition(model.badgeColour(lockedTarget.location) == colourBefore && model.error?.contains("retry") == true, "a badge colour changed while a command was writing")
+            // Tagging every folder is a write too.
+            model.error = nil
+            model.tagAllFolders()
+            precondition(model.error?.contains("retry") == true && !model.tagging, "tag all folders was not refused while \(who)")
+        }
+        // (a) a command holds the slot
+        model.controlMutating = true
+        await entryPointsRefused("a command held the slot")
         let identicalAfter = try Data(contentsOf: model.store.file) == lockedBefore
         precondition(identicalAfter && model.library.projects.count == lockedSnapshot, "a refused write changed the library")
+        model.controlMutating = false
+        // (b) an operation started in the app holds the slot: workspace detach, with the same entry points tried in its middle.
+        let detachJSON = Data("{\"path\":\"\(model.runtime.ideas.path)/fake\",\"rootPath\":\"\(model.runtime.ideas.path)\",\"owner\":\"\(UUID().uuidString)\"}".utf8)
+        let fakeWorkspace = try JSONDecoder().decode(IdeaWorkspace.self, from: detachJSON)
+        try model.modifyProject(lockedTarget.id) { $0.ideaWorkspace = fakeWorkspace }
+        let linked = model.library.projects.first { $0.id == lockedTarget.id }!
+        let beforeDetach = try Data(contentsOf: model.store.file)
+        // The hook runs inside the detach, as the holder; the entry points are tried as somebody else.
+        model.writePauseForTests = { await AppModel.$me.withValue(nil) { await entryPointsRefused("a workspace detach was running") } }
+        try await model.detachWorkspace(linked)
+        model.writePauseForTests = nil
+        precondition(model.writer == nil && !model.busy && model.library.projects.first { $0.id == lockedTarget.id }?.ideaWorkspace == nil, "the detach did not finish cleanly")
+        _ = beforeDetach
+        model.controlMutating = true
         // The command's own writes pass.
-        try AppModel.$inControlAction.withValue(true) { try model.setPinned(lockedTarget.isPinned, for: lockedTarget.id) }
+        try AppModel.$me.withValue(.control("control-test")) { try model.setPinned(lockedTarget.isPinned, for: lockedTarget.id) }
         model.controlMutating = false
         model.error = nil
         precondition(model.library.projects.count == lockedSnapshot)
         try model.setPinned(lockedTarget.isPinned, for: lockedTarget.id)
         _ = lockedBefore
-        print("PASS 1 write lock check: pin, stage, details, settings, sets, fields, remove, relocate, icons and quiet relinks are told to retry while a command writes; the command itself and later clicks are not")
+        print("PASS 1 write lock check: every GUI write entry point (including tag all, hiding a location and a badge colour) is refused while a command holds the slot and while a running app operation holds it; the holder itself and later clicks are not")
         // Two stage renames at once: the second, started while the first waits, is refused and nothing is lost.
         var interleaved: String?
         model.writePauseForTests = {
@@ -320,8 +350,64 @@ import TemplateCore
         await retryRefusedAsync("rename during command") { _ = try await model.renameStageCore("Pitch", to: "Idea", on: .recordings) }
         model.controlMutating = false
         _ = try await model.renameStageCore("Pitch", to: "Idea", on: .recordings)
-        precondition(model.library.stages(for: .recordings).contains("Idea") && model.guiWriteDepth == 0)
+        precondition(model.library.stages(for: .recordings).contains("Idea") && model.writer == nil)
         print("PASS 1 single owner check: a second rename is refused while the first waits, and the slot is released afterwards")
+        // Ambiguity messages name visible projects only; a hidden-only match is a refusal, not a list.
+        func lookupCode(_ ref: String) -> (String?, String) {
+            do { _ = try model.controlRecord(["project": ref]); return (nil, "") }
+            catch let failure as ControlFailure { return (failure.code, failure.message) } catch { return ("other", "\(error)") }
+        }
+        func duplicate(_ name: String, at path: String) -> ProjectRecord {
+            var record = ProjectRecord(planned: name, format: "Short", stage: "Writing")
+            record.planned = false; record.path = path; record.name = name
+            return record
+        }
+        let dupA = duplicate("Dup Name", at: model.runtime.root.appendingPathComponent("DupA/Dup Name").path)
+        let dupB = duplicate("Dup Name", at: model.runtime.root.appendingPathComponent("DupB/Dup Name").path)
+        let dupHidden = duplicate("Dup Name", at: "/Volumes/Hidden Drive/Dup Name")
+        let dupBefore = model.library.projects
+        model.library.projects += [dupA, dupB, dupHidden]
+        model.hiddenLocations.insert(dupHidden.location.key)
+        let mixed = lookupCode("Dup Name")
+        precondition(mixed.0 == "ambiguous_project" && mixed.1.components(separatedBy: "; ").count == 2, "an ambiguity message named a hidden project: \(mixed)")
+        model.library.projects = dupBefore + [dupHidden]
+        let hiddenOnly = lookupCode("Dup Name")
+        precondition(hiddenOnly.0 == "location_hidden" && !hiddenOnly.1.contains("Dup Name"), "a hidden-only match was listed: \(hiddenOnly)")
+        model.library.projects = dupBefore + [dupA, dupHidden]
+        precondition(lookupCode("Dup Name").0 == nil, "the one visible match should resolve")
+        model.library.projects = dupBefore
+        model.hiddenLocations.remove(dupHidden.location.key)
+        print("PASS 1 hidden ambiguity check: only visible records are counted or named; a hidden-only match is location_hidden")
+        // A window or prompt that an action would invalidate blocks it with form_in_use.
+        let sheetTarget = model.library.projects.first { !$0.isPlanned }!
+        let someTemplateRecord = model.library.templates.first!
+        let sheetCases: [(String, () -> Void, () -> Void, String, [String: Any])] = [
+            ("New Set prompt", { model.newSetPrompt = NewSetPrompt(mappingTemplateID: someTemplateRecord.id, name: "x") }, { model.newSetPrompt = nil }, "template.remove", ["template": someTemplateRecord.id.uuidString]),
+            ("New Set prompt vs set", { model.newSetPrompt = NewSetPrompt(mappingTemplateID: nil, name: "x") }, { model.newSetPrompt = nil }, "set.rename", ["set": "x", "name": "y"]),
+            ("Restore Icons prompt vs set", { model.restoreIconsPrompt = sheetTarget }, { model.restoreIconsPrompt = nil }, "set.unassign", ["set": "x", "format": "Short"]),
+            ("Restore Icons prompt vs record", { model.restoreIconsPrompt = sheetTarget }, { model.restoreIconsPrompt = nil }, "project.relocate", ["project": sheetTarget.id.uuidString, "path": "/x"]),
+            ("Create Workspace prompt vs template", { model.workspacePrompt = sheetTarget }, { model.workspacePrompt = nil }, "template.remove", ["template": "x"]),
+            ("Create Workspace prompt vs record", { model.workspacePrompt = sheetTarget }, { model.workspacePrompt = nil }, "project.remove", ["project": sheetTarget.id.uuidString]),
+            ("Bin confirmation", { model.binIdea = sheetTarget }, { model.binIdea = nil }, "project.remove", ["project": sheetTarget.id.uuidString]),
+            ("old workspace review", { model.workspaceCleanup = sheetTarget }, { model.workspaceCleanup = nil }, "project.workspace-detach", ["project": sheetTarget.id.uuidString]),
+            ("workspace browser", { model.workspaceToBrowse = sheetTarget }, { model.workspaceToBrowse = nil }, "project.remove", ["project": sheetTarget.id.uuidString]),
+            ("discovery window", { model.discoveryPresented = true }, { model.discoveryPresented = false }, "location.remove", ["location": "x"]),
+            ("discovery window vs register", { model.discoveryPresented = true }, { model.discoveryPresented = false }, "project.register", ["path": "/x"]),
+            ("compatibility report", { model.compatibilityPresented = true }, { model.compatibilityPresented = false }, "project.remove", ["project": sheetTarget.id.uuidString]),
+            ("template browser", { model.templateToBrowse = someTemplateRecord }, { model.templateToBrowse = nil }, "template.remove", ["template": "x"]),
+            ("rename window vs record", { model.renamePrompt = sheetTarget }, { model.renamePrompt = nil }, "project.find-moved", ["project": sheetTarget.id.uuidString]),
+        ]
+        let sheetsBefore = try Data(contentsOf: model.store.file)
+        for (name, open, close, action, params) in sheetCases {
+            open()
+            await expect(action, params, "form_in_use")
+            let dry = await refusal(action, params.merging(["dryRun": true]) { $1 })
+            precondition(dry != "form_in_use" || action == "location.remove" && false, "\(name): a dry run was refused")
+            close()
+        }
+        let sheetsAfter = try Data(contentsOf: model.store.file) == sheetsBefore
+        precondition(sheetsAfter)
+        print("PASS 1 open window check: every window or prompt that an action would invalidate blocks it with form_in_use, dry runs excepted")
         // A dry-run compatibility check leaves the app's status text alone.
         let compatRoot = model.runtime.root.appendingPathComponent("CompatDry")
         try FileManager.default.createDirectory(at: compatRoot.appendingPathComponent("Out"), withIntermediateDirectories: true)

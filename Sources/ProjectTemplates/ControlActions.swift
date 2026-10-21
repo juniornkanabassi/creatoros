@@ -25,6 +25,27 @@ extension AppModel {
         guard !controlHidden(now) else { throw ControlFailure(code: "location_hidden", message: "Tick this project's location in the GUI first.") }
         guard controlPath(now) == controlPath(record) else { throw ControlFailure(code: "record_changed", message: "The project moved or changed while this ran; retry.") }
     }
+    /// The window or prompt in the app that this action would invalidate, if one is open. Reads and dry runs never conflict.
+    func conflictingSheet(_ action: String, record: ProjectRecord? = nil) -> String? {
+        if action.hasPrefix("set.") || action.hasPrefix("template.") {
+            if newSetPrompt != nil { return "New Template Set window" }
+            if importPresented { return "import window" }
+            if restoreIconsPrompt != nil { return "Restore Folder Icons window" }
+            if workspacePrompt != nil { return "Create Workspace window" }
+            if action == "template.remove", templateToBrowse != nil { return "template browser" }
+            return nil
+        }
+        if ["location.scan", "location.remove", "project.register"].contains(action), discoveryPresented { return "project discovery window" }
+        guard let record else { return nil }
+        if renamePrompt?.id == record.id { return "rename window" }
+        if restoreIconsPrompt?.id == record.id { return "Restore Folder Icons window" }
+        if workspacePrompt?.id == record.id { return "Create Workspace window" }
+        if binIdea?.id == record.id { return "Bin confirmation" }
+        if workspaceCleanup?.id == record.id { return "old workspace review" }
+        if workspaceToBrowse?.id == record.id { return "workspace browser" }
+        if compatibilityPresented, ["project.rename", "project.relocate", "project.remove", "project.find-moved"].contains(action) { return "compatibility report" }
+        return nil
+    }
     func asInvalid<T>(_ work: () throws -> T) throws -> T {
         do { return try work() } catch let failure as AppFailure { throw ControlFailure(code: "invalid_params", message: failure.localizedDescription) }
     }
@@ -215,6 +236,9 @@ extension AppModel {
         var result = try await controlReadBack(record.id)
         result["finderTag"] = tag.rawValue
         result["template"] = templateID as Any? ?? NSNull()
+        // The app opens its old-workspace review after a promotion; a command gets the same decision as workspace-detach / workspace-bin
+        // instead, so no window is left open to block them.
+        workspaceCleanup = nil
         if record.ideaWorkspace != nil { result["workspaceReview"] = "The idea's old workspace is still linked. Use project workspace-detach or project workspace-bin." }
         return result
     }
@@ -223,6 +247,9 @@ extension AppModel {
 
     func controlProject(_ action: String, _ record: ProjectRecord, _ params: [String: Any]) async throws -> [String: Any] {
         let dryRun = params["dryRun"] as? Bool == true
+        let touching: Set<String> = ["project.remove", "project.relocate", "project.find-moved", "project.icons-strip", "project.icons-restore", "project.workspace-detach",
+                                     "project.workspace-bin", "idea.remove", "idea.merge", "idea.create-workspace"]
+        if touching.contains(action), !dryRun, let sheet = conflictingSheet(action, record: record) { throw ControlFailure(code: "form_in_use", message: "Close the app's \(sheet) first.") }
         switch action {
         case "project.open":
             let page = params["page"] as? String ?? "projects"
@@ -394,7 +421,7 @@ extension AppModel {
             var templateID: UUID?
             if let reference = params["template"] as? String { templateID = try lookupTemplate(reference).id }
             let root = try (params["root"] as? String).map { try controlURL($0, directory: true, writable: true) } ?? runtime.ideas
-            let saved: ProjectRecord = try await awaiting { done in createWorkspace(for: record, root: root, templateID: templateID, onFinish: done) }
+            let saved: ProjectRecord = try await awaiting { done in createWorkspace(for: record, root: root, templateID: templateID, showBrowser: false, onFinish: done) }
             try await durable()
             return try await controlReadBack(saved.id)
         case "idea.merge":

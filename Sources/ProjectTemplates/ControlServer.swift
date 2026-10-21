@@ -111,14 +111,15 @@ extension AppModel {
             defer { if let key { controlPending.remove(key) } }
             // Decided by what the action does, not by its name: opening a project can relink it, a corrected copy writes files.
             let mutating = command.mutates || (action == "compat.check" && params["copyTo"] != nil)
+            var token: WriterOwner?
             if mutating {
                 // Every mutation, whatever handler it reaches, waits for a GUI operation in progress.
-                guard !busy, guiWriteDepth == 0 else { throw ControlFailure(code: "busy", message: "Wait for the current operation.") }
-                guard !controlMutating else { throw ControlFailure(code: "busy", message: "Another control mutation is preparing or running.") }
-                controlMutating = true
+                // One token: if anyone holds it (a command, a click's multi-step write or a running operation) this waits its turn.
+                guard writer == nil else { throw ControlFailure(code: "busy", message: "Another change is preparing or running (in the app or from another command). Retry in a moment.") }
+                token = try acquireWriter(as: .control(UUID().uuidString))
                 controlOwner = params["requestId"] as? String
             }
-            defer { if mutating { controlMutating = false; controlOwner = nil } }
+            defer { if let token { releaseWriter(token); controlOwner = nil } }
             // A read that waits must not answer for a project that was hidden, moved or removed meanwhile, whichever handler
             // produced the answer and whether it succeeded or failed. Mutations hold the lock above, and location changes are
             // mutations, so they cannot overlap; reads are checked here against the record as it was when they started.
@@ -126,7 +127,7 @@ extension AppModel {
             let outcome: Result<[String: Any], Error>
             do {
                 // Only the command's own library writes pass the lock; a click or background task running meanwhile is told to retry.
-                outcome = .success(mutating ? try await AppModel.$inControlAction.withValue(true) { try await controlAction(action, params) } : try await controlAction(action, params))
+                outcome = .success(try await AppModel.$me.withValue(token ?? AppModel.me) { try await controlAction(action, params) })
             } catch { outcome = .failure(error) }
             if !mutating {
                 if let watched { try stillCurrent(watched) }
@@ -148,10 +149,11 @@ extension AppModel {
             (record.id.uuidString.lowercased() == ref.lowercased() || record.name == ref || (Int(ref) != nil && record.numberValue == Int(ref)))
         }
         guard !matches.isEmpty else { throw ControlFailure(code: "not_found", message: "No project matches \(ref).") }
-        guard matches.count == 1 else { throw ControlFailure(code: "ambiguous_project", message: "Use a UUID or --format: " + matches.prefix(5).map { "\($0.number ?? "") \($0.format) \($0.name)" }.joined(separator: "; ")) }
-        let record = matches[0]
-        guard !controlHidden(record) else { throw ControlFailure(code: "location_hidden", message: "Tick this project's location in the GUI first.") }
-        return record
+        // Only visible records are ever counted or named: a hidden location's projects cannot show up in an ambiguity message.
+        let visible = matches.filter { !controlHidden($0) }
+        guard !visible.isEmpty else { throw ControlFailure(code: "location_hidden", message: "Tick this project's location in the GUI first.") }
+        guard visible.count == 1 else { throw ControlFailure(code: "ambiguous_project", message: "Use a UUID or --format: " + visible.prefix(5).map { "\($0.number ?? "") \($0.format) \($0.name)" }.joined(separator: "; ")) }
+        return visible[0]
     }
     func controlSummary(_ record: ProjectRecord) -> [String: Any] {
         ["id": record.id.uuidString, "number": record.number as Any? ?? NSNull(), "name": record.name, "format": record.format,
@@ -159,7 +161,15 @@ extension AppModel {
          "mounted": !record.isPlanned && mountedLocations.contains(record.location.key), "pinned": record.isPinned, "idea": record.isPlanned]
     }
     func controlAction(_ action: String, _ params: [String: Any]) async throws -> [String: Any] {
-        if action == "status" { return ["app": AppInfo.name, "version": AppInfo.version, "channel": AppInfo.channel, "pid": getpid(), "dataRoot": runtime.root.path, "isolated": runtime.isIsolated, "storeUsable": storeUsable, "busy": busy || controlMutating, "statusText": status, "page": page.rawValue, "selectedProject": selectedRecord.map { ["id": $0.id.uuidString, "name": $0.name] } as Any? ?? NSNull(), "newProjectSheetOpen": newProjectPresented, "renameSheetOpen": renamePrompt != nil, "socket": runtime.root.appendingPathComponent("control.sock").path] }
+        // control() already holds the slot for a mutation; a direct caller (the model checks) takes it here.
+        guard let command = ControlCommand.all.first(where: { $0.action == action }),
+              command.mutates || (action == "compat.check" && params["copyTo"] != nil), writer == nil else { return try await controlActionHolding(action, params) }
+        let token = try acquireWriter(as: .control(UUID().uuidString))
+        defer { releaseWriter(token) }
+        return try await AppModel.$me.withValue(token) { try await controlActionHolding(action, params) }
+    }
+    func controlActionHolding(_ action: String, _ params: [String: Any]) async throws -> [String: Any] {
+        if action == "status" { return ["app": AppInfo.name, "version": AppInfo.version, "channel": AppInfo.channel, "pid": getpid(), "dataRoot": runtime.root.path, "isolated": runtime.isIsolated, "storeUsable": storeUsable, "busy": busy || writer != nil, "statusText": status, "page": page.rawValue, "selectedProject": selectedRecord.map { ["id": $0.id.uuidString, "name": $0.name] } as Any? ?? NSNull(), "newProjectSheetOpen": newProjectPresented, "renameSheetOpen": renamePrompt != nil, "socket": runtime.root.appendingPathComponent("control.sock").path] }
         guard storeUsable else { throw ControlFailure(code: "store_unavailable", message: "Resolve the library error in the GUI first.") }
         let visible = library.projects.filter { !controlHidden($0) }
         if action == "library.stats" { return ["schema": Library.currentSchema, "projects": visible.filter { !$0.isPlanned }.count, "ideas": visible.filter(\.isPlanned).count, "byFormat": Dictionary(grouping: visible, by: \.format).mapValues(\.count), "byStage": Dictionary(grouping: visible, by: { effectiveStage($0) }).mapValues(\.count), "templates": library.templates.count, "sets": library.sets.count, "locations": distinctLocations.count, "hiddenLocations": hiddenLocations.sorted()] }
@@ -188,6 +198,7 @@ extension AppModel {
         guard !busy else { throw ControlFailure(code: "busy", message: "Wait for the current operation.") }
         if action == "project.rename" {
             guard renamePrompt == nil, !newProjectPresented, !importPresented else { throw ControlFailure(code: "form_in_use", message: "Close the app's rename or creation form first.") }
+            if params["dryRun"] as? Bool != true, let sheet = conflictingSheet(action, record: record) { throw ControlFailure(code: "form_in_use", message: "Close the app's \(sheet) first.") }
             guard let fields = ProjectRename.fields(of: record) else { throw ControlFailure(code: "invalid_params", message: "Rename needs Number — Format — [Campaign — ]Title and an existing folder.") }
             let number = params["number"] as? String ?? fields.number
             let campaign = params["campaign"] as? String ?? fields.campaign

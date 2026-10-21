@@ -39,7 +39,7 @@ extension AppModel {
             return try ProjectRename.apply(plan, runtime: runtime)
         } completion: { result in
             self.busy = true
-            Task {
+            self.continueHolding {
                 defer { self.busy = false }
                 do {
                     try await self.commitDurably { lib in

@@ -129,7 +129,8 @@ enum BadgeColour: String, CaseIterable, Identifiable {
     @Published var preview: PreviewRendering?
     @Published var plan: CopyPlan?
     @Published var validation = ""
-    @Published var busy = false
+    /// A long operation is showing progress. Whoever sets it holds the writer slot (checked in debug builds).
+    @Published var busy = false { didSet { if busy { assert(writer != nil, "busy without the writer slot") } } }
     @Published var fraction = 0.0
     @Published var status = ""
     @Published var error: String?
@@ -182,7 +183,6 @@ enum BadgeColour: String, CaseIterable, Identifiable {
     var controlServer: ControlServer?
     var controlResults: [String: (parameters: Data, result: [String: Any])] = [:]
     var controlPending = Set<String>()
-    var controlMutating = false
     /// The request id of the control mutation that is running now, so app.cancel only stops the operation its caller started.
     var controlOwner: String?
     /// Test hook: awaited inside slow control reads so a check can change the world while one waits.
@@ -316,31 +316,55 @@ enum BadgeColour: String, CaseIterable, Identifiable {
 
     /// Applies a change at once and writes the library shortly after, off the main thread, so a click never waits for the disk.
     /// Changes made while a write is in flight are coalesced into the next write; a failed write stops further changes.
-    /// True inside a control (creatoros/MCP) mutation; task-local so a click or a background task that happens to run at the
-    /// same time does not count as the command.
-    @TaskLocal static var inControlAction = false
-    /// There is one writer slot. A control mutation holds it from its start to its reply (`controlMutating`); a multi-step
-    /// write started in the app holds it through `withWriterSlot` (`guiWriteDepth`); a long operation holds it through `busy`.
-    /// Anyone else who wants to write, click or background task alike, is told to retry instead of interleaving.
-    var guiWriteDepth = 0
-    /// True inside the code of a multi-step write that holds the app's slot.
-    @TaskLocal static var slotHeld = false
-    var writeLocked: Bool {
-        if Self.inControlAction { return false }
-        return controlMutating || (guiWriteDepth > 0 && !Self.slotHeld)
+    // MARK: The writer slot
+    //
+    // One token says who may change things. A control mutation holds it from its start to its reply; any operation started in
+    // the app holds it from its start to its end, including the steps that wait; nobody else may write, click or background
+    // task alike. Every write path asks `writeLocked`, which is false only when nobody holds the token or the caller is the
+    // holder (known through the task-local `me`, which every task the holder starts inherits). Holders count their holds so
+    // follow-up work that outlives an operation's callback can keep the slot until it is done.
+    enum WriterOwner: Equatable { case control(String), gui(UUID) }
+    var writer: WriterOwner?
+    var writerHolds = 0
+    @TaskLocal static var me: WriterOwner?
+    /// True while a control mutation holds the slot. Settable only so a check can stand in for one.
+    var controlMutating: Bool {
+        get { if case .control = writer { return true }; return false }
+        set { writer = newValue ? .control("control-test") : nil; writerHolds = newValue ? 1 : 0 }
     }
-    /// Runs a multi-step write (one that waits between deciding and committing) while holding the writer slot. Refused at the
-    /// start, before anything is done, when another owner holds it. A control mutation already holds it for its own writes.
-    func withWriterSlot<T>(_ body: () async throws -> T) async throws -> T {
-        if Self.inControlAction { return try await body() }
-        guard !writeLocked, !busy, guiWriteDepth == 0 else { throw AppFailure(Self.writeLockedMessage) }
-        guiWriteDepth += 1
-        defer { guiWriteDepth -= 1 }
-        return try await Self.$slotHeld.withValue(true) { try await body() }
+    var writeLocked: Bool { writer != nil && writer != Self.me }
+    static let writeLockedMessage = "Busy: another change to the library is in progress, from the app or from a command. Wait a moment and retry."
+    /// Takes the slot, or joins it when the caller already holds it. Throws when somebody else holds it.
+    @discardableResult
+    func acquireWriter(as owner: WriterOwner? = nil) throws -> WriterOwner {
+        if let writer {
+            guard writer == Self.me else { throw AppFailure(Self.writeLockedMessage) }
+            writerHolds += 1
+            return writer
+        }
+        let taken = owner ?? .gui(UUID())
+        writer = taken; writerHolds = 1
+        return taken
+    }
+    func releaseWriter(_ owner: WriterOwner) {
+        guard writer == owner else { return }
+        writerHolds -= 1
+        if writerHolds <= 0 { writer = nil; writerHolds = 0 }
+    }
+    /// Runs a multi-step write while holding the slot. Refused at the start, before anything is done, when another owner holds it.
+    func withWriter<T>(_ body: () async throws -> T) async throws -> T {
+        let owner = try acquireWriter()
+        defer { releaseWriter(owner) }
+        return try await Self.$me.withValue(owner) { try await body() }
+    }
+    /// Starts follow-up work that continues after the current operation's callback returns, keeping the slot until it ends.
+    /// Called from inside an operation, so the caller already holds the slot.
+    func continueHolding(_ body: @escaping () async -> Void) {
+        guard let owner = try? acquireWriter() else { error = Self.writeLockedMessage; return }
+        Task { await Self.$me.withValue(owner) { await body() }; self.releaseWriter(owner) }
     }
     /// Test hook: awaited inside a slot-holding write so a check can try to start a second writer while the first waits.
     var writePauseForTests: (() async -> Void)?
-    static let writeLockedMessage = "Busy: a command from another tool is changing the library right now. Wait a moment and retry."
     func mutate(_ change: (inout Library) throws -> Void) throws {
         guard !writeLocked else { throw AppFailure(Self.writeLockedMessage) }
         guard storeUsable else { throw AppFailure("Library is read-only after a load error.") }
@@ -596,7 +620,7 @@ enum BadgeColour: String, CaseIterable, Identifiable {
     /// put back, or the error names its exact place in the Bin, so the library never points at a payload that is gone.
     @discardableResult
     func deleteTemplate(_ record: TemplateRecord) async throws -> URL? {
-        try await withWriterSlot { try await deleteTemplateHoldingSlot(record) }
+        try await withWriter { try await deleteTemplateHoldingSlot(record) }
     }
     private func deleteTemplateHoldingSlot(_ record: TemplateRecord) async throws -> URL? {
         let payload = store.payload(record)
@@ -656,7 +680,7 @@ enum BadgeColour: String, CaseIterable, Identifiable {
         } completion: { url in
             self.created = url
             self.busy = true
-            Task {
+            self.continueHolding {
             defer { self.busy = false }
             do {
                 var savedID: UUID?
@@ -712,20 +736,25 @@ enum BadgeColour: String, CaseIterable, Identifiable {
     func run<T: Sendable>(_ label: String, cancelNote: String = "Work that finished before the stop is still in place.",
                           operation: @escaping @Sendable (Cancellation, @escaping CreationEngine.Progress) async throws -> T,
                           completion: @escaping (T) -> Void, failure: @escaping (String) -> Void = { _ in }) {
-        if writeLocked { error = Self.writeLockedMessage; failure(Self.writeLockedMessage); return }
-        guard !busy, storeUsable else { failure(storeUsable ? "Another operation is running. Wait for it to finish." : "The library is unavailable."); return }
+        guard storeUsable else { failure("The library is unavailable."); return }
+        // Held from here until the callbacks have finished; refused with a retry alert when anyone else holds the slot.
+        guard let owner = try? acquireWriter() else { error = Self.writeLockedMessage; failure(Self.writeLockedMessage); return }
+        guard !busy else { releaseWriter(owner); failure("Another operation is running. Wait for it to finish."); return }
         busy = true; status = label; fraction = 0; cancellation = Cancellation()
         let token = cancellation
         Task {
-            do {
-                let result = try await Task.detached(priority: .userInitiated) {
-                    try await operation(token) { value, text in
-                        Task { @MainActor in self.fraction = value; self.status = text }
-                    }
-                }.value
-                busy = false; status = "Complete"; completion(result)
-            } catch is CancellationError { busy = false; status = "\(label) cancelled. \(cancelNote)"; failure(status) }
-            catch { busy = false; status = "Stopped"; self.error = error.localizedDescription; failure(error.localizedDescription) }
+            await Self.$me.withValue(owner) {
+                do {
+                    let result = try await Task.detached(priority: .userInitiated) {
+                        try await operation(token) { value, text in
+                            Task { @MainActor in self.fraction = value; self.status = text }
+                        }
+                    }.value
+                    busy = false; status = "Complete"; completion(result)
+                } catch is CancellationError { busy = false; status = "\(label) cancelled. \(cancelNote)"; failure(status) }
+                catch { busy = false; status = "Stopped"; self.error = error.localizedDescription; failure(error.localizedDescription) }
+            }
+            releaseWriter(owner)
         }
     }
 
@@ -1117,7 +1146,7 @@ enum BadgeColour: String, CaseIterable, Identifiable {
     @discardableResult
     func renameStageCore(_ old: String, to new: String, on kind: PipelineKind, dryRun: Bool = false) async throws -> StageRenameReport {
         if dryRun { return try await renameStageHoldingSlot(old, to: new, on: kind, dryRun: true) }
-        return try await withWriterSlot { try await renameStageHoldingSlot(old, to: new, on: kind, dryRun: false) }
+        return try await withWriter { try await renameStageHoldingSlot(old, to: new, on: kind, dryRun: false) }
     }
     private func renameStageHoldingSlot(_ old: String, to new: String, on kind: PipelineKind, dryRun: Bool) async throws -> StageRenameReport {
         let stages = library.stages(for: kind)
@@ -1256,6 +1285,10 @@ enum BadgeColour: String, CaseIterable, Identifiable {
         let task = Task { @MainActor () -> TagOutcome in
             _ = await previous?.value
             guard self.tagGeneration[id] == generation else { return .skipped }
+            // A tag write is a write: it waits (briefly) while somebody else holds the writer slot, and gives up if they keep it.
+            var waits = 0
+            while self.writeLocked && waits < 30 { try? await Task.sleep(for: .milliseconds(100)); waits += 1 }
+            guard !self.writeLocked else { return .skipped }
             // The wait may have been long: look at the record, its location and the settings again just before writing.
             guard let current = self.library.projects.first(where: { $0.id == id }), let plan = self.tagPlan(current, replacing: old) else { return .skipped }
             guard (try? self.runtime.requireWritable(plan.url)) != nil else { return .failed }
@@ -1282,8 +1315,11 @@ enum BadgeColour: String, CaseIterable, Identifiable {
             if records.isEmpty && !dryRun { status = "No staged folders are on a connected drive." }
             onFinish?(.success(report)); return
         }
+        // Tagging many folders is one multi-step write: it holds the slot, or is refused when somebody else does.
+        guard let owner = try? acquireWriter() else { error = Self.writeLockedMessage; onFinish?(.failure(AppFailure(Self.writeLockedMessage))); return }
         tagging = true
         Task {
+          await Self.$me.withValue(owner) {
             defer { tagging = false }
             for (index, original) in records.enumerated() {
                 status = "Tagging folder \(index + 1) of \(records.count)…"
@@ -1296,6 +1332,8 @@ enum BadgeColour: String, CaseIterable, Identifiable {
             if report.offline > 0 { parts.append("\(report.offline) are on drives that are not connected.") }
             status = parts.joined(separator: " ")
             onFinish?(.success(report))
+          }
+          releaseWriter(owner)
         }
     }
     func addCustomField(_ name: String) { attempt { _ = try addField(name) } }

@@ -68,6 +68,7 @@ extension AppModel {
         if changesFormSources.contains(action), !dryRun {
             try requireNoSheet(newProjectPresented || importPresented || renamePrompt != nil || startingFrom != nil, "project form, rename or import window")
         }
+        if !dryRun, let sheet = conflictingSheet(action) { throw ControlFailure(code: "form_in_use", message: "Close the app's \(sheet) first.") }
         switch action {
         // Ideas
         case "idea.add":
