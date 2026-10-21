@@ -504,6 +504,8 @@ try:
     hidden_before = digest()
     hid_idea = command('idea', 'add', '--title', 'Hidden workspace idea', '--format', 'Short')
     hid_ws = command('idea', 'create-workspace', hid_idea['id'], '--request-id', 'ws-hidden')
+    removed_create = command('project', 'create', '--format', 'Short', '--title', 'Removed then hidden', '--request-id', 'rc-1')
+    command('project', 'remove', removed_create['id'])
     cached_dir = root / 'Stray3' / '710 — Short — Cached'; cached_dir.mkdir(parents=True)
     cached = command('project', 'register', '--path', str(cached_dir), '--request-id', 'reg-hidden')
     hidden_before = digest()
@@ -521,6 +523,7 @@ try:
     check(error('project', 'create', '--format', 'Short', '--title', 'Hidden destination')['code'] == 'location_hidden', 'hidden location refuses create into it')
     check(error('project', 'register', '--path', str(cached_dir), '--request-id', 'reg-hidden')['code'] == 'location_hidden', 'a cached request id result is refused once its location is hidden')
     check(all(error('project', verb, hid_idea['id'], *extra_)['code'] == 'location_hidden' for verb, extra_ in [('files', []), ('status', []), ('reveal', []), ('open-premiere', []), ('add-files', ['--from', str(root)])]), 'an idea whose workspace is on a hidden location is refused like a project')
+    check(error('project', 'create', '--format', 'Short', '--title', 'Removed then hidden', '--request-id', 'rc-1')['code'] == 'location_hidden', 'a cached result is refused once its path is hidden, even after its record was removed')
     check(error('idea', 'create-workspace', hid_idea['id'], '--request-id', 'ws-hidden')['code'] == 'location_hidden', 'a cached workspace result is refused once its location is hidden')
     check(command('location', 'set', 'local', '--visible')['hidden'] is False and command('project', 'list')['total'] > 5, 'location set --visible shows it again')
 
@@ -596,21 +599,25 @@ try:
         block = os.urandom(1 << 20)
         for _ in range(2600): handle.write(block)
     import threading
-    outcome = {}
-    def long_import():
-        result = subprocess.run([str(cli), 'template', 'import', '--path', str(big), '--name', 'BigTpl', '--mode', 'full', '--request-id', 'big-1', '--json', '--data-directory', str(root)], capture_output=True, text=True, timeout=120)
-        outcome['code'] = result.returncode; outcome['body'] = json.loads(result.stdout)
-    worker = threading.Thread(target=long_import); worker.start()
-    time.sleep(0.6)
-    stopped = subprocess.run([str(cli), 'app', 'cancel', '--request-id', 'someone-else', '--json', '--data-directory', str(root)], capture_output=True, text=True, timeout=30)
-    owner_code = json.loads(stopped.stdout).get('error', {}).get('code')
-    cancel = subprocess.run([str(cli), 'app', 'cancel', '--request-id', 'big-1', '--json', '--data-directory', str(root)], capture_output=True, text=True, timeout=30)
-    worker.join(timeout=120)
-    cancel_body = json.loads(cancel.stdout)
-    if cancel.returncode == 0:
-        check(owner_code == 'not_owner' and outcome['code'] == 1 and outcome['body']['error']['code'] == 'cancelled' and all(t['name'] != 'BigTpl' for t in lib()['templates']), 'app cancel stops the operation its request id started and nothing is registered')
-    else:
-        check(cancel_body['error']['code'] == 'not_running' and outcome['code'] == 0, 'app cancel after the import finished reports not_running')
+    def cancel_cycle():
+        outcome = {}
+        def long_import():
+            result = subprocess.run([str(cli), 'template', 'import', '--path', str(big), '--name', 'BigTpl', '--mode', 'full', '--request-id', 'big-1', '--json', '--data-directory', str(root)], capture_output=True, text=True, timeout=120)
+            outcome['code'] = result.returncode; outcome['body'] = json.loads(result.stdout)
+        worker = threading.Thread(target=long_import); worker.start()
+        time.sleep(0.6)
+        stopped = subprocess.run([str(cli), 'app', 'cancel', '--request-id', 'someone-else', '--json', '--data-directory', str(root)], capture_output=True, text=True, timeout=30)
+        owner_code = json.loads(stopped.stdout).get('error', {}).get('code')
+        cancel = subprocess.run([str(cli), 'app', 'cancel', '--request-id', 'big-1', '--json', '--data-directory', str(root)], capture_output=True, text=True, timeout=30)
+        worker.join(timeout=120)
+        return owner_code, cancel, outcome
+    # The request id names the owner of a running operation; it is not an idempotency key, so the same id can be cancelled again.
+    for attempt in ('first', 'second'):
+        owner_code, cancel, outcome = cancel_cycle()
+        check(cancel.returncode == 0 and owner_code == 'not_owner' and outcome['code'] == 1 and outcome['body']['error']['code'] == 'cancelled' and all(t['name'] != 'BigTpl' for t in lib()['templates']),
+              'app cancel stops the %s import started with request id big-1 and nothing is registered' % attempt)
+    idle = subprocess.run([str(cli), 'app', 'cancel', '--request-id', 'big-1', '--json', '--data-directory', str(root)], capture_output=True, text=True, timeout=30)
+    check(idle.returncode == 1 and json.loads(idle.stdout)['error']['code'] == 'not_running', 'app cancel while idle fails with not_running, never a cached success')
     shutil.rmtree(big)
     for leftover in (root / 'Templates').iterdir():
         pass

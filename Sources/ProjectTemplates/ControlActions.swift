@@ -72,6 +72,14 @@ extension AppModel {
         for key in ["path", "destination", "copyTo", "root"] {
             if let path = params[key] as? String, path.hasPrefix("/"), hiddenLocations.contains(ProjectLocation(path: path).key) { return refusal }
         }
+        // Every absolute path anywhere in the answer, nested or not, whether or not its record still exists.
+        func paths(in value: Any) -> [String] {
+            if let text = value as? String { return text.hasPrefix("/") ? [text] : [] }
+            if let map = value as? [String: Any] { return map.values.flatMap(paths(in:)) }
+            if let list = value as? [Any] { return list.flatMap(paths(in:)) }
+            return []
+        }
+        if paths(in: result).contains(where: { hiddenLocations.contains(ProjectLocation(path: $0).key) }) { return refusal }
         return nil
     }
     /// The folder to show or browse for a record: the project folder, or an idea's owned workspace.

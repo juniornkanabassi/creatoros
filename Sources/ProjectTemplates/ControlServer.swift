@@ -96,7 +96,8 @@ extension AppModel {
             guard let command = ControlCommand.all.first(where: { $0.action == action }) else { throw ControlFailure(code: "unknown_action", message: "Unknown action: \(action)") }
             do { try command.validate(params) } catch { throw ControlFailure(code: "invalid_params", message: error.localizedDescription) }
             let dryRun = params["dryRun"] as? Bool == true
-            let key = dryRun ? nil : (params["requestId"] as? String).map { action + ":" + $0 }
+            // app.cancel's request id names who owns a running operation; it is never an idempotency key, so it is never cached.
+            let key = dryRun || action == "app.cancel" ? nil : (params["requestId"] as? String).map { action + ":" + $0 }
             // `show` only says whether to bring the app forward; it must not stop a retry with the same request id.
             let parameters = try JSONSerialization.data(withJSONObject: params.filter { $0.key != "show" }, options: [.sortedKeys])
             if let key, let cached = controlResults[key] {
