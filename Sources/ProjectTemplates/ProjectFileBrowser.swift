@@ -204,16 +204,7 @@ struct FolderBrowserHost: View {
     }
     func open(path: String) {
         guard let root else { return }
-        let item = BrowserItem(relativePath: path, name: (path as NSString).lastPathComponent, directory: false, package: false, bytes: 0, modified: nil)
-        Task {
-            do {
-                let url = try await Task.detached { try ProjectBrowser.openable(item, root: root) }.value
-                guard NSWorkspace.shared.urlForApplication(toOpen: url) != nil else { throw AppFailure("No app is registered for this file type. Install or choose the appropriate editor in macOS first.") }
-                NSWorkspace.shared.open(url, configuration: NSWorkspace.OpenConfiguration()) { _, error in
-                    if let error { Task { @MainActor in openingError = error.localizedDescription } }
-                }
-            } catch { openingError = error.localizedDescription }
-        }
+        Task { do { _ = try await AppModel.openDocument(root: root, relative: path) } catch { openingError = error.localizedDescription } }
     }
 }
 

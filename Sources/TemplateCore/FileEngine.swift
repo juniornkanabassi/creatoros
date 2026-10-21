@@ -13,6 +13,7 @@ public final class Cancellation: @unchecked Sendable {
     private var cancelled = false
     public init() {}
     public func cancel() { lock.lock(); cancelled = true; lock.unlock() }
+    public var isCancelled: Bool { lock.lock(); defer { lock.unlock() }; return cancelled }
     public func check() throws {
         lock.lock(); let value = cancelled; lock.unlock()
         if value { throw CancellationError() }
@@ -181,8 +182,10 @@ public struct IconRestoreReport: Sendable {
     public var unmatched: [String] = []
     public var failed: [String] = []
     public var outerIconApplied = false
+    /// Stopped part way: what is listed was done, and a second restore finishes the rest.
+    public var cancelled = false
     public var summary: String {
-        var parts = ["Restored \(restored.count) folder icons."]
+        var parts = [(cancelled ? "Cancelled part way. " : "") + "Restored \(restored.count) folder icons."]
         if !inherited.isEmpty { parts.append("\(inherited.count) more folders inherited the icon of the template folder their name extends.") }
         if !ambiguous.isEmpty { parts.append("\(ambiguous.count) folders match more than one template folder and were skipped.") }
         if outerIconApplied { parts.append("Project icon applied.") }
@@ -352,7 +355,7 @@ public extension IconService {
         report.unmatched = found.unmatched; report.ambiguous = found.ambiguous
         // Icon\r files first, then their folders, so the custom-icon flag never points at a missing file.
         for step in found.steps {
-            try cancellation.check()
+            if cancellation.isCancelled { report.cancelled = true; return report }
             var createdIcon = false
             do {
                 if !fm.fileExists(atPath: step.target.path) { try Data(contentsOf: step.icon).write(to: step.target, options: .withoutOverwriting); createdIcon = true }
@@ -378,8 +381,10 @@ public struct IconStripReport: Sendable {
     public var iconFilesRemoved: [String] = []
     public var foldersCleared: [String] = []
     public var failed: [String] = []
+    /// Stopped part way: what is listed was done.
+    public var cancelled = false
     public var summary: String {
-        var parts = ["Removed \(iconFilesRemoved.count) icon files and cleared \(foldersCleared.count) folders."]
+        var parts = [(cancelled ? "Cancelled part way. " : "") + "Removed \(iconFilesRemoved.count) icon files and cleared \(foldersCleared.count) folders."]
         if !failed.isEmpty { parts.append("\(failed.count) could not be changed.") }
         return parts.joined(separator: " ")
     }
@@ -397,7 +402,8 @@ public extension IconService {
         var folders: [URL] = [project]
         guard let enumerator = fm.enumerator(at: project, includingPropertiesForKeys: [.isDirectoryKey, .isSymbolicLinkKey, .isPackageKey, .isRegularFileKey], options: []) else { throw AppFailure("Cannot read the project folder.") }
         for case let url as URL in enumerator {
-            try cancellation.check()
+            // A stop returns what was already done, so a partial removal is never reported as "nothing happened".
+            if cancellation.isCancelled { report.cancelled = true; return report }
             let values = try url.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey, .isPackageKey, .isRegularFileKey])
             if values.isSymbolicLink == true { continue }
             if values.isPackage == true { enumerator.skipDescendants(); continue }
@@ -408,7 +414,7 @@ public extension IconService {
             } else if values.isDirectory == true { folders.append(url) }
         }
         for folder in folders {
-            try cancellation.check()
+            if cancellation.isCancelled { report.cancelled = true; return report }
             var changed = false, problem: String?
             for name in attributes where (try? attribute(name, at: folder)) ?? nil != nil {
                 if dryRun || removexattr(folder.path, name, XATTR_NOFOLLOW) == 0 { changed = true } else { problem = String(cString: strerror(errno)) }

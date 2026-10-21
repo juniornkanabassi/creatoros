@@ -263,16 +263,8 @@ struct ProjectInspector: View {
         let record = record
         Task {
             do {
-                let url = try await Task.detached(priority: .userInitiated) {
-                    let root = try ProjectBrowser.root(record)
-                    let candidate = try ProjectBrowser.openable(item, root: root)
-                    guard candidate.pathExtension.lowercased() == "prproj" else { throw AppFailure("This is not a Premiere project.") }
-                    return candidate
-                }.value
-                guard NSWorkspace.shared.urlForApplication(toOpen: url) != nil else { throw AppFailure("No app is registered for Premiere project files.") }
-                NSWorkspace.shared.open(url, configuration: NSWorkspace.OpenConfiguration()) { _, error in
-                    if let error { Task { @MainActor in m.error = error.localizedDescription } }
-                }
+                let root = try await Task.detached(priority: .userInitiated) { try ProjectBrowser.root(record) }.value
+                _ = try await AppModel.openDocument(root: root, relative: item.relativePath, expecting: "prproj")
             } catch { m.error = error.localizedDescription }
         }
     }

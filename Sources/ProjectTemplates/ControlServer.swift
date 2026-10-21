@@ -95,8 +95,10 @@ extension AppModel {
                   let params = request["params"] as? [String: Any] else { throw ControlFailure(code: "bad_request", message: "Send id, action and params as a JSON object.") }
             guard let command = ControlCommand.all.first(where: { $0.action == action }) else { throw ControlFailure(code: "unknown_action", message: "Unknown action: \(action)") }
             do { try command.validate(params) } catch { throw ControlFailure(code: "invalid_params", message: error.localizedDescription) }
-            let key = params["dryRun"] as? Bool == true ? nil : (params["requestId"] as? String).map { action + ":" + $0 }
-            let parameters = try JSONSerialization.data(withJSONObject: params, options: [.sortedKeys])
+            let dryRun = params["dryRun"] as? Bool == true
+            let key = dryRun ? nil : (params["requestId"] as? String).map { action + ":" + $0 }
+            // `show` only says whether to bring the app forward; it must not stop a retry with the same request id.
+            let parameters = try JSONSerialization.data(withJSONObject: params.filter { $0.key != "show" }, options: [.sortedKeys])
             if let key, let cached = controlResults[key] {
                 guard cached.parameters == parameters else { throw ControlFailure(code: "invalid_params", message: "requestId was already used with different parameters; use a new requestId.") }
                 return ["id": id, "ok": true, "result": cached.result]
@@ -104,18 +106,20 @@ extension AppModel {
             if let key, controlPending.contains(key) { throw ControlFailure(code: "busy", message: "This request is still running; retry the same requestId.") }
             if let key { guard controlResults.count < 4096 else { throw ControlFailure(code: "busy", message: "Session request cache is full; restart before creating more projects.") }; controlPending.insert(key) }
             defer { if let key { controlPending.remove(key) } }
-            let mutating = action == "project.create" || action == "project.rename"
+            // Decided by what the action does, not by its name: opening a project can relink it, a corrected copy writes files.
+            let mutating = command.mutates || (action == "compat.check" && params["copyTo"] != nil)
             if mutating {
                 guard !controlMutating else { throw ControlFailure(code: "busy", message: "Another control mutation is preparing or running.") }
                 controlMutating = true
+                controlOwner = params["requestId"] as? String
             }
-            defer { if mutating { controlMutating = false } }
+            defer { if mutating { controlMutating = false; controlOwner = nil } }
             let result = try await controlAction(action, params)
             if let key { controlResults[key] = (parameters, result) }
             if params["show"] as? Bool == true, action != "project.reveal" { NSApp.activate(ignoringOtherApps: true) }
             return ["id": id, "ok": true, "result": result]
         } catch {
-            let failure = error as? ControlFailure ?? ControlFailure(code: "internal", message: error.localizedDescription)
+            let failure = error as? ControlFailure ?? ControlFailure(code: error is AppFailure ? "action_failed" : "internal", message: error.localizedDescription)
             return ["id": id, "ok": false, "error": ["code": failure.code, "message": failure.message]]
         }
     }
@@ -134,7 +138,7 @@ extension AppModel {
     func controlSummary(_ record: ProjectRecord) -> [String: Any] {
         ["id": record.id.uuidString, "number": record.number as Any? ?? NSNull(), "name": record.name, "format": record.format,
          "stage": effectiveStage(record), "path": record.path, "location": record.isPlanned ? NSNull() : record.location.key as Any,
-         "mounted": !record.isPlanned && mountedLocations.contains(record.location.key), "pinned": record.isPinned]
+         "mounted": !record.isPlanned && mountedLocations.contains(record.location.key), "pinned": record.isPinned, "idea": record.isPlanned]
     }
     func controlAction(_ action: String, _ params: [String: Any]) async throws -> [String: Any] {
         if action == "status" { return ["app": AppInfo.name, "version": AppInfo.version, "channel": AppInfo.channel, "pid": getpid(), "dataRoot": runtime.root.path, "isolated": runtime.isIsolated, "storeUsable": storeUsable, "busy": busy || controlMutating, "statusText": status, "page": page.rawValue, "selectedProject": selectedRecord.map { ["id": $0.id.uuidString, "name": $0.name] } as Any? ?? NSNull(), "newProjectSheetOpen": newProjectPresented, "renameSheetOpen": renamePrompt != nil, "socket": runtime.root.appendingPathComponent("control.sock").path] }
@@ -142,58 +146,24 @@ extension AppModel {
         let visible = library.projects.filter { $0.isPlanned || !hiddenLocations.contains($0.location.key) }
         if action == "library.stats" { return ["schema": Library.currentSchema, "projects": visible.filter { !$0.isPlanned }.count, "ideas": visible.filter(\.isPlanned).count, "byFormat": Dictionary(grouping: visible, by: \.format).mapValues(\.count), "byStage": Dictionary(grouping: visible, by: { effectiveStage($0) }).mapValues(\.count), "templates": library.templates.count, "sets": library.sets.count, "locations": distinctLocations.count, "hiddenLocations": hiddenLocations.sorted()] }
         if action == "project.list" {
+            let query = params["search"] as? String
+            let deep: Set<UUID> = params["deep"] as? Bool == true && (query?.count ?? 0) >= 3 ? await deepMatchIDs(query ?? "") : []
             let records = visible.filter { record in
                 (params["includeIdeas"] as? Bool == true || !record.isPlanned) &&
                 (params["format"] == nil || record.format == params["format"] as? String) &&
                 (params["stage"] == nil || effectiveStage(record) == params["stage"] as? String) &&
-                (params["search"] == nil || record.searchableText.localizedCaseInsensitiveContains(params["search"] as? String ?? ""))
+                (query == nil || record.searchableText.localizedCaseInsensitiveContains(query ?? "") || deep.contains(record.id))
             }.sorted { $0.name.localizedStandardCompare($1.name) == .orderedDescending }
             let offset = params["offset"] as? Int ?? 0, limit = params["limit"] as? Int ?? 50
             let batch = records.dropFirst(min(offset, records.count)).prefix(limit)
             return ["total": records.count, "offset": offset, "returned": batch.count, "projects": batch.map(controlSummary)]
         }
-        if action == "project.create" {
-            guard !busy else { throw ControlFailure(code: "busy", message: "Wait for the current operation.") }
-            guard !newProjectPresented, renamePrompt == nil, !importPresented, startingFrom == nil else { throw ControlFailure(code: "form_in_use", message: "Close the app's project form first.") }
-            let requestedFormat = params["format"] as! String
-            guard Library.formats.contains(requestedFormat) else { throw ControlFailure(code: "invalid_params", message: "Use Long, Short, Podcast or Livestream.") }
-            let saved = (format, selection, number, numberIsAutomatic, title, campaign, extraValues, destination, plainFolders)
-            defer {
-                format = saved.0; selection = saved.1; number = saved.2; numberIsAutomatic = saved.3
-                if numberIsAutomatic { number = suggestedNumber }
-                title = saved.4; campaign = saved.5; extraValues = saved.6; destination = saved.7; plainFolders = saved.8
-                refresh()
-            }
-            format = requestedFormat; changeFormat(); extraValues = [:]
-            if let template = params["template"] as? String {
-                let sets = library.sets.filter { $0.id.uuidString.lowercased() == template.lowercased() || $0.name == template }
-                let templates = library.templates.filter { $0.id.uuidString.lowercased() == template.lowercased() || $0.name == template }
-                guard sets.count + templates.count == 1 else { throw ControlFailure(code: "template_not_ready", message: "Choose a unique template set or payload UUID/name.") }
-                selection = sets.first.map { .set($0.id) } ?? .legacy(templates[0].id)
-            }
-            guard payload != nil else { throw ControlFailure(code: "template_not_ready", message: "Set up a template for this format in the GUI.") }
-            title = params["title"] as! String; campaign = params["campaign"] as? String ?? ""
-            numberIsAutomatic = params["number"] == nil; number = params["number"] as? String ?? suggestedNumber
-            do { _ = try fields.finalName() } catch { throw ControlFailure(code: "invalid_params", message: error.localizedDescription) }
-            guard !hiddenLocations.contains(ProjectLocation(path: destination).key) else { throw ControlFailure(code: "location_hidden", message: "Tick the destination's location in the GUI first.") }
-            guard !destination.isEmpty else { throw ControlFailure(code: "no_destination", message: "Choose a destination for this format in the GUI.") }
-            busy = true
-            refresh(); await refreshTask?.value
-            busy = false
-            guard !newProjectPresented, renamePrompt == nil, !importPresented else { throw ControlFailure(code: "form_in_use", message: "Close the app's project form first.") }
-            guard canCreate else { throw ControlFailure(code: "template_not_ready", message: validation.isEmpty ? "Template cannot create this project." : validation) }
-            let templateID = payload?.id.uuidString
-            let record: ProjectRecord = try await withCheckedThrowingContinuation { done in create { done.resume(with: $0) } }
-            var result = controlSummary(record); result["template"] = templateID as Any? ?? NSNull(); return result
-        }
+        if action == "project.create" { return try await controlCreate(params) }
+        if let result = try await controlGlobal(action, params) { return result }
         let record = try controlRecord(params)
         if action == "project.status" {
             let inspection = record.isPlanned ? nil : await Task.detached { Catalogue.availability(record) }.value
-            var result = controlSummary(record)
-            result["title"] = ProjectRename.fields(of: record)?.title ?? record.title
-            result["campaign"] = record.campaign as Any? ?? NSNull(); result["available"] = inspection?.available ?? false
-            result["availability"] = inspection?.status ?? "Planned idea"; result["folderCreated"] = record.folderCreated.map { ISO8601DateFormatter().string(from: $0) } as Any? ?? NSNull()
-            result["previousPaths"] = record.previousPaths ?? []; return result
+            return try await controlReadBack(record.id, availability: inspection)
         }
         guard !busy else { throw ControlFailure(code: "busy", message: "Wait for the current operation.") }
         if action == "project.rename" {
@@ -216,15 +186,11 @@ extension AppModel {
             let result: ProjectRenameResult = try await withCheckedThrowingContinuation { done in
                 renameProject(record.id, number: number, campaign: campaign, title: title, updateHeadings: headings, expectedChanges: plan.changes) { done.resume(with: $0) }
             }
-            return ["id": record.id.uuidString, "oldName": plan.oldName, "newName": plan.newName, "oldPath": result.oldRoot.path, "newPath": result.newRoot.path,
-                    "renamed": result.changes.count, "manifest": result.manifest.path, "warnings": plan.warnings]
-        }
-        if action == "project.open" {
-            if !search.isEmpty && !record.searchableText.localizedCaseInsensitiveContains(search) && !deepMatches.contains(record.id) { search = "" }
-            if formatFilter != "All formats" && formatFilter != record.format { formatFilter = "All formats" }
-            excludedStages.remove(effectiveStage(record))
-            selectedProject = record.id; page = .projects; selectProject()
-            return ["id": record.id.uuidString, "name": record.name, "selected": true]
+            var reply = try await controlReadBack(record.id)
+            for (key, value) in ["oldName": plan.oldName, "newName": plan.newName, "oldPath": result.oldRoot.path, "newPath": result.newRoot.path,
+                                 "manifest": result.manifest.path] as [String: Any] { reply[key] = value }
+            reply["renamed"] = result.changes.count; reply["warnings"] = plan.warnings
+            return reply
         }
         if action == "project.reveal" {
             let url = try projectFolderForAction(record)
@@ -232,6 +198,6 @@ extension AppModel {
             try await NSWorkspace.shared.open(url, configuration: config)
             return ["id": record.id.uuidString, "path": url.path]
         }
-        throw ControlFailure(code: "unknown_action", message: action)
+        return try await controlProject(action, record, params)
     }
 }

@@ -112,7 +112,9 @@ struct FileBrowserView: View {
     var fileDrop = BrowserFileDrop()
     @State private var loaded: [String: [FileBrowserNode]] = [:]
     @State private var loading: Set<String> = []
-    @State private var failure: String?
+    /// Errors by folder, so one unreadable expanded folder does not blank the folders that did load.
+    @State private var failures: [String: String] = [:]
+    var failure: String? { failures[folder] }
     @State private var token = Cancellation()
     @State private var generation = 0
     @FocusState private var focusedColumn: Int?
@@ -156,7 +158,9 @@ struct FileBrowserView: View {
     /// flight are forgotten rather than left blocking the next read.
     func reloadAll() {
         let wanted = Set(loaded.keys).union(mode == .column ? columnPaths : [folder])
-        loading = []; failure = nil; generation += 1
+        // A new generation gets a new token: the old one may have been cancelled when the browser last disappeared.
+        token.cancel(); token = Cancellation()
+        loading = []; failures = [:]; generation += 1
         // The old listing stays on screen until the new one replaces it, so expanded folders and the selection keep
         // their places instead of collapsing while the drive answers.
         for path in wanted { load(path) }
@@ -165,7 +169,7 @@ struct FileBrowserView: View {
         guard !loading.contains(path) else { return }
         let source = dataSource
         if source.isSynchronous {
-            do { loaded[path] = try source.children(of: path, cancellation: Cancellation()) } catch { failure = error.localizedDescription }
+            do { loaded[path] = try source.children(of: path, cancellation: Cancellation()); failures[path] = nil } catch { failures[path] = error.localizedDescription }
             return
         }
         loading.insert(path)
@@ -174,10 +178,10 @@ struct FileBrowserView: View {
             do {
                 let result = try await Task.detached(priority: .userInitiated) { try source.children(of: path, cancellation: token) }.value
                 guard current == generation else { return }
-                loaded[path] = result; loading.remove(path)
+                loaded[path] = result; loading.remove(path); failures[path] = nil
             } catch {
                 guard current == generation else { return }
-                loading.remove(path); failure = error.localizedDescription
+                loading.remove(path); failures[path] = error.localizedDescription
             }
         }
     }
