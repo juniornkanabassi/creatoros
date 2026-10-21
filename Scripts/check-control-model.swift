@@ -133,5 +133,43 @@ import TemplateCore
         do { _ = try model.moveToStage("Idea", for: UUID()); preconditionFailure("unknown record accepted") } catch is AppFailure {}
         do { _ = try model.moveToStage("Streamed", for: target.id); preconditionFailure("live stage accepted on a recording") } catch is AppFailure {}
         print("PASS 1 stage boundary check: unknown ids and wrong-board stages are refused in the shared mutation")
+        // A GUI operation in progress stops every control mutation, whichever handler it would reach.
+        func controlCode(_ action: String, _ params: [String: Any]) async -> String? {
+            let reply = await model.control(["id": "c", "action": action, "params": params])
+            return (reply["error"] as? [String: Any])?["code"] as? String
+        }
+        let fieldsBefore = model.library.fieldList.count
+        model.busy = true
+        let refused1 = await controlCode("field.add", ["name": "During GUI copy"]); precondition(refused1 == "busy")
+        let refused2 = await controlCode("set.create", ["name": "During GUI copy"]); precondition(refused2 == "busy")
+        let refused3 = await controlCode("settings.finder-tags", ["enabled": true]); precondition(refused3 == "busy")
+        model.busy = false
+        precondition(model.library.fieldList.count == fieldsBefore)
+        print("PASS 1 busy guard check: field, set and settings mutations are refused while the GUI is busy")
+        // Hiding a location while a deep search is waiting hides its projects from the answer too.
+        let probe = Task { await model.control(["id": "p", "action": "project.list", "params": ["search": "Short", "deep": true]]) }
+        await Task.yield()
+        model.hiddenLocations.insert(target.location.key)
+        let listed = await probe.value
+        model.hiddenLocations.remove(target.location.key)
+        let leaked = (listed["result"] as? [String: Any])?["total"] as? Int
+        precondition(leaked == 0, "a hidden location leaked \(String(describing: leaked)) projects into a deep search")
+        print("PASS 1 deep search check: visibility is read again after the wait")
+        // A dry-run compatibility check leaves the app's status text alone.
+        let compatRoot = model.runtime.root.appendingPathComponent("CompatDry")
+        try FileManager.default.createDirectory(at: compatRoot.appendingPathComponent("Out"), withIntermediateDirectories: true)
+        try Data("x".utf8).write(to: compatRoot.appendingPathComponent("bad|name.txt"))
+        model.status = "Previous GUI status"
+        let dry = try await model.controlAction("compat.check", ["path": compatRoot.path, "copyTo": compatRoot.appendingPathComponent("Out").path, "dryRun": true])
+        precondition(dry["dryRun"] as? Bool == true && model.status == "Previous GUI status" && !model.busy)
+        print("PASS 1 compatibility dry-run check: no status or progress is published")
+        // An idea's folder to show is its owned workspace; one without a workspace is refused, never called hidden.
+        let bare = ProjectRecord(planned: "Reveal idea", format: "Short", stage: "Idea")
+        try await model.commitDurably { $0.projects.append(bare) }
+        do { _ = try await model.folderToShow(bare); preconditionFailure("an idea without a workspace was shown") } catch let failure as ControlFailure { precondition(failure.code == "invalid_params") }
+        let withWorkspace: ProjectRecord = try await withCheckedThrowingContinuation { done in model.createWorkspace(for: bare, root: model.runtime.ideas, templateID: nil) { done.resume(with: $0) } }
+        let shown = try await model.folderToShow(withWorkspace)
+        precondition(shown.lastPathComponent == URL(fileURLWithPath: withWorkspace.ideaWorkspace!.path).lastPathComponent)
+        print("PASS 1 idea workspace check: reveal and browsing resolve an idea's owned workspace")
     }
 }

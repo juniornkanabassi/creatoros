@@ -45,7 +45,7 @@ func connectSocket(_ path: String) -> Int32? {
 let args = Array(CommandLine.arguments.dropFirst())
 let wantsJSON = args.contains("--json")
 do {
-    if args == ["--version"] || args == ["version"] { print(version); exit(0) }
+    if args.contains("--version") || args == ["version"] { print(wantsJSON ? json(["version": version]) : version); exit(0) }
     if args.isEmpty || args.contains("--help") || args.first == "help" { help(); exit(0) }
     var words: [String] = [], flags: [String: Any] = [:]
     var dataDirectory = ProcessInfo.processInfo.environment["CREATOROS_DATA_DIRECTORY"]

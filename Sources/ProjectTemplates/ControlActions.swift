@@ -47,6 +47,24 @@ extension AppModel {
         }
         return url
     }
+    /// Whether a cached answer may still be shown: the record it names and every path it was asked about must be on ticked locations.
+    func cachedAccessRefusal(_ params: [String: Any], _ result: [String: Any]) -> ControlFailure? {
+        let refusal = ControlFailure(code: "location_hidden", message: "Tick this project's location in the GUI first.")
+        if let text = result["id"] as? String, let id = UUID(uuidString: text),
+           let record = library.projects.first(where: { $0.id == id }), !record.isPlanned, hiddenLocations.contains(record.location.key) { return refusal }
+        for key in ["path", "destination", "copyTo", "root"] {
+            if let path = params[key] as? String, path.hasPrefix("/"), hiddenLocations.contains(ProjectLocation(path: path).key) { return refusal }
+        }
+        return nil
+    }
+    /// The folder to show or browse for a record: the project folder, or an idea's owned workspace.
+    func folderToShow(_ record: ProjectRecord) async throws -> URL {
+        if record.isPlanned {
+            guard record.ideaWorkspace != nil else { throw ControlFailure(code: "invalid_params", message: "This idea has no workspace folder yet. Use idea create-workspace.") }
+            return try await asInvalidAsync { try await Task.detached { try IdeaWorkspaceEngine.resolve(for: record) }.value }
+        }
+        return try projectFolderForAction(record)
+    }
     func controlOutcome(_ kind: RelinkOutcome.Kind) -> [String: Any] {
         switch kind {
         case .relinked(let url): ["result": "relinked", "path": url.path]
@@ -78,6 +96,8 @@ extension AppModel {
             catch { return (inspection, ["path": workspace.path, "state": "unavailable", "message": error.localizedDescription]) }
         }.value
         guard let record = library.projects.first(where: { $0.id == id }) else { throw ControlFailure(code: "not_found", message: "The record is no longer in the library.") }
+        // The wait above may have let someone untick the record's location; nothing about it is reported then.
+        guard record.isPlanned || !hiddenLocations.contains(record.location.key) else { throw ControlFailure(code: "location_hidden", message: "Tick this project's location in the GUI first.") }
         var result = controlSummary(record)
         result["title"] = ProjectRename.fields(of: record)?.title ?? record.title
         result["campaign"] = record.campaign as Any? ?? NSNull(); result["editor"] = record.editor as Any? ?? NSNull()
@@ -159,7 +179,11 @@ extension AppModel {
         let templateID = payload?.id.uuidString
         let record: ProjectRecord = try await awaiting { done in create { done($0) } }
         try await durable()
+        // create() starts the tag write itself; asking again chains behind it and replaces it, so the folder is tagged
+        // once and the reply can say how it went.
+        let tag = await tagFolder(library.projects.first { $0.id == record.id } ?? record).value
         var result = try await controlReadBack(record.id)
+        result["finderTag"] = tag.rawValue
         result["template"] = templateID as Any? ?? NSNull()
         if record.ideaWorkspace != nil { result["workspaceReview"] = "The idea's old workspace is still linked. Use project workspace-detach or project workspace-bin." }
         return result
@@ -353,7 +377,8 @@ extension AppModel {
     }
     /// The project's folder for browsing: connected, ticked and still where the record says.
     func projectRoot(_ record: ProjectRecord) async throws -> URL {
-        guard !record.isPlanned else { throw ControlFailure(code: "invalid_params", message: "An idea has no project folder.") }
+        // An idea browses its owned workspace through the same validated resolver the GUI's Browse Workspace uses.
+        if record.isPlanned { return try await folderToShow(record) }
         guard mountedLocations.contains(record.location.key) else { throw ControlFailure(code: "unavailable", message: "Connect the project's drive first.") }
         do { return try await Task.detached { try ProjectBrowser.root(record) }.value }
         catch { throw ControlFailure(code: "unavailable", message: error.localizedDescription) }

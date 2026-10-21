@@ -372,7 +372,12 @@ extension AppModel {
             url = try projectFolderForAction(record)
         } else { url = try controlURL(params["path"] as! String, directory: true) }
         try requireIdle()
-        let report: CompatibilityReport = try await awaiting { done in scanCompatibility(url, onFinish: done) }
+        let report: CompatibilityReport
+        if dryRun {
+            // The same scan engine, without the progress and status a real scan publishes in the app.
+            do { report = try await Task.detached { try Compatibility.scan(url) }.value }
+            catch { throw ControlFailure(code: "action_failed", message: error.localizedDescription) }
+        } else { report = try await awaiting { done in scanCompatibility(url, onFinish: done) } }
         var reply = compatibilitySummary(report)
         guard let target = params["copyTo"] as? String else { return reply }
         guard report.canCopy else { throw ControlFailure(code: "cannot_copy", message: "This scan cannot make a corrected copy: it is incomplete or has name collisions.") }

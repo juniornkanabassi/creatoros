@@ -101,6 +101,8 @@ extension AppModel {
             let parameters = try JSONSerialization.data(withJSONObject: params.filter { $0.key != "show" }, options: [.sortedKeys])
             if let key, let cached = controlResults[key] {
                 guard cached.parameters == parameters else { throw ControlFailure(code: "invalid_params", message: "requestId was already used with different parameters; use a new requestId.") }
+                // A retry repeats nothing, but it must not reveal a project whose location has been unticked since.
+                if let refusal = cachedAccessRefusal(params, cached.result) { throw refusal }
                 return ["id": id, "ok": true, "result": cached.result]
             }
             if let key, controlPending.contains(key) { throw ControlFailure(code: "busy", message: "This request is still running; retry the same requestId.") }
@@ -109,6 +111,8 @@ extension AppModel {
             // Decided by what the action does, not by its name: opening a project can relink it, a corrected copy writes files.
             let mutating = command.mutates || (action == "compat.check" && params["copyTo"] != nil)
             if mutating {
+                // Every mutation, whatever handler it reaches, waits for a GUI operation in progress.
+                guard !busy else { throw ControlFailure(code: "busy", message: "Wait for the current operation.") }
                 guard !controlMutating else { throw ControlFailure(code: "busy", message: "Another control mutation is preparing or running.") }
                 controlMutating = true
                 controlOwner = params["requestId"] as? String
@@ -148,6 +152,8 @@ extension AppModel {
         if action == "project.list" {
             let query = params["search"] as? String
             let deep: Set<UUID> = params["deep"] as? Bool == true && (query?.count ?? 0) >= 3 ? await deepMatchIDs(query ?? "") : []
+            // Visibility is read again after the wait: a location unticked meanwhile must not leak into the answer.
+            let visible = library.projects.filter { $0.isPlanned || !hiddenLocations.contains($0.location.key) }
             let records = visible.filter { record in
                 (params["includeIdeas"] as? Bool == true || !record.isPlanned) &&
                 (params["format"] == nil || record.format == params["format"] as? String) &&
@@ -193,7 +199,7 @@ extension AppModel {
             return reply
         }
         if action == "project.reveal" {
-            let url = try projectFolderForAction(record)
+            let url = try await folderToShow(record)
             let config = NSWorkspace.OpenConfiguration(); config.activates = params["show"] as? Bool == true
             try await NSWorkspace.shared.open(url, configuration: config)
             return ["id": record.id.uuidString, "path": url.path]
