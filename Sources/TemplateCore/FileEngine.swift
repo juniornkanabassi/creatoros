@@ -150,6 +150,14 @@ public enum IconService {
         guard read == size else { throw AppFailure("Metadata changed while reading \(url.lastPathComponent). Retry the operation.") }
         return data
     }
+    /// Turns on a folder's custom-icon flag and nothing else, so its colour label and other Finder info survive a restore.
+    static func markCustomIcon(_ folder: URL) throws {
+        var info = try attribute("com.apple.FinderInfo", at: folder) ?? Data(count: 32)
+        guard info.count > 8 else { throw AppFailure("Unexpected Finder metadata on \(folder.lastPathComponent).") }
+        info[8] |= 0x04
+        let result = info.withUnsafeBytes { setxattr(folder.path, "com.apple.FinderInfo", $0.baseAddress, info.count, 0, XATTR_NOFOLLOW) }
+        guard result == 0 else { throw AppFailure("Unable to set the Finder icon flag on \(folder.lastPathComponent).") }
+    }
     public static func copyMetadata(from source: URL, to target: URL) throws {
         for name in attributes {
             if let data = try attribute(name, at: source) {
@@ -358,7 +366,7 @@ public extension IconService {
                 let values = try step.target.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey])
                 guard values.isRegularFile == true, values.isSymbolicLink != true else { throw AppFailure("Icon support must be an ordinary file.") }
                 try copyMetadata(from: step.icon, to: step.target)
-                try copyMetadata(from: step.templateFolder, to: step.folder)
+                try markCustomIcon(step.folder)
                 if step.inherited { report.inherited.append(step.label) } else { report.restored.append(step.label) }
             } catch {
                 if createdIcon { try? fm.removeItem(at: step.target) }

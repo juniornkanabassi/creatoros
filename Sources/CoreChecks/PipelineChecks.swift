@@ -275,6 +275,13 @@ func inheritedIconChecks(base: URL) throws {
     // A folder that already carries an icon (set by hand, or by an earlier restore) is still listed and re-applied, like an exact match.
     try check(again.inherited == preview.inherited && again.restored == preview.restored && again.failed.isEmpty && hasIcon("06 Media Revised"),
               "restoring twice re-applies an inherited icon a folder already has")
+    // Re-applying keeps the folder's other Finder info: give 06 Media Revised a colour label (byte 9, bits 1-3) and restore again.
+    let revised = project.appendingPathComponent("06 Media Revised")
+    var labelled = try IconService.attribute("com.apple.FinderInfo", at: revised) ?? Data(count: 32); labelled[9] |= 0x0C
+    _ = labelled.withUnsafeBytes { setxattr(revised.path, "com.apple.FinderInfo", $0.baseAddress, labelled.count, 0, XATTR_NOFOLLOW) }
+    _ = try IconService.restore(template: template, fields: fields, onto: project)
+    try check(((try IconService.attribute("com.apple.FinderInfo", at: revised))?[9] ?? 0) & 0x0C == 0x0C && hasIcon("06 Media Revised"),
+              "re-applying an inherited icon keeps the folder's colour label")
     let againPreview = try IconService.restorePreview(template: template, fields: fields, onto: project)
     try check(againPreview.inherited.contains("06 Media Revised"), "the dry run lists an already-iconed 06 Media Revised under inherited")
     let dry = try IconService.strip(project: project, dryRun: true)
