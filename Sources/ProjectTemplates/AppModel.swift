@@ -1292,6 +1292,11 @@ enum BadgeColour: String, CaseIterable, Identifiable {
             // The wait may have been long: look at the record, its location and the settings again just before writing.
             guard let current = self.library.projects.first(where: { $0.id == id }), let plan = self.tagPlan(current, replacing: old) else { return .skipped }
             guard (try? self.runtime.requireWritable(plan.url)) != nil else { return .failed }
+            // From this last check until the write is done the slot is held (joined, inside a command's own tag write), so a hide
+            // or a rename cannot slip in between the check and the write.
+            guard let owner = try? self.acquireWriter() else { return .skipped }
+            defer { self.releaseWriter(owner) }
+            await self.writePauseForTests?()
             let (stage, colour, known, url) = plan
             return await Task.detached(priority: .utility) {
                 guard (try? url.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true else { return TagOutcome.skipped }

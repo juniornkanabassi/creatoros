@@ -46,7 +46,7 @@ import TemplateCore
         model.extraValues = [:]; model.title = "Sheet completion"; model.fieldChanged()
         await model.refreshTask?.value
         let created: ProjectRecord = try await withCheckedThrowingContinuation { done in model.create { done.resume(with: $0) } }
-        while model.busy { await Task.yield() }
+        while model.busy { await Task.yield() }; for task in model.tagTasks.values { _ = await task.value }
         precondition(model.newProjectPresented && model.created?.path == created.path && !model.canCreate)
         precondition(model.title == "Sheet completion" && model.selectedProject == created.id)
         let saved = try Data(contentsOf: model.store.file)
@@ -61,7 +61,7 @@ import TemplateCore
             model.create { done.resume(with: $0) }
             model.newProjectPresented = true
         }
-        while model.busy { await Task.yield() }
+        while model.busy { await Task.yield() }; for task in model.tagTasks.values { _ = await task.value }
         precondition(model.created == nil && model.title.isEmpty && model.number == "004")
         print("PASS 1 sheet completion check: saved project remains visible; Next Project resets only the form; background creation still resets if a sheet opens during its copy")
         var idea = ProjectRecord(planned: "Promoted idea", format: "Short", stage: "Idea", campaign: "Kept")
@@ -71,7 +71,7 @@ import TemplateCore
         await model.refreshTask?.value
         precondition(model.startingFrom == idea.id && model.newProjectPresented)
         let promoted: ProjectRecord = try await withCheckedThrowingContinuation { done in model.create { done.resume(with: $0) } }
-        while model.busy { await Task.yield() }
+        while model.busy { await Task.yield() }; for task in model.tagTasks.values { _ = await task.value }
         precondition(model.newProjectPresented && model.created?.path == promoted.path && model.startingFrom == nil)
         precondition(promoted.id == idea.id && !promoted.isPlanned && promoted.notes == "Kept notes" && promoted.campaign == "Kept")
         precondition(model.library.projects.filter { $0.id == idea.id }.count == 1 && model.workspaceCleanup == nil)
@@ -79,7 +79,7 @@ import TemplateCore
         model.title = "After idea"; model.fieldChanged()
         await model.refreshTask?.value
         let ordinary: ProjectRecord = try await withCheckedThrowingContinuation { done in model.create { done.resume(with: $0) } }
-        while model.busy { await Task.yield() }
+        while model.busy { await Task.yield() }; for task in model.tagTasks.values { _ = await task.value }
         precondition(ordinary.id != idea.id && ordinary.campaign == nil && model.startingFrom == nil)
         precondition(model.library.projects.first { $0.id == idea.id }?.path == promoted.path)
         print("PASS 1 idea promotion check: kept-open sheet clears the idea link; identity and metadata kept; Next Project is ordinary creation")
@@ -352,6 +352,32 @@ import TemplateCore
         _ = try await model.renameStageCore("Pitch", to: "Idea", on: .recordings)
         precondition(model.library.stages(for: .recordings).contains("Idea") && model.writer == nil)
         print("PASS 1 single owner check: a second rename is refused while the first waits, and the slot is released afterwards")
+        // A tag write holds the slot from its last check until the write is done: a hide or a rename started meanwhile is refused.
+        let tagRec = model.library.projects.first { !$0.isPlanned }!
+        try model.modifyProject(tagRec.id) { $0.stage = "Writing" }
+        model.library.finderTags = true
+        model.mountedLocations.insert(tagRec.location.key)
+        let tagURL2 = URL(fileURLWithPath: tagRec.path)
+        try FinderTags.write([], to: tagURL2)
+        var midWrite: [String?] = []
+        model.writePauseForTests = {
+            await AppModel.$me.withValue(nil) {
+                for (action, params) in [("location.set", ["key": tagRec.location.key, "hidden": true] as [String: Any]), ("stage.rename", ["board": "recordings", "from": "Writing", "to": "Cutting"])] {
+                    let reply = await model.control(["id": "t", "action": action, "params": params])
+                    midWrite.append((reply["error"] as? [String: Any])?["code"] as? String)
+                }
+            }
+        }
+        let written = await model.tagFolder(model.library.projects.first { $0.id == tagRec.id }!).value
+        model.writePauseForTests = nil
+        precondition(written == .applied && midWrite == ["busy", "busy"] && !model.hiddenLocations.contains(tagRec.location.key), "a hide or rename ran during the tag write: \(written) \(midWrite)")
+        let namesAfterWrite = try FinderTags.read(tagURL2).map(\.name)
+        precondition(namesAfterWrite == ["Writing"] && model.writer == nil, "the tag or the slot is wrong after the write")
+        let after1 = await model.control(["id": "u", "action": "stage.rename", "params": ["board": "recordings", "from": "Writing", "to": "Cutting"]])
+        let namesAfterRename = try FinderTags.read(tagURL2).map(\.name)
+        precondition(after1["ok"] as? Bool == true && namesAfterRename == ["Cutting"], "the rename after the write did not retag: \(after1)")
+        _ = await model.control(["id": "v", "action": "stage.rename", "params": ["board": "recordings", "from": "Cutting", "to": "Writing"]])
+        print("PASS 1 tag write check: a hide or rename during a tag write is refused as busy, and a rename right after retags the folder")
         // Ambiguity messages name visible projects only; a hidden-only match is a refusal, not a list.
         func lookupCode(_ ref: String) -> (String?, String) {
             do { _ = try model.controlRecord(["project": ref]); return (nil, "") }
