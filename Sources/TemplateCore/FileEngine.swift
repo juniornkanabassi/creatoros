@@ -280,10 +280,6 @@ public extension IconService {
             guard let values = try? url.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey]) else { return false }
             return values.isDirectory == true && values.isSymbolicLink != true
         }
-        func hasCustomIcon(_ url: URL) -> Bool {
-            guard let info = try? attribute("com.apple.FinderInfo", at: url), info.count > 8 else { return false }
-            return info[8] & 0x04 != 0
-        }
         // The name after the numeric prefix: "03 Media" gives "media". "06 Media Revised" extends it.
         func plainName(_ name: String) -> String? {
             guard name.first?.isNumber == true else { return nil }
@@ -310,7 +306,7 @@ public extension IconService {
             let known = Set(plan.entries.filter { $0.directory && ($0.output as NSString).deletingLastPathComponent == parent }
                 .map { Naming.key(($0.output as NSString).lastPathComponent) })
             for sibling in siblings where isFolder(sibling) && !known.contains(Naming.key(sibling.lastPathComponent)) {
-                guard let extended = plainName(sibling.lastPathComponent), extended.hasPrefix(base + " "), !hasCustomIcon(sibling) else { continue }
+                guard let extended = plainName(sibling.lastPathComponent), extended.hasPrefix(base + " ") else { continue }
                 let source = payload.appendingPathComponent(entry.source)
                 let step = RestoreStep(icon: source, templateFolder: source.deletingLastPathComponent(), target: sibling.appendingPathComponent("Icon\r"), folder: sibling,
                                        label: (parent.isEmpty ? "" : parent + "/") + sibling.lastPathComponent, inherited: true)
