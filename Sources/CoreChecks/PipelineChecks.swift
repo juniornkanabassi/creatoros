@@ -272,7 +272,18 @@ func inheritedIconChecks(base: URL) throws {
               "inheriting an icon touches no file and creates no folder")
     try check(report.summary.contains("2 more folders inherited"), "restore summary mentions inherited folders")
     let again = try IconService.restore(template: template, fields: fields, onto: project)
-    try check(again.inherited.isEmpty && again.restored == preview.restored, "restoring twice leaves an inherited icon alone")
+    // A folder that already carries an icon (set by hand, or by an earlier restore) is still listed and re-applied, like an exact match.
+    try check(again.inherited == preview.inherited && again.restored == preview.restored && again.failed.isEmpty && hasIcon("06 Media Revised"),
+              "restoring twice re-applies an inherited icon a folder already has")
+    // Re-applying keeps the folder's other Finder info: give 06 Media Revised a colour label (byte 9, bits 1-3) and restore again.
+    let revised = project.appendingPathComponent("06 Media Revised")
+    var labelled = try IconService.attribute("com.apple.FinderInfo", at: revised) ?? Data(count: 32); labelled[9] |= 0x0C
+    _ = labelled.withUnsafeBytes { setxattr(revised.path, "com.apple.FinderInfo", $0.baseAddress, labelled.count, 0, XATTR_NOFOLLOW) }
+    _ = try IconService.restore(template: template, fields: fields, onto: project)
+    try check(((try IconService.attribute("com.apple.FinderInfo", at: revised))?[9] ?? 0) & 0x0C == 0x0C && hasIcon("06 Media Revised"),
+              "re-applying an inherited icon keeps the folder's colour label")
+    let againPreview = try IconService.restorePreview(template: template, fields: fields, onto: project)
+    try check(againPreview.inherited.contains("06 Media Revised"), "the dry run lists an already-iconed 06 Media Revised under inherited")
     let dry = try IconService.strip(project: project, dryRun: true)
     try check(dry.iconFilesRemoved.count == 4 && hasIcon("06 Media Revised"), "strip dry run lists the icon files and removes none")
     let stripped = try IconService.strip(project: project)
@@ -290,7 +301,7 @@ func inheritedIconChecks(base: URL) throws {
     try fm.createDirectory(at: project.appendingPathComponent("04 Media"), withIntermediateDirectories: true)
     try fm.createDirectory(at: project.appendingPathComponent("09 Media Final"), withIntermediateDirectories: true)
     let tie = try IconService.restorePreview(template: template, fields: fields, onto: project)
-    try check(tie.ambiguous == ["09 Media Final"] && !tie.inherited.contains("09 Media Final") && !tie.inherited.contains("06 Media Revised") && tie.restored.contains("04 Media"),
+    try check(tie.ambiguous == ["06 Media Revised", "09 Media Final"] && !tie.inherited.contains("09 Media Final") && !tie.inherited.contains("06 Media Revised") && tie.restored.contains("04 Media"),
               "a folder extending two equally long template names is reported as ambiguous and skipped")
     // The numbered-prefix conflict rule is unchanged: a different spelling under the template's own prefix still blocks restore.
     try fm.removeItem(at: project.appendingPathComponent("04 Media"))

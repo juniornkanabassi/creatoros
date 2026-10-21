@@ -150,6 +150,14 @@ public enum IconService {
         guard read == size else { throw AppFailure("Metadata changed while reading \(url.lastPathComponent). Retry the operation.") }
         return data
     }
+    /// Turns on a folder's custom-icon flag and nothing else, so its colour label and other Finder info survive a restore.
+    static func markCustomIcon(_ folder: URL) throws {
+        var info = try attribute("com.apple.FinderInfo", at: folder) ?? Data(count: 32)
+        guard info.count > 8 else { throw AppFailure("Unexpected Finder metadata on \(folder.lastPathComponent).") }
+        info[8] |= 0x04
+        let result = info.withUnsafeBytes { setxattr(folder.path, "com.apple.FinderInfo", $0.baseAddress, info.count, 0, XATTR_NOFOLLOW) }
+        guard result == 0 else { throw AppFailure("Unable to set the Finder icon flag on \(folder.lastPathComponent).") }
+    }
     public static func copyMetadata(from source: URL, to target: URL) throws {
         for name in attributes {
             if let data = try attribute(name, at: source) {
@@ -280,10 +288,6 @@ public extension IconService {
             guard let values = try? url.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey]) else { return false }
             return values.isDirectory == true && values.isSymbolicLink != true
         }
-        func hasCustomIcon(_ url: URL) -> Bool {
-            guard let info = try? attribute("com.apple.FinderInfo", at: url), info.count > 8 else { return false }
-            return info[8] & 0x04 != 0
-        }
         // The name after the numeric prefix: "03 Media" gives "media". "06 Media Revised" extends it.
         func plainName(_ name: String) -> String? {
             guard name.first?.isNumber == true else { return nil }
@@ -310,7 +314,7 @@ public extension IconService {
             let known = Set(plan.entries.filter { $0.directory && ($0.output as NSString).deletingLastPathComponent == parent }
                 .map { Naming.key(($0.output as NSString).lastPathComponent) })
             for sibling in siblings where isFolder(sibling) && !known.contains(Naming.key(sibling.lastPathComponent)) {
-                guard let extended = plainName(sibling.lastPathComponent), extended.hasPrefix(base + " "), !hasCustomIcon(sibling) else { continue }
+                guard let extended = plainName(sibling.lastPathComponent), extended.hasPrefix(base + " ") else { continue }
                 let source = payload.appendingPathComponent(entry.source)
                 let step = RestoreStep(icon: source, templateFolder: source.deletingLastPathComponent(), target: sibling.appendingPathComponent("Icon\r"), folder: sibling,
                                        label: (parent.isEmpty ? "" : parent + "/") + sibling.lastPathComponent, inherited: true)
@@ -362,7 +366,7 @@ public extension IconService {
                 let values = try step.target.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey])
                 guard values.isRegularFile == true, values.isSymbolicLink != true else { throw AppFailure("Icon support must be an ordinary file.") }
                 try copyMetadata(from: step.icon, to: step.target)
-                try copyMetadata(from: step.templateFolder, to: step.folder)
+                try markCustomIcon(step.folder)
                 if step.inherited { report.inherited.append(step.label) } else { report.restored.append(step.label) }
             } catch {
                 if createdIcon { try? fm.removeItem(at: step.target) }
