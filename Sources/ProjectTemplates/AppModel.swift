@@ -1152,18 +1152,28 @@ enum BadgeColour: String, CaseIterable, Identifiable {
     /// and only when the drive is connected and ticked; nothing is hydrated or searched. Writes for one folder run one after
     /// another and a newer stage change replaces an older one still waiting, so rapid changes cannot finish out of order.
     /// Failures are silent in the GUI because the record is already saved; control callers read the outcome.
+    /// What a tag write would do for this record right now, or nil when it should be skipped (tags off, an idea, an unknown
+    /// stage, an unticked or disconnected location).
+    private func tagPlan(_ record: ProjectRecord) -> (stage: String, colour: StageColour, known: [String], url: URL)? {
+        guard library.finderTagsEnabled, !record.isPlanned, let stage = record.stage, library.allStages.contains(stage),
+              !hiddenLocations.contains(record.location.key), record.location.isMounted else { return nil }
+        return (stage, library.colour(of: stage), library.allStages, URL(fileURLWithPath: record.path))
+    }
     @discardableResult
     func tagFolder(_ record: ProjectRecord) -> Task<TagOutcome, Never> {
-        guard library.finderTagsEnabled, !record.isPlanned, let stage = record.stage, library.allStages.contains(stage),
-              !hiddenLocations.contains(record.location.key), record.location.isMounted else { return Task { .skipped } }
-        guard (try? runtime.requireWritable(URL(fileURLWithPath: record.path))) != nil else { return Task { .failed } }
-        let colour = library.colour(of: stage), known = library.allStages, url = URL(fileURLWithPath: record.path), id = record.id
+        guard let first = tagPlan(record) else { return Task { .skipped } }
+        guard (try? runtime.requireWritable(first.url)) != nil else { return Task { .failed } }
+        let id = record.id
         let generation = (tagGeneration[id] ?? 0) + 1
         tagGeneration[id] = generation
         let previous = tagTasks[id]
         let task = Task { @MainActor () -> TagOutcome in
             _ = await previous?.value
             guard self.tagGeneration[id] == generation else { return .skipped }
+            // The wait may have been long: look at the record, its location and the settings again just before writing.
+            guard let current = self.library.projects.first(where: { $0.id == id }), let plan = self.tagPlan(current) else { return .skipped }
+            guard (try? self.runtime.requireWritable(plan.url)) != nil else { return .failed }
+            let (stage, colour, known, url) = plan
             return await Task.detached(priority: .utility) {
                 guard (try? url.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true else { return TagOutcome.skipped }
                 do { _ = try FinderTags.apply(stage: stage, colour: colour, knownStages: known, to: url); return .applied } catch { return .failed }

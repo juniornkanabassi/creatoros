@@ -8,6 +8,12 @@ extension AppModel {
     // MARK: Shared helpers
 
     /// Runs an AppModel core whose AppFailure means "the caller asked for something invalid".
+    /// The location a record lives in for visibility: its folder for a project, its owned workspace for an idea that has one.
+    /// An idea with no workspace has no location. An unticked location is never read, so nothing about such a record is shown.
+    func controlHidden(_ record: ProjectRecord) -> Bool {
+        let path = record.isPlanned ? record.ideaWorkspace?.path : record.path
+        return path.map { hiddenLocations.contains(ProjectLocation(path: $0).key) } ?? false
+    }
     func asInvalid<T>(_ work: () throws -> T) throws -> T {
         do { return try work() } catch let failure as AppFailure { throw ControlFailure(code: "invalid_params", message: failure.localizedDescription) }
     }
@@ -51,7 +57,7 @@ extension AppModel {
     func cachedAccessRefusal(_ params: [String: Any], _ result: [String: Any]) -> ControlFailure? {
         let refusal = ControlFailure(code: "location_hidden", message: "Tick this project's location in the GUI first.")
         if let text = result["id"] as? String, let id = UUID(uuidString: text),
-           let record = library.projects.first(where: { $0.id == id }), !record.isPlanned, hiddenLocations.contains(record.location.key) { return refusal }
+           let record = library.projects.first(where: { $0.id == id }), controlHidden(record) { return refusal }
         for key in ["path", "destination", "copyTo", "root"] {
             if let path = params[key] as? String, path.hasPrefix("/"), hiddenLocations.contains(ProjectLocation(path: path).key) { return refusal }
         }
@@ -59,9 +65,14 @@ extension AppModel {
     }
     /// The folder to show or browse for a record: the project folder, or an idea's owned workspace.
     func folderToShow(_ record: ProjectRecord) async throws -> URL {
+        let refusal = ControlFailure(code: "location_hidden", message: "Tick this idea's workspace location in the GUI first.")
         if record.isPlanned {
             guard record.ideaWorkspace != nil else { throw ControlFailure(code: "invalid_params", message: "This idea has no workspace folder yet. Use idea create-workspace.") }
-            return try await asInvalidAsync { try await Task.detached { try IdeaWorkspaceEngine.resolve(for: record) }.value }
+            guard !controlHidden(record) else { throw refusal }
+            let url = try await asInvalidAsync { try await Task.detached { try IdeaWorkspaceEngine.resolve(for: record) }.value }
+            // Hidden meanwhile? Then the answer is withheld.
+            guard !(library.projects.first(where: { $0.id == record.id }).map(controlHidden) ?? true) else { throw refusal }
+            return url
         }
         return try projectFolderForAction(record)
     }
@@ -97,7 +108,7 @@ extension AppModel {
         }.value
         guard let record = library.projects.first(where: { $0.id == id }) else { throw ControlFailure(code: "not_found", message: "The record is no longer in the library.") }
         // The wait above may have let someone untick the record's location; nothing about it is reported then.
-        guard record.isPlanned || !hiddenLocations.contains(record.location.key) else { throw ControlFailure(code: "location_hidden", message: "Tick this project's location in the GUI first.") }
+        guard !controlHidden(record) else { throw ControlFailure(code: "location_hidden", message: "Tick this project's location in the GUI first.") }
         var result = controlSummary(record)
         result["title"] = ProjectRename.fields(of: record)?.title ?? record.title
         result["campaign"] = record.campaign as Any? ?? NSNull(); result["editor"] = record.editor as Any? ?? NSNull()
@@ -208,6 +219,8 @@ extension AppModel {
                 // Selecting checks the folder and may relink it, as it does for a click; wait for that so the reply is final.
                 await inspect(record, findMoved: true)
             }
+            // Selecting can relink the project; the new path is on disk before the reply says so.
+            try await durable()
             var reply = try await controlReadBack(record.id)
             reply["selected"] = true; reply["page"] = self.page.rawValue
             return reply
@@ -331,7 +344,7 @@ extension AppModel {
         case "project.open-premiere":
             let root = try await projectRoot(record)
             if let file = params["file"] as? String {
-                let url = try await asInvalidAsync { try await Self.openDocument(root: root, relative: file, expecting: "prproj") }
+                let url = try await asInvalidAsync { try await Self.openDocument(root: root, relative: file, expecting: "prproj", activates: params["show"] as? Bool == true) }
                 return ["id": record.id.uuidString, "opened": url.path]
             }
             let files = try await Task.detached { try ProjectBrowser.premiereFiles(root: root) }.value

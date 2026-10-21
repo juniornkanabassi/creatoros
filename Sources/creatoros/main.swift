@@ -12,7 +12,8 @@ let version: String = {
 func help() {
     print("""
     creatoros \(version) — local CreatorOS control (exit 0 success, 1 action/transport error, 2 usage)
-    Global flags anywhere: --json, --show (activate only when requested), --data-directory PATH, --version, --help
+    Global flags anywhere: --json, --show, --data-directory PATH, --version, --help
+    --show brings the app, Finder or the opened document forward; commands that show nothing ignore it. Without it nothing is activated.
     Every true/false flag also accepts --no-<flag> to send false (for example --no-enabled, --no-plain-folders).
     Arrays take a JSON array text (--stages '["A","B"]'); objects take JSON (--extra '{"Sponsor":"X"}').
     Data root: explicit flag, CREATOROS_DATA_DIRECTORY, then the stable app library.
@@ -95,7 +96,8 @@ do {
         guard let positional = command.positional, rest.count == 1, flags[positional] == nil else { throw fail("usage", "Unexpected or duplicate argument. \(action) takes \(command.positional.map { "one <\($0)>" } ?? "no bare words").") }
         flags[positional] = rest[0]
     }
-    if show { flags["show"] = true }
+    // --show is global: commands that cannot show anything simply ignore it.
+    if show, command.booleans.contains("show") { flags["show"] = true }
     do { try command.validate(flags) } catch { throw fail("usage", error.localizedDescription) }
     let root: URL
     if let dataDirectory {

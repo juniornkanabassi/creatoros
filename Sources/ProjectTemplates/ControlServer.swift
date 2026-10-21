@@ -136,7 +136,7 @@ extension AppModel {
         guard !matches.isEmpty else { throw ControlFailure(code: "not_found", message: "No project matches \(ref).") }
         guard matches.count == 1 else { throw ControlFailure(code: "ambiguous_project", message: "Use a UUID or --format: " + matches.prefix(5).map { "\($0.number ?? "") \($0.format) \($0.name)" }.joined(separator: "; ")) }
         let record = matches[0]
-        guard record.isPlanned || !hiddenLocations.contains(record.location.key) else { throw ControlFailure(code: "location_hidden", message: "Tick this project's location in the GUI first.") }
+        guard !controlHidden(record) else { throw ControlFailure(code: "location_hidden", message: "Tick this project's location in the GUI first.") }
         return record
     }
     func controlSummary(_ record: ProjectRecord) -> [String: Any] {
@@ -147,13 +147,13 @@ extension AppModel {
     func controlAction(_ action: String, _ params: [String: Any]) async throws -> [String: Any] {
         if action == "status" { return ["app": AppInfo.name, "version": AppInfo.version, "channel": AppInfo.channel, "pid": getpid(), "dataRoot": runtime.root.path, "isolated": runtime.isIsolated, "storeUsable": storeUsable, "busy": busy || controlMutating, "statusText": status, "page": page.rawValue, "selectedProject": selectedRecord.map { ["id": $0.id.uuidString, "name": $0.name] } as Any? ?? NSNull(), "newProjectSheetOpen": newProjectPresented, "renameSheetOpen": renamePrompt != nil, "socket": runtime.root.appendingPathComponent("control.sock").path] }
         guard storeUsable else { throw ControlFailure(code: "store_unavailable", message: "Resolve the library error in the GUI first.") }
-        let visible = library.projects.filter { $0.isPlanned || !hiddenLocations.contains($0.location.key) }
+        let visible = library.projects.filter { !controlHidden($0) }
         if action == "library.stats" { return ["schema": Library.currentSchema, "projects": visible.filter { !$0.isPlanned }.count, "ideas": visible.filter(\.isPlanned).count, "byFormat": Dictionary(grouping: visible, by: \.format).mapValues(\.count), "byStage": Dictionary(grouping: visible, by: { effectiveStage($0) }).mapValues(\.count), "templates": library.templates.count, "sets": library.sets.count, "locations": distinctLocations.count, "hiddenLocations": hiddenLocations.sorted()] }
         if action == "project.list" {
             let query = params["search"] as? String
             let deep: Set<UUID> = params["deep"] as? Bool == true && (query?.count ?? 0) >= 3 ? await deepMatchIDs(query ?? "") : []
             // Visibility is read again after the wait: a location unticked meanwhile must not leak into the answer.
-            let visible = library.projects.filter { $0.isPlanned || !hiddenLocations.contains($0.location.key) }
+            let visible = library.projects.filter { !controlHidden($0) }
             let records = visible.filter { record in
                 (params["includeIdeas"] as? Bool == true || !record.isPlanned) &&
                 (params["format"] == nil || record.format == params["format"] as? String) &&

@@ -155,6 +155,21 @@ import TemplateCore
         let leaked = (listed["result"] as? [String: Any])?["total"] as? Int
         precondition(leaked == 0, "a hidden location leaked \(String(describing: leaked)) projects into a deep search")
         print("PASS 1 deep search check: visibility is read again after the wait")
+        // A tag queued behind a slow one is not written if its location is hidden while it waits.
+        let tagged = model.library.projects.first { !$0.isPlanned }!
+        let tagURL = URL(fileURLWithPath: tagged.path)
+        try FinderTags.write([], to: tagURL)
+        model.library.finderTags = true
+        if model.library.projects.first(where: { $0.id == tagged.id })?.stage == nil { try model.modifyProject(tagged.id) { $0.stage = "Writing" } }
+        let slow = Task<TagOutcome, Never> { try? await Task.sleep(for: .milliseconds(300)); return .applied }
+        model.tagTasks[tagged.id] = slow
+        let queued = model.tagFolder(model.library.projects.first { $0.id == tagged.id }!)
+        model.hiddenLocations.insert(tagged.location.key)
+        let queuedOutcome = await queued.value
+        model.hiddenLocations.remove(tagged.location.key)
+        let leftTags = try FinderTags.read(tagURL)
+        precondition(queuedOutcome == .skipped && leftTags.isEmpty, "queued tag wrote after its location was hidden: \(queuedOutcome) \(leftTags)")
+        print("PASS 1 queued tag check: visibility and settings are checked again after the queue wait, immediately before writing")
         // A dry-run compatibility check leaves the app's status text alone.
         let compatRoot = model.runtime.root.appendingPathComponent("CompatDry")
         try FileManager.default.createDirectory(at: compatRoot.appendingPathComponent("Out"), withIntermediateDirectories: true)

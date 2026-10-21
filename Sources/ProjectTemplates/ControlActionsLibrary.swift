@@ -29,7 +29,7 @@ extension AppModel {
     }
     /// Records the GUI would show on a board if no filter were set, leaving out those on unticked locations.
     func boardRecords(_ kind: PipelineKind) -> [ProjectRecord] {
-        library.projects.filter { kind.includes(format: $0.format) && ($0.isPlanned || !hiddenLocations.contains($0.location.key)) }
+        library.projects.filter { kind.includes(format: $0.format) && !controlHidden($0) }
     }
     func templateSummary(_ record: TemplateRecord) -> [String: Any] {
         ["id": record.id.uuidString, "name": record.name, "mode": record.mode.rawValue, "source": record.source, "payload": store.payload(record).path,
