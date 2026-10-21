@@ -170,6 +170,34 @@ import TemplateCore
         let leftTags = try FinderTags.read(tagURL)
         precondition(queuedOutcome == .skipped && leftTags.isEmpty, "queued tag wrote after its location was hidden: \(queuedOutcome) \(leftTags)")
         print("PASS 1 queued tag check: visibility and settings are checked again after the queue wait, immediately before writing")
+        // A listing that waits is not answered once its location is hidden meanwhile, whichever handler produced it.
+        model.mountedLocations.insert(target.location.key)
+        model.controlPauseForTests = { model.hiddenLocations.insert(target.location.key) }
+        let racing = await model.control(["id": "f", "action": "project.files", "params": ["project": target.id.uuidString]])
+        model.controlPauseForTests = nil
+        model.hiddenLocations.remove(target.location.key)
+        let racingCode = (racing["error"] as? [String: Any])?["code"] as? String
+        precondition(racingCode == "location_hidden", "a listing that waited answered after its location was hidden: \(racing)")
+        print("PASS 1 delayed listing check: the answer is withheld when the location is hidden during the wait")
+        // While a New Project, rename or start-from-idea form is open, nothing it is built from may change under it.
+        let beforeForm = try Data(contentsOf: model.store.file)
+        let guarded: [(String, [String: Any])] = [("set.unassign", ["set": "x", "format": "Short"]), ("set.assign", ["set": "x", "format": "Short", "template": "x"]),
+            ("set.rename", ["set": "x", "name": "y"]), ("set.remove", ["set": "x"]), ("set.create", ["name": "y"]), ("template.remove", ["template": "x"]),
+            ("template.import", ["path": "/x", "name": "y", "mode": "full"]), ("field.add", ["name": "y"]), ("field.update", ["field": "x", "name": "y"]),
+            ("field.remove", ["field": "x"]), ("stage.set", ["board": "recordings", "stages": ["A", "B"]]), ("format.set-icon", ["format": "Short", "image": "/x"]),
+            ("format.set-destination", ["format": "Long", "path": "/x"])]
+        for opener in [{ model.newProjectPresented = true }, { model.importPresented = true }, { model.renamePrompt = target }, { model.startingFrom = UUID() }] as [() -> Void] {
+            opener()
+            for (action, params) in guarded { await expect(action, params, "form_in_use") }
+            model.newProjectPresented = false; model.importPresented = false; model.renamePrompt = nil; model.startingFrom = nil
+        }
+        model.newProjectPresented = true
+        let dryRefusal = await refusal("set.remove", ["set": "x", "dryRun": true])
+        precondition(dryRefusal != "form_in_use", "a dry run was refused by an open form")
+        model.newProjectPresented = false
+        let formUnchanged = try Data(contentsOf: model.store.file) == beforeForm
+        precondition(formUnchanged)
+        print("PASS 1 open form check: set, template, field, format and stage-list changes are refused with form_in_use while a form is open, dry runs are not")
         // A dry-run compatibility check leaves the app's status text alone.
         let compatRoot = model.runtime.root.appendingPathComponent("CompatDry")
         try FileManager.default.createDirectory(at: compatRoot.appendingPathComponent("Out"), withIntermediateDirectories: true)

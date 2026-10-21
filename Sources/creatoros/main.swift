@@ -12,7 +12,7 @@ let version: String = {
 func help() {
     print("""
     creatoros \(version) — local CreatorOS control (exit 0 success, 1 action/transport error, 2 usage)
-    Global flags anywhere: --json, --show, --data-directory PATH, --version, --help
+    Global flags anywhere: --json, --show / --no-show, --data-directory PATH, --version, --help
     --show brings the app, Finder or the opened document forward; commands that show nothing ignore it. Without it nothing is activated.
     Every true/false flag also accepts --no-<flag> to send false (for example --no-enabled, --no-plain-folders).
     Arrays take a JSON array text (--stages '["A","B"]'); objects take JSON (--extra '{"Sponsor":"X"}').
@@ -50,7 +50,7 @@ do {
     if args.isEmpty || args.contains("--help") || args.first == "help" { help(); exit(0) }
     var words: [String] = [], flags: [String: Any] = [:]
     var dataDirectory = ProcessInfo.processInfo.environment["CREATOROS_DATA_DIRECTORY"]
-    var show = false, index = 0
+    var show = false, sawShow = false, index = 0
     let commands = ControlCommand.all
     let booleanFlags = Set(commands.flatMap(\.booleans).map(flag))
     let integerFlags = Set(commands.flatMap(\.integers).map(flag))
@@ -59,7 +59,7 @@ do {
     while index < args.count {
         let arg = args[index]; index += 1
         if arg == "--json" { continue }
-        if arg == "--show" { show = true; continue }
+        if arg == "--show" || arg == "--no-show" { show = arg == "--show"; sawShow = true; continue }
         if arg.hasPrefix("--") {
             var name = String(arg.dropFirst(2))
             var inline: String?
@@ -85,7 +85,7 @@ do {
         } else { words.append(arg) }
     }
     if words == ["mcp-manifest"] {
-        guard flags.isEmpty, !show else { throw fail("usage", "mcp-manifest accepts only global output/data flags.") }
+        guard flags.isEmpty, !sawShow else { throw fail("usage", "mcp-manifest accepts only global output/data flags.") }
         print(json(["version": version, "tools": commands.map(\.manifest)])); exit(0)
     }
     let action = words.first == "status" ? "status" : words.prefix(2).joined(separator: ".")
@@ -97,7 +97,7 @@ do {
         flags[positional] = rest[0]
     }
     // --show is global: commands that cannot show anything simply ignore it.
-    if show, command.booleans.contains("show") { flags["show"] = true }
+    if sawShow, command.booleans.contains("show") { flags["show"] = show }
     do { try command.validate(flags) } catch { throw fail("usage", error.localizedDescription) }
     let root: URL
     if let dataDirectory {
@@ -115,16 +115,31 @@ do {
     }
     if connection == nil && action == "status" { print(wantsJSON ? json(["running": false]) : "CreatorOS is not running."); exit(0) }
     if connection == nil {
-        let launch = Process(); launch.executableURL = URL(fileURLWithPath: "/usr/bin/open")
         let executable = Bundle.main.executableURL!.resolvingSymlinksInPath()
         let bundle = executable.deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
-        var launchArgs = ["-g", "-n"]
-        launchArgs += bundle.pathExtension == "app" ? ["-a", bundle.path] : ["-b", "local.projecttemplates.mac"]
-        launchArgs += ["--args", "--background"]
-        if dataDirectory != nil { launchArgs += ["--data-directory", root.path] }
-        launch.arguments = launchArgs
-        launch.standardOutput = FileHandle.nullDevice; launch.standardError = FileHandle.nullDevice
-        try launch.run(); launch.waitUntilExit()
+        let launch = Process()
+        launch.standardInput = FileHandle.nullDevice; launch.standardOutput = FileHandle.nullDevice; launch.standardError = FileHandle.nullDevice
+        var viaOpen = true
+        if bundle.pathExtension == "app" {
+            launch.executableURL = URL(fileURLWithPath: "/usr/bin/open")
+            launch.arguments = ["-g", "-n", "-a", bundle.path, "--args", "--background"] + (dataDirectory != nil ? ["--data-directory", root.path] : [])
+        } else {
+            // Not inside an app: this CLI came from a build folder. Start the ProjectTemplates beside it, never the installed app,
+            // which may be an older release that does not know these commands.
+            let sibling = executable.deletingLastPathComponent().appendingPathComponent("ProjectTemplates")
+            if FileManager.default.isExecutableFile(atPath: sibling.path) {
+                viaOpen = false
+                launch.executableURL = sibling
+                launch.arguments = ["--background"] + (dataDirectory != nil ? ["--data-directory", root.path] : [])
+            } else if dataDirectory != nil {
+                throw fail("no_app", "No ProjectTemplates executable sits beside this creatoros, so it cannot start a test instance. Build it (swift build) or run creatoros from inside CreatorOS.app.", 1)
+            } else {
+                launch.executableURL = URL(fileURLWithPath: "/usr/bin/open")
+                launch.arguments = ["-g", "-n", "-b", "local.projecttemplates.mac", "--args", "--background"]
+            }
+        }
+        try launch.run()
+        if viaOpen { launch.waitUntilExit() }
         let deadline = Date().addingTimeInterval(10)
         while connection == nil && Date() < deadline { Thread.sleep(forTimeInterval: 0.1); connection = connectSocket(path) }
     }

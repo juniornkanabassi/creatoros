@@ -478,6 +478,7 @@ try:
     check(error('project', 'files', iconic['id'], '--path', '../etc')['code'] == 'invalid_params', 'project files refuses a path that leaves the project')
     check(error('project', 'open-file', iconic['id'], '--path', '01 Documents/missing.md')['code'] in ('invalid_params', 'action_failed', 'not_found'), 'project open-file validates the path')
     check(error('project', 'open-file', iconic['id'], '--path', '01 Documents/missing.md', '--show')['code'] != 'usage' and command('stage', 'list', '--show')['boards'], '--show is accepted globally: declared where something opens, ignored elsewhere')
+    check(command('stage', 'list', '--no-show')['boards'] and command('status', '--no-show')['pid'] == pid, '--no-show is accepted globally and ignored where nothing shows')
     check(by_name['project_open_file']['inputSchema']['properties']['show']['type'] == 'boolean' and by_name['project_open_premiere']['inputSchema']['properties']['show']['type'] == 'boolean', 'open-file and open-premiere declare show in their MCP schema')
     candidates = command('project', 'open-premiere', iconic['id'])
     check(candidates['candidates'] == ['02 Project Files/cut.prproj'], 'project open-premiere returns the candidates')
@@ -691,6 +692,22 @@ try:
     finally:
         (root / 'library.json').rmdir(); (root / 'library.json').write_bytes(saved_library)
     check(len(instances.pids(root)) == 1, 'still exactly one test instance after the whole run')
+    if app.suffix != '.app':
+        # A bare CLI (not inside an app) starts the ProjectTemplates beside it, never the installed app. One instance at a time:
+        # the main test instance goes first.
+        proc.terminate(); proc.wait(timeout=10)
+        check(not instances.pids(root), 'the main test instance has quit before the cold-start checks')
+        cold = pathlib.Path(tempfile.mkdtemp(prefix='cos-ai-cold-', dir='/private/tmp')); roots.append(cold)
+        started = subprocess.run([str(cli), 'library', 'stats', '--json', '--data-directory', str(cold)], capture_output=True, text=True, timeout=60)
+        alive = instances.pids(cold)
+        started_from = subprocess.run(['/bin/ps', '-o', 'args=', '-p', str(alive[0])], capture_output=True, text=True).stdout.strip() if alive else ''
+        check(started.returncode == 0 and 'templates' in json.loads(started.stdout) and len(alive) == 1 and os.path.realpath(started_from.split(' ')[0]) == os.path.realpath(str(exe)), 'a bare CLI cold-start launches the ProjectTemplates beside it')
+        instances.quit_all(cold)
+        check(not instances.pids(cold), 'the cold-started instance is gone and nothing is left behind')
+        lone = pathlib.Path(tempfile.mkdtemp(prefix='cos-ai-lone-', dir='/private/tmp')); roots.append(lone)
+        shutil.copy(cli, lone / 'creatoros')
+        refused = subprocess.run([str(lone / 'creatoros'), 'library', 'stats', '--json', '--data-directory', str(lone)], capture_output=True, text=True, timeout=60)
+        check(refused.returncode == 1 and json.loads(refused.stdout)['error']['code'] == 'no_app' and not instances.pids(lone), 'a bare CLI with no sibling app and a data directory refuses with an actionable error and launches nothing')
     result_line = ('RESULT', checks + 1, 'AI control checks passed; fixture', root)
 finally:
     # Quit what this run launched, wait for it to exit, then sweep anything left on its own data directories.

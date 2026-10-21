@@ -398,6 +398,7 @@ extension AppModel {
     }
     /// One bounded folder listing, the same engine the file browser uses.
     func listFolder(root: URL, relative: String, params: [String: Any]) async throws -> [String: Any] {
+        await controlPauseForTests?()
         let items: [BrowserItem]
         do { items = try await Task.detached { try ProjectBrowser.list(root: root, relative: relative) }.value }
         catch { throw ControlFailure(code: "invalid_params", message: error.localizedDescription) }

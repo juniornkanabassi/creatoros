@@ -119,6 +119,12 @@ extension AppModel {
             }
             defer { if mutating { controlMutating = false; controlOwner = nil } }
             let result = try await controlAction(action, params)
+            // A read that waited must not answer for a project or path whose location was unticked meanwhile, whichever
+            // handler produced it. Mutations hold the lock above, and location changes are mutations, so they cannot overlap.
+            if !mutating {
+                if params["project"] != nil { _ = try controlRecord(params) }
+                if let refusal = cachedAccessRefusal(params, result) { throw refusal }
+            }
             if let key { controlResults[key] = (parameters, result) }
             if params["show"] as? Bool == true, action != "project.reveal" { NSApp.activate(ignoringOtherApps: true) }
             return ["id": id, "ok": true, "result": result]

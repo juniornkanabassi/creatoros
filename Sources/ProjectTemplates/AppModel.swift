@@ -185,6 +185,8 @@ enum BadgeColour: String, CaseIterable, Identifiable {
     var controlMutating = false
     /// The request id of the control mutation that is running now, so app.cancel only stops the operation its caller started.
     var controlOwner: String?
+    /// Test hook: awaited inside slow control reads so a check can change the world while one waits.
+    var controlPauseForTests: (() async -> Void)?
     var tagTasks: [UUID: Task<TagOutcome, Never>] = [:]
     var tagGeneration: [UUID: Int] = [:]
     @Published var restoreIconsPrompt: ProjectRecord?

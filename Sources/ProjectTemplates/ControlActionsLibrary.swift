@@ -62,6 +62,12 @@ extension AppModel {
     /// Returns nil for an action that starts from a project reference; the caller looks that up and goes on.
     func controlGlobal(_ action: String, _ params: [String: Any]) async throws -> [String: Any]? {
         let dryRun = params["dryRun"] as? Bool == true
+        // Anything that can change what an open New Project, import or rename form is built from waits until it is closed.
+        let changesFormSources: Set<String> = ["stage.set", "field.add", "field.update", "field.remove", "format.set-destination", "format.set-icon",
+                                              "template.import", "template.remove", "set.create", "set.rename", "set.assign", "set.unassign", "set.remove"]
+        if changesFormSources.contains(action), !dryRun {
+            try requireNoSheet(newProjectPresented || importPresented || renamePrompt != nil || startingFrom != nil, "project form, rename or import window")
+        }
         switch action {
         // Ideas
         case "idea.add":
