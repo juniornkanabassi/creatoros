@@ -14,7 +14,13 @@ actor DeepSearch {
     func checkedDocumentCount(_ path: String) -> Int { text(of: path).count }
 #endif
 
+    /// ponytail: the cache holds at most 32 MB of text and is cleared when full; a smarter policy if searches get slow.
+    private static let cacheLimit = 32 * 1024 * 1024
+    private var cachedBytes = 0
     func matches(for query: String, in candidates: [Candidate]) -> Set<UUID> {
+        // Forget text from folders that are no longer candidates (removed, hidden or moved projects).
+        let prefixes = candidates.map { $0.path + "/" }
+        for path in cache.keys where !prefixes.contains(where: { path.hasPrefix($0) }) { cachedBytes -= cache[path]?.text.utf8.count ?? 0; cache[path] = nil }
         var found = Set<UUID>()
         for candidate in candidates {
             if Task.isCancelled { break }
@@ -37,6 +43,8 @@ actor DeepSearch {
             let path = url.path
             if let cached = cache[path], cached.modified == values.contentModificationDate { texts.append(cached.text); continue }
             guard let data = FileManager.default.contents(atPath: path), let text = String(data: data, encoding: .utf8) else { continue }
+            if cachedBytes + text.utf8.count > Self.cacheLimit { cache.removeAll(); cachedBytes = 0 }
+            cachedBytes += text.utf8.count - (cache[path]?.text.utf8.count ?? 0)
             cache[path] = Cached(modified: values.contentModificationDate, text: text)
             texts.append(text)
         }

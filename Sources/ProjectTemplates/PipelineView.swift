@@ -171,6 +171,10 @@ struct ProjectStatusEditor: View {
     @State private var editor = ""
     @State private var notes = ""
     @State private var series = ""
+    /// What each field showed when it was last taken from the record. A field that still equals this is untouched by the user.
+    @State private var loaded = Details()
+    struct Details: Equatable { var campaign = "", editor = "", notes = "", series = "" }
+    var stored: Details { Details(campaign: record.campaign ?? "", editor: record.editor ?? "", notes: record.notes ?? "", series: (record.series ?? []).joined(separator: ", ")) }
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             TextField("Campaign", text: $campaign, prompt: Text("Campaign, if any")).onSubmit(save)
@@ -193,7 +197,18 @@ struct ProjectStatusEditor: View {
             }
         }
         .labelsHidden()
-        .onAppear { campaign = record.campaign ?? ""; editor = record.editor ?? ""; notes = record.notes ?? ""; series = (record.series ?? []).joined(separator: ", ") }
+        .onAppear { reload() }
+        .onChange(of: record.id) { reload() }
+        // Something else changed the record (a command, or another window). Refresh only the fields the user has not touched,
+        // so an edit in progress is kept and an untouched field never overwrites the newer value later.
+        .onChange(of: stored) {
+            let new = stored
+            if campaign == loaded.campaign { campaign = new.campaign }
+            if editor == loaded.editor { editor = new.editor }
+            if notes == loaded.notes { notes = new.notes }
+            if series == loaded.series { series = new.series }
+            loaded = new
+        }
         .onChange(of: campaign) { scheduleSave() }.onChange(of: editor) { scheduleSave() }.onChange(of: notes) { scheduleSave() }
         .onChange(of: series) { scheduleSave() }
         .onDisappear(perform: save)
@@ -203,11 +218,17 @@ struct ProjectStatusEditor: View {
         saveTask?.cancel()
         saveTask = Task { try? await Task.sleep(for: .milliseconds(700)); if !Task.isCancelled { save() } }
     }
+    func reload() {
+        let now = stored
+        loaded = now; campaign = now.campaign; editor = now.editor; notes = now.notes; series = now.series
+    }
+    /// Writes only the fields the user changed since they were loaded.
     func save() {
-        let c = campaign.trimmingCharacters(in: .whitespacesAndNewlines), e = editor.trimmingCharacters(in: .whitespacesAndNewlines), n = notes.trimmingCharacters(in: .whitespacesAndNewlines)
-        let s = series.split(separator: ",").map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
-        guard c != (record.campaign ?? "") || e != (record.editor ?? "") || n != (record.notes ?? "") || s != (record.series ?? []) else { return }
-        m.updateProject(record.id) { $0.campaign = c.isEmpty ? nil : c; $0.editor = e.isEmpty ? nil : e; $0.notes = n.isEmpty ? nil : n; $0.series = s.isEmpty ? nil : s }
+        func changed(_ value: String, _ original: String) -> String? { value != original ? value : nil }
+        let c = changed(campaign, loaded.campaign), e = changed(editor, loaded.editor), n = changed(notes, loaded.notes)
+        let s = changed(series, loaded.series).map(AppModel.splitSeries)
+        guard c != nil || e != nil || n != nil || s != nil else { return }
+        m.attempt { try m.saveDetails(record.id, campaign: c, editor: e, notes: n, series: s) }
     }
 }
 

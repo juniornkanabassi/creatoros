@@ -44,6 +44,9 @@ enum VariantState {
 /// Which browser receives the View menu shortcuts. Sheets push over pages.
 enum BrowserSurface: String, CaseIterable { case projectFiles, managedTemplate, creationPreview }
 
+/// What happened to a Finder tag write, returned to control callers; the GUI ignores it.
+enum TagOutcome: String { case applied, skipped, failed }
+
 struct PendingAssignment: Equatable { let setID: UUID; let format: String }
 struct IconRestoreCandidate: Identifiable {
     let id: UUID
@@ -126,7 +129,8 @@ enum BadgeColour: String, CaseIterable, Identifiable {
     @Published var preview: PreviewRendering?
     @Published var plan: CopyPlan?
     @Published var validation = ""
-    @Published var busy = false
+    /// A long operation is showing progress. Whoever sets it holds the writer slot (checked in debug builds).
+    @Published var busy = false { didSet { if busy { assert(writer != nil, "busy without the writer slot") } } }
     @Published var fraction = 0.0
     @Published var status = ""
     @Published var error: String?
@@ -179,7 +183,12 @@ enum BadgeColour: String, CaseIterable, Identifiable {
     var controlServer: ControlServer?
     var controlResults: [String: (parameters: Data, result: [String: Any])] = [:]
     var controlPending = Set<String>()
-    var controlMutating = false
+    /// The request id of the control mutation that is running now, so app.cancel only stops the operation its caller started.
+    var controlOwner: String?
+    /// Test hook: awaited inside slow control reads so a check can change the world while one waits.
+    var controlPauseForTests: (() async -> Void)?
+    var tagTasks: [UUID: Task<TagOutcome, Never>] = [:]
+    var tagGeneration: [UUID: Int] = [:]
     @Published var restoreIconsPrompt: ProjectRecord?
     @Published var binIdea: ProjectRecord?
     @Published var confirmedWorkspaceURL: URL?
@@ -245,6 +254,7 @@ enum BadgeColour: String, CaseIterable, Identifiable {
         if !Library.formats.contains(format) { format = "Short" }
         if !selectionIsValid { selection = defaultSelection }
         destination = preset.destination
+        updatePlainFolders()
         number = suggestedNumber
     }
 
@@ -306,7 +316,57 @@ enum BadgeColour: String, CaseIterable, Identifiable {
 
     /// Applies a change at once and writes the library shortly after, off the main thread, so a click never waits for the disk.
     /// Changes made while a write is in flight are coalesced into the next write; a failed write stops further changes.
+    // MARK: The writer slot
+    //
+    // One token says who may change things. A control mutation holds it from its start to its reply; any operation started in
+    // the app holds it from its start to its end, including the steps that wait; nobody else may write, click or background
+    // task alike. Every write path asks `writeLocked`, which is false only when nobody holds the token or the caller is the
+    // holder (known through the task-local `me`, which every task the holder starts inherits). Holders count their holds so
+    // follow-up work that outlives an operation's callback can keep the slot until it is done.
+    enum WriterOwner: Equatable { case control(String), gui(UUID) }
+    var writer: WriterOwner?
+    var writerHolds = 0
+    @TaskLocal static var me: WriterOwner?
+    /// True while a control mutation holds the slot. Settable only so a check can stand in for one.
+    var controlMutating: Bool {
+        get { if case .control = writer { return true }; return false }
+        set { writer = newValue ? .control("control-test") : nil; writerHolds = newValue ? 1 : 0 }
+    }
+    var writeLocked: Bool { writer != nil && writer != Self.me }
+    static let writeLockedMessage = "Busy: another change to the library is in progress, from the app or from a command. Wait a moment and retry."
+    /// Takes the slot, or joins it when the caller already holds it. Throws when somebody else holds it.
+    @discardableResult
+    func acquireWriter(as owner: WriterOwner? = nil) throws -> WriterOwner {
+        if let writer {
+            guard writer == Self.me else { throw AppFailure(Self.writeLockedMessage) }
+            writerHolds += 1
+            return writer
+        }
+        let taken = owner ?? .gui(UUID())
+        writer = taken; writerHolds = 1
+        return taken
+    }
+    func releaseWriter(_ owner: WriterOwner) {
+        guard writer == owner else { return }
+        writerHolds -= 1
+        if writerHolds <= 0 { writer = nil; writerHolds = 0 }
+    }
+    /// Runs a multi-step write while holding the slot. Refused at the start, before anything is done, when another owner holds it.
+    func withWriter<T>(_ body: () async throws -> T) async throws -> T {
+        let owner = try acquireWriter()
+        defer { releaseWriter(owner) }
+        return try await Self.$me.withValue(owner) { try await body() }
+    }
+    /// Starts follow-up work that continues after the current operation's callback returns, keeping the slot until it ends.
+    /// Called from inside an operation, so the caller already holds the slot.
+    func continueHolding(_ body: @escaping () async -> Void) {
+        guard let owner = try? acquireWriter() else { error = Self.writeLockedMessage; return }
+        Task { await Self.$me.withValue(owner) { await body() }; self.releaseWriter(owner) }
+    }
+    /// Test hook: awaited inside a slot-holding write so a check can try to start a second writer while the first waits.
+    var writePauseForTests: (() async -> Void)?
     func mutate(_ change: (inout Library) throws -> Void) throws {
+        guard !writeLocked else { throw AppFailure(Self.writeLockedMessage) }
         guard storeUsable else { throw AppFailure("Library is read-only after a load error.") }
         var next = library; try change(&next)
         try runtime.validate(next)
@@ -319,7 +379,10 @@ enum BadgeColour: String, CaseIterable, Identifiable {
     func saveTaskForWorkspace() async { await saveTask?.value }
     /// Transactional operations wait for older snapshots, then save before publishing or offering cleanup.
     func commitDurably(_ change: (inout Library) throws -> Void) async throws {
+        guard !writeLocked else { throw AppFailure(Self.writeLockedMessage) }
         await saveTask?.value
+        // Ownership is checked again after the wait: someone else may have taken the slot meanwhile.
+        guard !writeLocked else { throw AppFailure(Self.writeLockedMessage) }
         guard storeUsable else { throw AppFailure("The library is unavailable. The existing records have been retained.") }
         var next = library
         try change(&next)
@@ -373,16 +436,18 @@ enum BadgeColour: String, CaseIterable, Identifiable {
     }
     func chooseDestination() {
         guard let url = folderPanel(title: "Choose where \(formatLabel) projects go") else { return }
-        attempt {
-            try runtime.requireWritable(url)
-            let bookmark = try url.bookmarkData(options: .minimalBookmark, includingResourceValuesForKeys: nil, relativeTo: nil)
-            try mutate { lib in
-                if let index = lib.presets.firstIndex(where: { $0.format == format }) {
-                    lib.presets[index].destination = url.path; lib.presets[index].destinationBookmark = bookmark
-                }
+        attempt { try setDestination(url, for: format) }
+    }
+    /// Saves where a format's projects go. The New Project form follows only when it is showing that format.
+    func setDestination(_ url: URL, for target: String) throws {
+        try runtime.requireWritable(url)
+        let bookmark = try url.bookmarkData(options: .minimalBookmark, includingResourceValuesForKeys: nil, relativeTo: nil)
+        try mutate { lib in
+            if let index = lib.presets.firstIndex(where: { $0.format == target }) {
+                lib.presets[index].destination = url.path; lib.presets[index].destinationBookmark = bookmark
             }
-            destination = url.path
         }
+        if target == format { destination = url.path }
     }
     func updatePlainFolders() { plainFolders = ProjectLocation(path: destination).label == "LucidLink" }
     func changeFormat() {
@@ -472,15 +537,31 @@ enum BadgeColour: String, CaseIterable, Identifiable {
     func scanImport() {
         guard let source = importSource, !busy else { return }
         importPlan = nil
-        run("Inspecting template") { token, _ in
-            try TemplateReader.scan(source, mode: await self.importMode, cancellation: token)
-        } completion: { result in self.importPlan = result }
+        let mode = importMode
+        scanTemplate(source, mode: mode) { if case .success(let result) = $0 { self.importPlan = result } }
+    }
+    /// Reads a template folder or .pht into a plan without copying it. The sheet and control share this.
+    func scanTemplate(_ source: URL, mode: ImportMode, onFinish: @escaping (Result<CopyPlan, Error>) -> Void) {
+        run("Inspecting template", cancelNote: "Nothing was imported.") { token, _ in
+            try TemplateReader.scan(source, mode: mode, cancellation: token)
+        } completion: { onFinish(.success($0)) } failure: { onFinish(.failure(AppFailure($0))) }
     }
     func commitImport() {
         guard let importPlan else { return }
-        let name = importName; let mode = importMode; let store = store; let pending = pendingAssignment
-        let runtime = runtime
-        run("Importing independent template") { token, progress in
+        let pending = pendingAssignment
+        registerImport(plan: importPlan, name: importName, mode: importMode, assigning: pending) { result in
+            guard case .success(let record) = result else { return }
+            self.importPresented = false; self.pendingAssignment = nil
+            if let pending { self.selection = .set(pending.setID); self.format = pending.format; self.changeFormat() }
+            else if self.selection == nil || self.selectedSet == nil { self.selection = .legacy(record.id); self.changeSelection() }
+            if self.page == .templates { self.templatesSelection = pending.map { .set($0.setID) } ?? .legacy(record.id) }
+        }
+    }
+    /// Copies the scanned template into the library and registers it, optionally assigning it to a format of a set.
+    func registerImport(plan importPlan: CopyPlan, name: String, mode: ImportMode, assigning pending: PendingAssignment?,
+                        onFinish: @escaping (Result<TemplateRecord, Error>) -> Void) {
+        let store = store, runtime = runtime
+        run("Importing independent template", cancelNote: "Nothing was registered.") { token, progress in
             try runtime.requireWritable(store.templates)
             return try store.importTemplate(plan: importPlan, name: name, mode: mode, cancellation: token, progress: progress)
         } completion: { record in
@@ -489,14 +570,13 @@ enum BadgeColour: String, CaseIterable, Identifiable {
                     lib.templates.append(record)
                     if let pending { try lib.assign(format: pending.format, templateID: record.id, in: pending.setID) }
                 }
-                self.importPresented = false; self.pendingAssignment = nil
-                if let pending { self.selection = .set(pending.setID); self.format = pending.format; self.changeFormat() }
-                else if self.selection == nil || self.selectedSet == nil { self.selection = .legacy(record.id); self.changeSelection() }
-                if self.page == .templates { self.templatesSelection = pending.map { .set($0.setID) } ?? .legacy(record.id) }
+                onFinish(.success(record))
             } catch {
-                self.error = "Template copied to \(store.payload(record).path), but registration failed. Original is untouched. \(error.localizedDescription)"
+                let failure = AppFailure("Template copied to \(store.payload(record).path), but registration failed. Original is untouched. \(error.localizedDescription)")
+                self.error = failure.localizedDescription
+                onFinish(.failure(failure))
             }
-        }
+        } failure: { onFinish(.failure(AppFailure($0))) }
     }
 
     // MARK: Sets
@@ -506,43 +586,64 @@ enum BadgeColour: String, CaseIterable, Identifiable {
     }
     func confirmNewSet() {
         guard let prompt = newSetPrompt else { return }
-        attempt {
-            var made: TemplateSet?
-            try mutate { made = try $0.createSet(named: prompt.name, mappingAll: prompt.mappingTemplateID) }
-            newSetPrompt = nil
-            if let made {
-                templatesSelection = .set(made.id)
-                if selection == nil || selectedSet == nil || prompt.mappingTemplateID != nil { selection = .set(made.id); changeSelection() }
-            }
-        }
+        attempt { _ = try createSet(named: prompt.name, mapping: prompt.mappingTemplateID); newSetPrompt = nil }
     }
-    func renameSet(_ id: UUID, to name: String) { attempt { try mutate { try $0.renameSet(id, to: name) } } }
-    func assign(format: String, templateID: UUID, in setID: UUID) {
-        attempt { try mutate { try $0.assign(format: format, templateID: templateID, in: setID) }; refresh() }
+    /// Creates a content template set and selects it the way the New Set sheet does.
+    @discardableResult
+    func createSet(named name: String, mapping templateID: UUID?) throws -> TemplateSet {
+        var made: TemplateSet?
+        try mutate { made = try $0.createSet(named: name, mappingAll: templateID) }
+        guard let made else { throw AppFailure("The set could not be created.") }
+        templatesSelection = .set(made.id)
+        if selection == nil || selectedSet == nil || templateID != nil { selection = .set(made.id); changeSelection() }
+        return made
     }
-    func unassign(format: String, in setID: UUID) { attempt { try mutate { $0.unassign(format: format, in: setID) }; refresh() } }
-    func removeSet(_ id: UUID) {
-        attempt {
-            try mutate { $0.removeSet(id) }
-            if templatesSelection == .set(id) { templatesSelection = nil }
-            if selection == .set(id) { selection = defaultSelection; changeSelection() }
-        }
+    func renameSet(_ id: UUID, to name: String) { attempt { try applySetName(id, to: name) } }
+    func applySetName(_ id: UUID, to name: String) throws { try mutate { try $0.renameSet(id, to: name) } }
+    func assign(format: String, templateID: UUID, in setID: UUID) { attempt { try assignTemplate(format: format, templateID: templateID, in: setID) } }
+    func assignTemplate(format: String, templateID: UUID, in setID: UUID) throws {
+        try mutate { try $0.assign(format: format, templateID: templateID, in: setID) }; refresh()
+    }
+    func unassign(format: String, in setID: UUID) { attempt { try unassignTemplate(format: format, in: setID) } }
+    func unassignTemplate(format: String, in setID: UUID) throws { try mutate { $0.unassign(format: format, in: setID) }; refresh() }
+    func removeSet(_ id: UUID) { attempt { try deleteSet(id) } }
+    func deleteSet(_ id: UUID) throws {
+        try mutate { $0.removeSet(id) }
+        if templatesSelection == .set(id) { templatesSelection = nil }
+        if selection == .set(id) { selection = defaultSelection; changeSelection() }
     }
     /// Moves the managed payload to the Trash and drops every assignment that used it.
     func removeTemplate(_ record: TemplateRecord) {
-        attempt {
-            let payload = store.payload(record)
-            try runtime.requireWritable(payload)
-            if FileManager.default.fileExists(atPath: payload.path) { try FileManager.default.trashItem(at: payload, resultingItemURL: nil) }
-            try mutate { lib in
+        Task { do { try await deleteTemplate(record) } catch { self.error = error.localizedDescription } }
+    }
+    /// The payload goes to the Bin first, then the library is saved before this returns. If the save fails the payload is
+    /// put back, or the error names its exact place in the Bin, so the library never points at a payload that is gone.
+    @discardableResult
+    func deleteTemplate(_ record: TemplateRecord) async throws -> URL? {
+        try await withWriter { try await deleteTemplateHoldingSlot(record) }
+    }
+    private func deleteTemplateHoldingSlot(_ record: TemplateRecord) async throws -> URL? {
+        let payload = store.payload(record)
+        try runtime.requireWritable(payload)
+        var trashed: NSURL?
+        if FileManager.default.fileExists(atPath: payload.path) { try FileManager.default.trashItem(at: payload, resultingItemURL: &trashed) }
+        do {
+            try await commitDurably { lib in
                 lib.templates.removeAll { $0.id == record.id }
                 lib.templateSets = lib.sets.map { set in var s = set; s.variants.removeAll { $0.templateID == record.id }; return s }
             }
-            invalidateStructure(record.id)
-            if templatesSelection == .legacy(record.id) { templatesSelection = nil }
-            if !selectionIsValid { selection = defaultSelection }
-            refresh()
+        } catch {
+            if let bin = trashed as URL? {
+                do { try FileManager.default.moveItem(at: bin, to: payload) }
+                catch { throw AppFailure("The library could not be saved and the template files could not be put back. They are in the Bin at \(bin.path). \(error.localizedDescription)") }
+            }
+            throw error
         }
+        invalidateStructure(record.id)
+        if templatesSelection == .legacy(record.id) { templatesSelection = nil }
+        if !selectionIsValid { selection = defaultSelection }
+        refresh()
+        return trashed as URL?
     }
     func useForNewProject(_ choice: TemplateSelection) { selection = choice; changeSelection(); newProjectPresented = true }
     func browseTemplate(_ record: TemplateRecord) { templateToBrowse = record }
@@ -563,7 +664,7 @@ enum BadgeColour: String, CaseIterable, Identifiable {
         let fields = fields; let runtime = runtime
         let plain = plainFolders
         created = nil
-        run(plain ? "Creating project with plain folders" : "Creating project") { token, progress in
+        run(plain ? "Creating project with plain folders" : "Creating project", cancelNote: "Nothing was created or registered.") { token, progress in
             try runtime.requireWritable(destination)
             if let origin, origin.ideaWorkspace != nil {
                 try runtime.requireWritable(IdeaWorkspaceEngine.resolve(for: origin))
@@ -579,7 +680,7 @@ enum BadgeColour: String, CaseIterable, Identifiable {
         } completion: { url in
             self.created = url
             self.busy = true
-            Task {
+            self.continueHolding {
             defer { self.busy = false }
             do {
                 var savedID: UUID?
@@ -630,22 +731,30 @@ enum BadgeColour: String, CaseIterable, Identifiable {
         numberIsAutomatic = true; number = suggestedNumber
         refresh()
     }
-    func run<T: Sendable>(_ label: String,
+    /// Runs one long operation with visible progress. `failure` always hears about a refusal or a stop, so callers outside the
+    /// GUI never wait for ever; `cancelNote` says what a stop leaves behind.
+    func run<T: Sendable>(_ label: String, cancelNote: String = "Work that finished before the stop is still in place.",
                           operation: @escaping @Sendable (Cancellation, @escaping CreationEngine.Progress) async throws -> T,
                           completion: @escaping (T) -> Void, failure: @escaping (String) -> Void = { _ in }) {
-        guard !busy, storeUsable else { return }
+        guard storeUsable else { failure("The library is unavailable."); return }
+        // Held from here until the callbacks have finished; refused with a retry alert when anyone else holds the slot.
+        guard let owner = try? acquireWriter() else { error = Self.writeLockedMessage; failure(Self.writeLockedMessage); return }
+        guard !busy else { releaseWriter(owner); failure("Another operation is running. Wait for it to finish."); return }
         busy = true; status = label; fraction = 0; cancellation = Cancellation()
         let token = cancellation
         Task {
-            do {
-                let result = try await Task.detached(priority: .userInitiated) {
-                    try await operation(token) { value, text in
-                        Task { @MainActor in self.fraction = value; self.status = text }
-                    }
-                }.value
-                busy = false; status = "Complete"; completion(result)
-            } catch is CancellationError { busy = false; status = "Cancelled. Nothing was created or registered."; failure("Operation cancelled.") }
-            catch { busy = false; status = "Stopped"; self.error = error.localizedDescription; failure(error.localizedDescription) }
+            await Self.$me.withValue(owner) {
+                do {
+                    let result = try await Task.detached(priority: .userInitiated) {
+                        try await operation(token) { value, text in
+                            Task { @MainActor in self.fraction = value; self.status = text }
+                        }
+                    }.value
+                    busy = false; status = "Complete"; completion(result)
+                } catch is CancellationError { busy = false; status = "\(label) cancelled. \(cancelNote)"; failure(status) }
+                catch { busy = false; status = "Stopped"; self.error = error.localizedDescription; failure(error.localizedDescription) }
+            }
+            releaseWriter(owner)
         }
     }
 
@@ -655,14 +764,16 @@ enum BadgeColour: String, CaseIterable, Identifiable {
         let panel = NSOpenPanel(); panel.title = fromFolder ? "Choose a folder whose icon you want" : "Choose an icon image"
         panel.canChooseDirectories = fromFolder; panel.canChooseFiles = !fromFolder
         guard runPanel(panel) == .OK, let url = panel.url else { return }
+        attempt { try setFormatIcon(from: url, fromFolder: fromFolder, for: format) }
+    }
+    /// Saves an image, or another folder's icon, as a format's icon for new projects.
+    func setFormatIcon(from url: URL, fromFolder: Bool, for target: String) throws {
         let image = fromFolder ? NSWorkspace.shared.icon(forFile: url.path) : NSImage(contentsOf: url)
-        guard let data = image?.tiffRepresentation else { error = "That file could not be read as an image."; return }
-        attempt {
-            try mutate { lib in if let i = lib.presets.firstIndex(where: { $0.format == format }) {
-                lib.presets[i].icon = data; lib.presets[i].iconSource = url.path; lib.presets[i].iconLocked = true
-            } }
-            editingIcon = false
-        }
+        guard let data = image?.tiffRepresentation else { throw AppFailure("That file could not be read as an image.") }
+        try mutate { lib in if let i = lib.presets.firstIndex(where: { $0.format == target }) {
+            lib.presets[i].icon = data; lib.presets[i].iconSource = url.path; lib.presets[i].iconLocked = true
+        } }
+        editingIcon = false
     }
 
     // MARK: Locations
@@ -680,7 +791,8 @@ enum BadgeColour: String, CaseIterable, Identifiable {
     }
     /// One stat per distinct location, never per project, so it is safe to call on every appearance.
     func refreshMounts() {
-        guard storeUsable, !checkingMounts else { return }
+        // A background refresh waits while a command is changing things; the 20-second timer tries again.
+        guard storeUsable, !checkingMounts, !writeLocked else { return }
         checkingMounts = true
         let locations = distinctLocations.filter { !hiddenLocations.contains($0.key) }
         Task.detached(priority: .utility) {
@@ -698,7 +810,7 @@ enum BadgeColour: String, CaseIterable, Identifiable {
     private var backfilling = false
     /// Records registered before folder dates were kept get their creation date read once from disk, when the drive is there.
     func backfillFolderDates() {
-        guard !backfilling, storeUsable else { return }
+        guard !backfilling, storeUsable, !writeLocked else { return }
         let pending = library.projects.filter { !$0.isPlanned && $0.folderCreated == nil && !attemptedDates.contains($0.id) && mountedLocations.contains($0.location.key) && $0.location.kind != .cloud }
         guard !pending.isEmpty else { return }
         backfilling = true
@@ -717,6 +829,8 @@ enum BadgeColour: String, CaseIterable, Identifiable {
         }
     }
     func setHidden(_ hidden: Bool, for location: ProjectLocation) {
+        // What a running command can see must not change under it.
+        guard !writeLocked else { error = Self.writeLockedMessage; return }
         if hidden { hiddenLocations.insert(location.key) } else { hiddenLocations.remove(location.key) }
         refreshMounts()
         scheduleDeepSearch()
@@ -748,13 +862,15 @@ enum BadgeColour: String, CaseIterable, Identifiable {
         BadgeColour(rawValue: locationColours[location.key] ?? defaults.string(forKey: "locationColour." + location.key) ?? location.defaultColour) ?? .gray
     }
     func setBadgeColour(_ colour: BadgeColour, for location: ProjectLocation) {
+        guard !writeLocked else { error = Self.writeLockedMessage; return }
         locationColours[location.key] = colour.rawValue
         defaults.set(colour.rawValue, forKey: "locationColour." + location.key)
     }
 
     // MARK: Pinning, dates and relinking
 
-    func togglePin(_ id: UUID) { updateProject(id) { $0.pinned = $0.isPinned ? nil : true } }
+    func togglePin(_ id: UUID) { if let record = library.projects.first(where: { $0.id == id }) { attempt { try setPinned(!record.isPinned, for: id) } } }
+    func setPinned(_ pinned: Bool, for id: UUID) throws { try modifyProject(id) { $0.pinned = pinned ? true : nil } }
     /// Section title for a date: Today, Yesterday, Last 7 days, This month, then month and year.
     func dateGroup(_ date: Date) -> String {
         let calendar = Calendar.current
@@ -853,10 +969,13 @@ enum BadgeColour: String, CaseIterable, Identifiable {
     func relink(_ record: ProjectRecord, quietly: Bool = false) {
         Task { await searchForMoved(record, quietly: quietly) }
     }
-    /// One project's result from a relink pass.
+    /// One project's result from a relink pass. With `apply` false nothing is changed, in the library or in the GUI: a result
+    /// of `.relinked` then means "this is the one folder it would be linked to". `alert` false keeps the "not found" dialog quiet.
     @discardableResult
-    func searchForMoved(_ record: ProjectRecord, quietly: Bool = false, searchAllLocations: Bool = false) async -> RelinkOutcome.Kind {
+    func searchForMoved(_ record: ProjectRecord, quietly: Bool = false, searchAllLocations: Bool = false, apply: Bool = true, alert: Bool = true) async -> RelinkOutcome.Kind {
         guard !relinking.contains(record.id), !record.isPlanned, !hiddenLocations.contains(record.location.key) else { return .stillThere }
+        // The quiet search that runs when a project is merely selected writes a relink; it waits while a command is writing.
+        if quietly && apply && writeLocked { return .stillThere }
         relinking.insert(record.id)
         defer { relinking.remove(record.id) }
         // A quiet search, the one that runs when a project is merely selected, stays on the project's own drive.
@@ -871,35 +990,35 @@ enum BadgeColour: String, CaseIterable, Identifiable {
         let originalMissing = !originalMounted || !FileManager.default.fileExists(atPath: current.path)
         let candidateAlreadyRegistered = found.first.map { candidate in library.projects.contains { $0.id != current.id && $0.name == current.name && !hiddenLocations.contains($0.location.key) && URL(fileURLWithPath: $0.path).resolvingSymlinksInPath() == candidate.resolvingSymlinksInPath() } } ?? false
         if Relinker.canAutomaticallyRelink(candidateCount: found.count, originalMounted: originalMounted, originalMissing: originalMissing, candidateAlreadyRegistered: candidateAlreadyRegistered) {
+            if !apply { return .relinked(found[0]) }
             var relinked: URL?
             attempt {
-                var updated = current; try updated.relocate(to: found[0])
-                try mutate { lib in if let i = lib.projects.firstIndex(where: { $0.id == record.id }) { lib.projects[i] = updated } }
-                relinkCandidates[record.id] = nil
-                if selectedProject == record.id { inspectProject(updated) }
-                relinked = found[0]
+                if try relocate(current, to: found[0]) != nil { relinked = found[0] }
             }
             if let relinked { return .relinked(relinked) }
         }
-        relinkCandidates[record.id] = found
-        if found.isEmpty && !quietly { error = "No folder called ‘\(record.name)’ was found on the ticked drives. Use Locate Folder when you know where it went." }
+        if apply { relinkCandidates[record.id] = found }
+        if apply && alert && found.isEmpty && !quietly { error = "No folder called ‘\(record.name)’ was found on the ticked drives. Use Locate Folder when you know where it went." }
         if !originalMissing { return .stillThere }
         return found.isEmpty ? .notFound : .candidates(found)
     }
-    func relink(_ record: ProjectRecord, to url: URL) {
-        attempt {
-            guard var updated = library.projects.first(where: { $0.id == record.id }) else { return }
-            try updated.relocate(to: url)
-            try mutate { lib in if let i = lib.projects.firstIndex(where: { $0.id == record.id }) { lib.projects[i] = updated } }
-            relinkCandidates[record.id] = nil
-            if selectedProject == record.id { inspectProject(updated) }
-            relinkReport?.markLinked(record.id, at: url)
-        }
+    func relink(_ record: ProjectRecord, to url: URL) { attempt { _ = try relocate(record, to: url) } }
+    /// Points a record at a folder, keeping the old path in its history. Locate Folder, a chosen candidate and control share it.
+    @discardableResult
+    func relocate(_ record: ProjectRecord, to url: URL) throws -> ProjectRecord? {
+        guard var updated = library.projects.first(where: { $0.id == record.id }) else { return nil }
+        try updated.relocate(to: url)
+        let final = updated
+        try mutate { lib in if let i = lib.projects.firstIndex(where: { $0.id == record.id }) { lib.projects[i] = final } }
+        relinkCandidates[record.id] = nil
+        if selectedProject == record.id { inspectProject(final) }
+        relinkReport?.markLinked(record.id, at: url)
+        return final
     }
     /// Checks every project on the ticked drives whose folder is missing, relinks the certain ones, and reports the rest,
-    /// the way an editor reports offline media. Roots from unticked drives are never searched.
-    func relinkAll(reportWhenNothingMissing: Bool = true) {
-        guard !relinkBatchRunning else { return }
+    /// the way an editor reports offline media. Roots from unticked drives are never searched. With `apply` false it only reports.
+    func relinkAll(reportWhenNothingMissing: Bool = true, apply: Bool = true, onFinish: ((Result<(checked: Int, outcomes: [RelinkOutcome]), Error>) -> Void)? = nil) {
+        guard !relinkBatchRunning else { onFinish?(.failure(AppFailure("Find Missing Projects is already running."))); return }
         relinkBatchRunning = true
         let records = library.projects.filter { !$0.isPlanned && !hiddenLocations.contains($0.location.key) }
         Task {
@@ -907,39 +1026,78 @@ enum BadgeColour: String, CaseIterable, Identifiable {
             let missing = await Task.detached { records.filter { !FileManager.default.fileExists(atPath: $0.path) } }.value
             var outcomes: [RelinkOutcome] = []
             for (index, record) in missing.enumerated() {
-                status = "Looking for moved folders \(index + 1) of \(missing.count)…"
-                let kind = await searchForMoved(record, quietly: true, searchAllLocations: true)
+                if apply { status = "Looking for moved folders \(index + 1) of \(missing.count)…" }
+                let kind = await searchForMoved(record, quietly: true, searchAllLocations: true, apply: apply)
                 outcomes.append(RelinkOutcome(id: record.id, name: record.name, previousPath: record.path, kind: kind))
             }
-            status = ""
-            if reportWhenNothingMissing || !outcomes.isEmpty { relinkReport = RelinkReport(checked: records.count, outcomes: outcomes) }
+            if apply {
+                status = ""
+                if reportWhenNothingMissing || !outcomes.isEmpty { relinkReport = RelinkReport(checked: records.count, outcomes: outcomes) }
+            }
+            onFinish?(.success((records.count, outcomes)))
         }
     }
 
     // MARK: Pipeline
 
-    func updateProject(_ id: UUID, _ change: (inout ProjectRecord) -> Void) {
-        attempt { try mutate { lib in if let i = lib.projects.firstIndex(where: { $0.id == id }) { change(&lib.projects[i]) } } }
+    func updateProject(_ id: UUID, _ change: (inout ProjectRecord) -> Void) { attempt { try modifyProject(id, change) } }
+    func modifyProject(_ id: UUID, _ change: (inout ProjectRecord) -> Void) throws {
+        try mutate { lib in if let i = lib.projects.firstIndex(where: { $0.id == id }) { change(&lib.projects[i]) } }
     }
-    func setStage(_ stage: String, for id: UUID) {
-        updateProject(id) { $0.stage = stage }
-        if let record = library.projects.first(where: { $0.id == id }) { tagFolder(record) }
+    /// Saves pipeline details. nil leaves a field alone, an empty value clears it, and text is trimmed.
+    func saveDetails(_ id: UUID, campaign: String? = nil, editor: String? = nil, notes: String? = nil, series: [String]? = nil) throws {
+        func text(_ value: String) -> String? { let t = value.trimmingCharacters(in: .whitespacesAndNewlines); return t.isEmpty ? nil : t }
+        try modifyProject(id) { r in
+            if let campaign { r.campaign = text(campaign) }
+            if let editor { r.editor = text(editor) }
+            if let notes { r.notes = text(notes) }
+            if let series { let list = series.compactMap(text); r.series = list.isEmpty ? nil : list }
+        }
+    }
+    static func splitSeries(_ text: String) -> [String] { text.split(separator: ",").map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty } }
+    func setStage(_ stage: String, for id: UUID) { attempt { _ = try moveToStage(stage, for: id) } }
+    /// Moves one record to a stage on its own board and starts its Finder tag write. Unknown records and stages from the other
+    /// board are refused here, so a stray drop or a control call can never put a stream on the recordings board.
+    @discardableResult
+    func moveToStage(_ stage: String, for id: UUID) throws -> Task<TagOutcome, Never> {
+        guard let record = library.projects.first(where: { $0.id == id }) else { throw AppFailure("That project is no longer in the library.") }
+        guard moveTargets(for: record).contains(stage) else {
+            throw AppFailure("‘\(stage)’ is not a stage on the \(PipelineKind.of(format: record.format).title) board. Use one of: \(moveTargets(for: record).joined(separator: ", ")).")
+        }
+        try modifyProject(id) { $0.stage = stage }
+        return tagFolder(library.projects.first { $0.id == id } ?? record)
     }
     /// Moves every card in one column at once; a deliberate action from the column's own menu.
     func moveAll(from stage: String, to target: String) {
         let ids = projects(in: stage).map(\.id)
         guard !ids.isEmpty else { return }
-        attempt { try mutate { lib in for i in lib.projects.indices where ids.contains(lib.projects[i].id) { lib.projects[i].stage = target } } }
-        for record in library.projects where ids.contains(record.id) { tagFolder(record) }
+        attempt { _ = try moveAll(ids: ids, to: target) }
+    }
+    /// Moves exactly these records. Every one must be able to take the stage on its own board.
+    @discardableResult
+    func moveAll(ids: [UUID], to target: String) throws -> [Task<TagOutcome, Never>] {
+        let wanted = Set(ids)
+        guard library.projects.filter({ wanted.contains($0.id) }).allSatisfy({ moveTargets(for: $0).contains(target) }) else {
+            throw AppFailure("‘\(target)’ is not a stage on the board these records are on.")
+        }
+        try mutate { lib in for i in lib.projects.indices where wanted.contains(lib.projects[i].id) { lib.projects[i].stage = target } }
+        return library.projects.filter { wanted.contains($0.id) }.map { tagFolder($0) }
     }
     func addIdea(title: String, format: String, campaign: String, notes: String) {
+        do { pipelineSelection = try addIdeaRecord(title: title, format: format, campaign: campaign, notes: notes).id }
+        catch { self.error = error.localizedDescription }
+    }
+    @discardableResult
+    func addIdeaRecord(title: String, format: String, campaign: String, notes: String) throws -> ProjectRecord {
         let clean = title.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !clean.isEmpty else { error = "Give the idea a title."; return }
-        guard PipelineKind.of(format: format) == .recordings else { error = "Live streams are scheduled, not collected as ideas. Create the stream from New Project."; return }
+        guard !clean.isEmpty else { throw AppFailure("Give the idea a title.") }
+        guard Library.formats.contains(format) else { throw AppFailure("Use Long, Short, Podcast or Livestream.") }
+        guard PipelineKind.of(format: format) == .recordings else { throw AppFailure("Live streams are scheduled, not collected as ideas. Create the stream from New Project.") }
         var record = ProjectRecord(planned: clean, format: format, stage: library.stageList.first ?? "Idea", campaign: campaign.isEmpty ? nil : campaign)
         record.notes = notes.isEmpty ? nil : notes
-        attempt { try mutate { $0.projects.insert(record, at: 0) } }
-        pipelineSelection = record.id
+        let added = record
+        try mutate { $0.projects.insert(added, at: 0) }
+        return added
     }
     func removeProject(_ id: UUID) {
         if let record = library.projects.first(where: { $0.id == id }), record.ideaWorkspace != nil {
@@ -947,7 +1105,11 @@ enum BadgeColour: String, CaseIterable, Identifiable {
             else { error = "Review the old idea workspace before removing this project from the list. Its recovery reference is still retained." }
             return
         }
-        attempt { try mutate { $0.projects.removeAll { $0.id == id } } }
+        attempt { try removeRecord(id) }
+    }
+    /// Forgets a record. Its folder is never touched.
+    func removeRecord(_ id: UUID) throws {
+        try mutate { $0.projects.removeAll { $0.id == id } }
         if selectedProject == id { selectedProject = nil }
         if pipelineSelection == id { pipelineSelection = nil }
     }
@@ -968,17 +1130,61 @@ enum BadgeColour: String, CaseIterable, Identifiable {
         preview = nil; plan = nil
         refresh()
     }
-    func setStages(_ stages: [String], for kind: PipelineKind = .recordings) {
-        attempt {
-            let checked = try Configuration.stages(stages)
-            try mutate { if kind == .live { $0.liveStages = checked } else { $0.stages = checked } }
+    func setStages(_ stages: [String], for kind: PipelineKind = .recordings) { attempt { try applyStages(stages, for: kind) } }
+    func applyStages(_ stages: [String], for kind: PipelineKind = .recordings) throws {
+        let checked = try Configuration.stages(stages)
+        try mutate { if kind == .live { $0.liveStages = checked } else { $0.stages = checked } }
+    }
+    struct StageRenameReport { var projects = 0, tagsToRewrite = 0, tags: [TagOutcome] = [] }
+    /// The rename field in Settings.
+    func renameStage(_ old: String, to new: String, on kind: PipelineKind) {
+        Task { do { _ = try await renameStageCore(old, to: new, on: kind) } catch { self.error = error.localizedDescription } }
+    }
+    /// Renames a stage on one board and takes everything that used the old name with it: the records on that stage, its colour,
+    /// the saved stage filter, and the Finder tag on every staged folder that is on a connected, ticked drive (the old tag is
+    /// replaced, other tags stay). Saved before the tags are written. With `dryRun` it only counts.
+    @discardableResult
+    func renameStageCore(_ old: String, to new: String, on kind: PipelineKind, dryRun: Bool = false) async throws -> StageRenameReport {
+        if dryRun { return try await renameStageHoldingSlot(old, to: new, on: kind, dryRun: true) }
+        return try await withWriter { try await renameStageHoldingSlot(old, to: new, on: kind, dryRun: false) }
+    }
+    private func renameStageHoldingSlot(_ old: String, to new: String, on kind: PipelineKind, dryRun: Bool) async throws -> StageRenameReport {
+        let stages = library.stages(for: kind)
+        guard let index = stages.firstIndex(of: old) else { throw AppFailure("‘\(old)’ is not a stage on the \(kind.title) board.") }
+        var renamed = stages; renamed[index] = new
+        let checked = try Configuration.stages(renamed)
+        guard checked[index] != old else { throw AppFailure("The new name is the same as the old one.") }
+        let name = checked[index]
+        func affected(_ lib: Library) -> [ProjectRecord] { lib.projects.filter { kind.includes(format: $0.format) && $0.stage == old } }
+        var report = StageRenameReport(projects: affected(library).count)
+        let taggable = { (r: ProjectRecord) in self.library.finderTagsEnabled && !r.isPlanned && !self.hiddenLocations.contains(r.location.key) && r.location.isMounted }
+        report.tagsToRewrite = affected(library).filter(taggable).count
+        if dryRun { return report }
+        await writePauseForTests?()
+        let ids = Set(affected(library).map(\.id))
+        let otherBoardUsesOld = library.stages(for: kind == .live ? .recordings : .live).contains(old)
+        let colour = library.colour(of: old)
+        try await commitDurably { lib in
+            if kind == .live { lib.liveStages = checked } else { lib.stages = checked }
+            for i in lib.projects.indices where kind.includes(format: lib.projects[i].format) && lib.projects[i].stage == old { lib.projects[i].stage = name }
+            var colours = lib.stageColours ?? [:]
+            if colour != .none, colours[name] == nil { colours[name] = colour.rawValue }
+            if !otherBoardUsesOld { colours[old] = nil }
+            lib.stageColours = colours
         }
+        if excludedStages.contains(old) && !otherBoardUsesOld { excludedStages.remove(old); excludedStages.insert(name) }
+        let tasks = library.projects.filter { ids.contains($0.id) }.map { tagFolder($0, replacing: old) }
+        for task in tasks { report.tags.append(await task.value) }
+        return report
     }
-    func setStageColour(_ colour: StageColour, for stage: String) {
-        attempt { try mutate { lib in var colours = lib.stageColours ?? [:]; colours[stage] = colour.rawValue; lib.stageColours = colours } }
-        for record in library.projects where record.stage == stage { tagFolder(record) }
+    func setStageColour(_ colour: StageColour, for stage: String) { attempt { _ = try applyStageColour(colour, for: stage) } }
+    @discardableResult
+    func applyStageColour(_ colour: StageColour, for stage: String) throws -> [Task<TagOutcome, Never>] {
+        try mutate { lib in var colours = lib.stageColours ?? [:]; colours[stage] = colour.rawValue; lib.stageColours = colours }
+        return library.projects.filter { $0.stage == stage }.map { tagFolder($0) }
     }
-    func setFinderTags(_ enabled: Bool) { attempt { try mutate { $0.finderTags = enabled } } }
+    func setFinderTags(_ enabled: Bool) { attempt { try applyFinderTags(enabled) } }
+    func applyFinderTags(_ enabled: Bool) throws { try mutate { $0.finderTags = enabled } }
     func stageColour(_ stage: String) -> Color {
         BadgeColour(rawValue: library.colour(of: stage).rawValue)?.colour ?? .secondary
     }
@@ -986,17 +1192,21 @@ enum BadgeColour: String, CaseIterable, Identifiable {
     // MARK: Icons
 
     /// Removes a project's folder icons so it can be copied to LucidLink. The template keeps them; Restore puts them back.
-    func removeFolderIcons(_ record: ProjectRecord) {
-        guard !record.isPlanned else { return }
+    func removeFolderIcons(_ record: ProjectRecord) { stripFolderIcons(record) }
+    /// The same action with a result for callers outside the GUI. Progress, status and alerts stay visible in the app.
+    func stripFolderIcons(_ record: ProjectRecord, onFinish: ((Result<IconStripReport, Error>) -> Void)? = nil) {
+        if writeLocked { error = Self.writeLockedMessage; onFinish?(.failure(AppFailure(Self.writeLockedMessage))); return }
+        guard !record.isPlanned else { onFinish?(.failure(AppFailure("An idea has no folder yet."))); return }
         let runtime = runtime
-        run("Removing folder icons from \(record.name)") { token, _ in
+        run("Removing folder icons from \(record.name)", cancelNote: "Icons already removed stay removed; Restore Folder Icons puts them back.") { token, _ in
             let project = try record.resolve(); try runtime.requireWritable(project)
             return try IconService.strip(project: project, cancellation: token)
         } completion: { report in
             self.status = report.summary
             if !report.failed.isEmpty { self.error = "Some icons could not be removed. " + report.failed.prefix(3).joined(separator: " ") }
             if self.selectedProject == record.id { self.inspectProject(record) }
-        }
+            onFinish?(.success(report))
+        } failure: { onFinish?(.failure(AppFailure($0))) }
     }
     /// Opens a one-operation set and format chooser without changing New Project preferences.
     func restoreIcons(_ record: ProjectRecord) {
@@ -1024,13 +1234,16 @@ enum BadgeColour: String, CaseIterable, Identifiable {
             return [IconRestoreCandidate(id: UUID(), name: "Unable to check sets", available: false, reason: error.localizedDescription)]
         }
     }
-    func restoreIcons(_ record: ProjectRecord, format: String, setID: UUID) {
+    func restoreIcons(_ record: ProjectRecord, format: String, setID: UUID, onFinish: ((Result<IconRestoreReport, Error>) -> Void)? = nil) {
+        if writeLocked { error = Self.writeLockedMessage; onFinish?(.failure(AppFailure(Self.writeLockedMessage))); return }
         guard !record.isPlanned, Library.formats.contains(format),
-              let set = library.set(setID), let payload = library.resolve(setID: setID, format: format) else { return }
+              let set = library.set(setID), let payload = library.resolve(setID: setID, format: format) else {
+            onFinish?(.failure(AppFailure("Choose a template set that has files for this format."))); return
+        }
         let fields = iconRestoreFields(record, format: format)
         let root = store.payload(payload), icon = library.presets.first { $0.format == format }?.icon
         let runtime = runtime
-        run("Restoring folder icons from \(set.name)") { token, _ in
+        run("Restoring folder icons from \(set.name)", cancelNote: "Icons already restored stay in place; run Restore again to finish.") { token, _ in
             let project = try record.resolve()
             try runtime.requireWritable(project); try runtime.requireWritable(root)
             return try IconService.restore(template: root, fields: fields, onto: project, presetIcon: icon, cancellation: token)
@@ -1038,9 +1251,10 @@ enum BadgeColour: String, CaseIterable, Identifiable {
             self.status = report.summary
             if !report.failed.isEmpty { self.error = "Some icons could not be written. " + report.failed.prefix(3).joined(separator: " ") + (report.failed.count > 3 ? " …" : "") + " A drive such as LucidLink cannot hold folder icons; move the project to a Mac drive first." }
             if self.selectedProject == record.id { self.inspectProject(record) }
-        }
+            onFinish?(.success(report))
+        } failure: { onFinish?(.failure(AppFailure($0))) }
     }
-    private func iconRestoreFields(_ record: ProjectRecord, format: String) -> ProjectFields {
+    func iconRestoreFields(_ record: ProjectRecord, format: String) -> ProjectFields {
         let parts = record.name.components(separatedBy: " — ")
         return ProjectFields(number: record.number ?? "", format: format, campaign: parts.count >= 4 ? parts[2] : "",
                              title: parts.count >= 4 ? parts.dropFirst(3).joined(separator: " — ") : record.title)
@@ -1049,61 +1263,100 @@ enum BadgeColour: String, CaseIterable, Identifiable {
     // MARK: Finder tags
 
     /// Writes the record's stage onto its folder as a Finder tag, so Finder shows the same colour. One-way, app to Finder,
-    /// and only when the drive is connected; nothing is hydrated or searched. Failures are silent because the record is already saved.
-    func tagFolder(_ record: ProjectRecord) {
-        guard library.finderTagsEnabled, !record.isPlanned, let stage = record.stage, library.allStages.contains(stage) else { return }
-        guard !hiddenLocations.contains(record.location.key), (try? runtime.requireWritable(URL(fileURLWithPath: record.path))) != nil else { return }
-        guard record.location.isMounted else { return }
-        let colour = library.colour(of: stage), known = library.allStages, url = URL(fileURLWithPath: record.path)
-        Task.detached(priority: .utility) {
-            guard (try? url.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true else { return }
-            _ = try? FinderTags.apply(stage: stage, colour: colour, knownStages: known, to: url)
-        }
+    /// and only when the drive is connected and ticked; nothing is hydrated or searched. Writes for one folder run one after
+    /// another and a newer stage change replaces an older one still waiting, so rapid changes cannot finish out of order.
+    /// Failures are silent in the GUI because the record is already saved; control callers read the outcome.
+    /// What a tag write would do for this record right now, or nil when it should be skipped (tags off, an idea, an unknown
+    /// stage, an unticked or disconnected location).
+    private func tagPlan(_ record: ProjectRecord, replacing old: String? = nil) -> (stage: String, colour: StageColour, known: [String], url: URL)? {
+        guard library.finderTagsEnabled, !record.isPlanned, let stage = record.stage, library.allStages.contains(stage),
+              !hiddenLocations.contains(record.location.key), record.location.isMounted else { return nil }
+        // After a stage rename the old name is no longer configured, but its tag must still be the one that is replaced.
+        return (stage, library.colour(of: stage), library.allStages + (old.map { [$0] } ?? []), URL(fileURLWithPath: record.path))
     }
-    /// Tags every staged folder on a connected drive, one after another, and reports the count. Unstaged folders are left alone.
-    func tagAllFolders() {
-        guard !tagging else { return }
-        let known = library.allStages, colours = library
-        let runtime = runtime
-        let records = library.projects.filter { !$0.isPlanned && $0.stage != nil && known.contains($0.stage!) && mountedLocations.contains($0.location.key) }
-        let skipped = library.projects.filter { !$0.isPlanned && $0.stage != nil && known.contains($0.stage!) }.count - records.count
-        guard !records.isEmpty else { status = "No staged folders are on a connected drive."; return }
+    @discardableResult
+    func tagFolder(_ record: ProjectRecord, replacing old: String? = nil) -> Task<TagOutcome, Never> {
+        guard let first = tagPlan(record, replacing: old) else { return Task { .skipped } }
+        guard (try? runtime.requireWritable(first.url)) != nil else { return Task { .failed } }
+        let id = record.id
+        let generation = (tagGeneration[id] ?? 0) + 1
+        tagGeneration[id] = generation
+        let previous = tagTasks[id]
+        let task = Task { @MainActor () -> TagOutcome in
+            _ = await previous?.value
+            guard self.tagGeneration[id] == generation else { return .skipped }
+            // A tag write is a write: it waits (briefly) while somebody else holds the writer slot, and gives up if they keep it.
+            var waits = 0
+            while self.writeLocked && waits < 30 { try? await Task.sleep(for: .milliseconds(100)); waits += 1 }
+            guard !self.writeLocked else { return .skipped }
+            // The wait may have been long: look at the record, its location and the settings again just before writing.
+            guard let current = self.library.projects.first(where: { $0.id == id }), let plan = self.tagPlan(current, replacing: old) else { return .skipped }
+            guard (try? self.runtime.requireWritable(plan.url)) != nil else { return .failed }
+            // From this last check until the write is done the slot is held (joined, inside a command's own tag write), so a hide
+            // or a rename cannot slip in between the check and the write.
+            guard let owner = try? self.acquireWriter() else { return .skipped }
+            defer { self.releaseWriter(owner) }
+            await self.writePauseForTests?()
+            let (stage, colour, known, url) = plan
+            return await Task.detached(priority: .utility) {
+                guard (try? url.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true else { return TagOutcome.skipped }
+                do { _ = try FinderTags.apply(stage: stage, colour: colour, knownStages: known, to: url); return .applied } catch { return .failed }
+            }.value
+        }
+        tagTasks[id] = task
+        return task
+    }
+    struct TagReport { var candidates = 0, tagged = 0, missing = 0, failed = 0, offline = 0, hidden = 0 }
+    /// Tags every staged folder on a connected, ticked drive, one after another, and reports the count. Unstaged folders are
+    /// left alone, and a folder whose drive was unticked or whose stage changed since the pass began is checked again first.
+    func tagAllFolders(dryRun: Bool = false, onFinish: ((Result<TagReport, Error>) -> Void)? = nil) {
+        guard !tagging else { onFinish?(.failure(AppFailure("Tagging is already running."))); return }
+        let known = library.allStages
+        let staged = library.projects.filter { !$0.isPlanned && $0.stage != nil && known.contains($0.stage!) }
+        let visible = staged.filter { !hiddenLocations.contains($0.location.key) }
+        let records = visible.filter { mountedLocations.contains($0.location.key) }
+        var report = TagReport(candidates: records.count, offline: visible.count - records.count, hidden: staged.count - visible.count)
+        guard !records.isEmpty, !dryRun else {
+            if records.isEmpty && !dryRun { status = "No staged folders are on a connected drive." }
+            onFinish?(.success(report)); return
+        }
+        // Tagging many folders is one multi-step write: it holds the slot, or is refused when somebody else does.
+        guard let owner = try? acquireWriter() else { error = Self.writeLockedMessage; onFinish?(.failure(AppFailure(Self.writeLockedMessage))); return }
         tagging = true
         Task {
+          await Self.$me.withValue(owner) {
             defer { tagging = false }
-            var done = 0, missing = 0, failed = 0
-            for (index, record) in records.enumerated() {
+            for (index, original) in records.enumerated() {
                 status = "Tagging folder \(index + 1) of \(records.count)…"
-                let stage = record.stage!, colour = colours.colour(of: stage), url = URL(fileURLWithPath: record.path)
-                let outcome: Int = await Task.detached(priority: .utility) {
-                    guard (try? runtime.requireWritable(url)) != nil else { return 2 }
-                    guard (try? url.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true else { return 1 }
-                    do { try FinderTags.apply(stage: stage, colour: colour, knownStages: known, to: url); return 0 } catch { return 2 }
-                }.value
-                switch outcome { case 0: done += 1; case 1: missing += 1; default: failed += 1 }
+                guard let record = library.projects.first(where: { $0.id == original.id }), !hiddenLocations.contains(record.location.key) else { report.hidden += 1; continue }
+                switch await tagFolder(record).value { case .applied: report.tagged += 1; case .skipped: report.missing += 1; case .failed: report.failed += 1 }
             }
-            var parts = ["Tagged \(done) folders in Finder."]
-            if missing > 0 { parts.append("\(missing) folders were not found.") }
-            if failed > 0 { parts.append("\(failed) could not be written.") }
-            if skipped > 0 { parts.append("\(skipped) are on drives that are not connected.") }
+            var parts = ["Tagged \(report.tagged) folders in Finder."]
+            if report.missing > 0 { parts.append("\(report.missing) folders were not found.") }
+            if report.failed > 0 { parts.append("\(report.failed) could not be written.") }
+            if report.offline > 0 { parts.append("\(report.offline) are on drives that are not connected.") }
             status = parts.joined(separator: " ")
+            onFinish?(.success(report))
+          }
+          releaseWriter(owner)
         }
     }
-    func addCustomField(_ name: String) {
-        attempt {
-            let clean = try Configuration.fieldName(name, others: library.fieldList.map(\.name))
-            try mutate { $0.customFields = $0.fieldList + [CustomField(name: clean)] }; refresh()
-        }
+    func addCustomField(_ name: String) { attempt { _ = try addField(name) } }
+    @discardableResult
+    func addField(_ name: String, includeInName: Bool = true) throws -> CustomField {
+        let field = CustomField(name: try Configuration.fieldName(name, others: library.fieldList.map(\.name)), includeInName: includeInName)
+        try mutate { $0.customFields = $0.fieldList + [field] }; refresh()
+        return field
     }
-    func updateCustomField(_ field: CustomField) {
-        attempt {
-            var checked = field
-            checked.name = try Configuration.fieldName(field.name, others: library.fieldList.filter { $0.id != field.id }.map(\.name))
-            try mutate { lib in lib.customFields = lib.fieldList.map { $0.id == checked.id ? checked : $0 } }; refresh()
-        }
+    func updateCustomField(_ field: CustomField) { attempt { try replaceField(field) } }
+    func replaceField(_ field: CustomField) throws {
+        var checked = field
+        checked.name = try Configuration.fieldName(field.name, others: library.fieldList.filter { $0.id != field.id }.map(\.name))
+        try mutate { lib in lib.customFields = lib.fieldList.map { $0.id == checked.id ? checked : $0 } }; refresh()
     }
-    func removeCustomField(_ id: UUID) {
-        attempt { try mutate { lib in lib.customFields = lib.fieldList.filter { $0.id != id } }; extraValues[id] = nil; refresh() }
+    func removeCustomField(_ id: UUID) { attempt { try deleteField(id) } }
+    func deleteField(_ id: UUID) throws {
+        try mutate { lib in lib.customFields = lib.fieldList.filter { $0.id != id } }; extraValues[id] = nil; refresh()
     }
 
     // MARK: Zoom

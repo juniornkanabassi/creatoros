@@ -174,6 +174,9 @@ do {
     try securityChecks(base: base)
     try boardChecks(base: base)
     try plainCopyChecks(base: base)
+    try inheritedIconChecks(base: base)
+    try stripKeepsMetadataChecks(base: base)
+    try browserGridChecks()
     try relinkChecks(base: base)
     let args = ProcessInfo.processInfo.arguments
     if let index = args.firstIndex(of: "--master"), args.indices.contains(index + 1) {

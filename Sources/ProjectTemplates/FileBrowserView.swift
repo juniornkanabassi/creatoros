@@ -112,7 +112,10 @@ struct FileBrowserView: View {
     var fileDrop = BrowserFileDrop()
     @State private var loaded: [String: [FileBrowserNode]] = [:]
     @State private var loading: Set<String> = []
-    @State private var failure: String?
+    /// Errors by folder, so one unreadable expanded folder does not blank the folders that did load.
+    @State private var failures: [String: String] = [:]
+    @State private var iconWidth = 0.0
+    var failure: String? { failures[folder] }
     @State private var token = Cancellation()
     @State private var generation = 0
     @FocusState private var focusedColumn: Int?
@@ -156,7 +159,9 @@ struct FileBrowserView: View {
     /// flight are forgotten rather than left blocking the next read.
     func reloadAll() {
         let wanted = Set(loaded.keys).union(mode == .column ? columnPaths : [folder])
-        loading = []; failure = nil; generation += 1
+        // A new generation gets a new token: the old one may have been cancelled when the browser last disappeared.
+        token.cancel(); token = Cancellation()
+        loading = []; failures = [:]; generation += 1
         // The old listing stays on screen until the new one replaces it, so expanded folders and the selection keep
         // their places instead of collapsing while the drive answers.
         for path in wanted { load(path) }
@@ -165,7 +170,7 @@ struct FileBrowserView: View {
         guard !loading.contains(path) else { return }
         let source = dataSource
         if source.isSynchronous {
-            do { loaded[path] = try source.children(of: path, cancellation: Cancellation()) } catch { failure = error.localizedDescription }
+            do { loaded[path] = try source.children(of: path, cancellation: Cancellation()); failures[path] = nil } catch { failures[path] = error.localizedDescription }
             return
         }
         loading.insert(path)
@@ -174,10 +179,10 @@ struct FileBrowserView: View {
             do {
                 let result = try await Task.detached(priority: .userInitiated) { try source.children(of: path, cancellation: token) }.value
                 guard current == generation else { return }
-                loaded[path] = result; loading.remove(path)
+                loaded[path] = result; loading.remove(path); failures[path] = nil
             } catch {
                 guard current == generation else { return }
-                loading.remove(path); failure = error.localizedDescription
+                loading.remove(path); failures[path] = error.localizedDescription
             }
         }
     }
@@ -203,7 +208,7 @@ struct FileBrowserView: View {
     func iconView(path: String) -> some View {
         let items = nodes(in: path)
         return ScrollView {
-            LazyVGrid(columns: [GridItem(.adaptive(minimum: 96, maximum: 128), spacing: 6)], spacing: 10) {
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: Self.iconMinimum, maximum: 128), spacing: Self.iconSpacing)], spacing: 10) {
                 ForEach(items) { node in
                     VStack(spacing: 6) {
                         FileArtwork(url: node.artworkURL, size: 52, fallback: node.directory ? "folder.fill" : "doc")
@@ -226,20 +231,22 @@ struct FileBrowserView: View {
                     .modifier(BrowserFileDrag(enabled: dragURL != nil && !node.directory, url: { dragURL?(node) }))
                     .modifier(BrowserFolderDrop(fileDrop: fileDrop, target: node.browsable ? node.id : nil))
                 }
-            }.padding(10)
+            }.padding(Self.iconPadding)
         }
+        // The grid is adaptive, so its row length comes from its width: arrow keys use what is on screen, not a fixed count.
+        .background(GeometryReader { geometry in Color.clear.onAppear { iconWidth = geometry.size.width }.onChange(of: geometry.size.width) { iconWidth = geometry.size.width } })
         .focusable()
         .onKeyPress(.return) { if let node = items.first(where: { $0.id == selection }) { activate(node); return .handled }; return .ignored }
-        .onKeyPress(.rightArrow) { step(items, by: 1) }
-        .onKeyPress(.leftArrow) { step(items, by: -1) }
-        .onKeyPress(.downArrow) { step(items, by: 4) }
-        .onKeyPress(.upArrow) { step(items, by: -4) }
+        .onKeyPress(.rightArrow) { step(items, .right) }
+        .onKeyPress(.leftArrow) { step(items, .left) }
+        .onKeyPress(.downArrow) { step(items, .down) }
+        .onKeyPress(.upArrow) { step(items, .up) }
         .overlay { if loading.contains(path) { ProgressView() } else if items.isEmpty { emptyLabel } }
     }
-    func step(_ items: [FileBrowserNode], by delta: Int) -> KeyPress.Result {
-        guard !items.isEmpty else { return .ignored }
-        let index = items.firstIndex { $0.id == selection } ?? (delta > 0 ? -1 : items.count)
-        let next = min(max(index + delta, 0), items.count - 1)
+    static let iconMinimum = 96.0, iconSpacing = 6.0, iconPadding = 10.0
+    func step(_ items: [FileBrowserNode], _ direction: BrowserGrid.Direction) -> KeyPress.Result {
+        let columns = BrowserGrid.columns(width: iconWidth - 2 * Self.iconPadding, minimum: Self.iconMinimum, spacing: Self.iconSpacing)
+        guard let next = BrowserGrid.next(from: items.firstIndex { $0.id == selection }, count: items.count, columns: columns, direction) else { return .ignored }
         selection = items[next].id
         return .handled
     }

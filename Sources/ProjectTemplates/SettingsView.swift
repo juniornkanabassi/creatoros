@@ -104,7 +104,7 @@ struct SettingsView: View {
             }
             Section {
                 DisclosureGroup("Advanced", isExpanded: $showPipelineAdvanced) {
-                    Text("Projects already in a renamed stage keep their old stage name until you move them. Abandoned is for projects that never saw the light of day. Resetting puts back the original stages.")
+                    Text("Renaming a stage moves its cards, its colour and the Finder tags on their folders with it. Abandoned is for projects that never saw the light of day. Resetting puts back the original stages.")
                         .font(.callout).foregroundStyle(.secondary)
                     Button("Reset Recording Stages to \(Library.defaultStages.joined(separator: ", "))") { m.setStages(Library.defaultStages, for: .recordings) }
                         .help("Replace the recording stages with the original list")
@@ -248,7 +248,7 @@ private struct StageSettingsRow: View {
                 .accessibilityLabel("Remove \(stage)")
         }.onAppear { name = stage }.onChange(of: stage) { name = stage }
     }
-    func save() { var s = stages; guard s.indices.contains(index) else { return }; s[index] = name; m.setStages(s, for: kind) }
+    func save() { guard stages.indices.contains(index), name != stage else { return }; m.renameStage(stage, to: name, on: kind) }
     func colourValue(_ colour: StageColour) -> Color {
         BadgeColour(rawValue: colour.rawValue)?.colour ?? .secondary
     }

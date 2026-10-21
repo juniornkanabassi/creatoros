@@ -3,21 +3,34 @@ import Darwin
 import TemplateCore
 
 func json(_ value: Any) -> String { String(data: try! JSONSerialization.data(withJSONObject: value, options: [.sortedKeys, .fragmentsAllowed]), encoding: .utf8)! }
+/// The bundle's version, read from the Info.plist beside the real executable (a symlink to the CLI has no bundle of its own).
+let version: String = {
+    let executable = (Bundle.main.executableURL ?? URL(fileURLWithPath: CommandLine.arguments[0])).resolvingSymlinksInPath()
+    let plist = executable.deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("Info.plist")
+    return NSDictionary(contentsOf: plist)?["CFBundleShortVersionString"] as? String ?? "development"
+}()
 func help() {
     print("""
-    creatoros — local CreatorOS control (exit 0 success, 1 action/transport error, 2 usage)
-    Global flags anywhere: --json, --show (activate only when requested), --data-directory PATH, --help
+    creatoros \(version) — local CreatorOS control (exit 0 success, 1 action/transport error, 2 usage)
+    Global flags anywhere: --json, --show / --no-show, --data-directory PATH, --version, --help
+    --show brings the app, Finder or the opened document forward; commands that show nothing ignore it. Without it nothing is activated.
+    Every true/false flag also accepts --no-<flag> to send false (for example --no-enabled, --no-plain-folders).
+    Arrays take a JSON array text (--stages '["A","B"]'); objects take JSON (--extra '{"Sponsor":"X"}').
     Data root: explicit flag, CREATOROS_DATA_DIRECTORY, then the stable app library.
     status never launches the app. Other commands launch in the background and wait up to 10 seconds.
-    Project reference: UUID, exact folder name or number; --format disambiguates.
+    Project reference: UUID, exact folder name or number; --format disambiguates. Ideas use their name.
+    One writer at a time: a command that changes anything waits for a busy app or an open form (busy, form_in_use), and while it runs the app's own
+    clicks and background tasks are told to retry instead of interleaving with it. Reads are checked again after they wait.
+    Request ids make a retry in the same app session return the first result instead of acting twice.
     """)
     for command in ControlCommand.all {
-        let flags = (command.strings + command.integers).map { "--\(flag($0)) VALUE" } + command.booleans.map { "--\(flag($0))" }
-        print("\n\(command.words) \(command.required.contains("project") ? "<ref> " : "")\(flags.joined(separator: " "))\n  \(command.description)\n  Example: \(command.example)")
+        let flags = command.strings.map { "--\(flag($0)) VALUE" } + command.integers.map { "--\(flag($0)) N" } + command.arrays.map { "--\(flag($0)) JSON_ARRAY" }
+            + command.objects.map { "--\(flag($0)) JSON_OBJECT" } + command.booleans.map { "--\(flag($0))" }
+        print("\n\(command.words) \(command.positional.map { "<\($0 == "project" ? "ref" : $0)> " } ?? "")\(flags.joined(separator: " "))\n  \(command.description)\n  Example: \(command.example)")
     }
     print("\nmcp-manifest — print tools JSON from this command table\n  Example: creatoros mcp-manifest\nhelp — print this help\n  Example: creatoros help")
 }
-func flag(_ key: String) -> String { key.reduce("") { $0 + ($1.isUppercase ? "-" + $1.lowercased() : String($1)) } }
+func flag(_ key: String) -> String { ControlCommand.flag(key) }
 struct CLIError: Error { let code: String, message: String, exit: Int32 }
 func fail(_ code: String, _ message: String, _ exit: Int32 = 2) -> CLIError { CLIError(code: code, message: message, exit: exit) }
 func connectSocket(_ path: String) -> Int32? {
@@ -35,43 +48,58 @@ func connectSocket(_ path: String) -> Int32? {
 let args = Array(CommandLine.arguments.dropFirst())
 let wantsJSON = args.contains("--json")
 do {
+    if args.contains("--version") || args == ["version"] { print(wantsJSON ? json(["version": version]) : version); exit(0) }
     if args.isEmpty || args.contains("--help") || args.first == "help" { help(); exit(0) }
     var words: [String] = [], flags: [String: Any] = [:]
     var dataDirectory = ProcessInfo.processInfo.environment["CREATOROS_DATA_DIRECTORY"]
-    var show = false, index = 0
-    let booleanFlags = Set(ControlCommand.all.flatMap(\.booleans).map(flag))
-    let integerFlags = Set(ControlCommand.all.flatMap(\.integers).map(flag))
-    let keys = Dictionary(uniqueKeysWithValues: Set(ControlCommand.all.flatMap { $0.strings + $0.booleans + $0.integers }).map { (flag($0), $0) })
+    var show = false, sawShow = false, index = 0
+    let commands = ControlCommand.all
+    let booleanFlags = Set(commands.flatMap(\.booleans).map(flag))
+    let integerFlags = Set(commands.flatMap(\.integers).map(flag))
+    let arrayFlags = Set(commands.flatMap(\.arrays).map(flag)), objectFlags = Set(commands.flatMap(\.objects).map(flag))
+    let keys = Dictionary(uniqueKeysWithValues: Set(commands.flatMap { $0.strings + $0.booleans + $0.integers + $0.arrays + $0.objects }).map { (flag($0), $0) })
     while index < args.count {
         let arg = args[index]; index += 1
         if arg == "--json" { continue }
-        if arg == "--show" { show = true; continue }
+        if arg == "--show" || arg == "--no-show" { show = arg == "--show"; sawShow = true; continue }
         if arg.hasPrefix("--") {
-            let name = String(arg.dropFirst(2))
+            var name = String(arg.dropFirst(2))
+            var inline: String?
+            if let equals = name.firstIndex(of: "=") { inline = String(name[name.index(after: equals)...]); name = String(name[..<equals]) }
+            var negated = false
+            if keys[name] == nil, name.hasPrefix("no-"), booleanFlags.contains(String(name.dropFirst(3))) { negated = true; name = String(name.dropFirst(3)) }
             guard name == "data-directory" || keys[name] != nil else { throw fail("usage", "Unknown flag \(arg). See --help.") }
-            if booleanFlags.contains(name) { guard flags[keys[name]!] == nil else { throw fail("usage", "Duplicate flag \(arg).") }; flags[keys[name]!] = true; continue }
-            guard index < args.count, !args[index].hasPrefix("--") else { throw fail("usage", "\(arg) requires a value.") }
-            let value = args[index]; index += 1
+            if booleanFlags.contains(name) { guard inline == nil, flags[keys[name]!] == nil else { throw fail("usage", "Duplicate flag \(arg).") }; flags[keys[name]!] = !negated; continue }
+            let value: String
+            if let inline { value = inline }
+            else { guard index < args.count, !args[index].hasPrefix("--") else { throw fail("usage", "\(arg) requires a value.") }; value = args[index]; index += 1 }
             if name == "data-directory" { dataDirectory = value; continue }
             let key = keys[name]!
             guard flags[key] == nil else { throw fail("usage", "Duplicate flag \(arg).") }
             if integerFlags.contains(name) { guard let number = Int(value) else { throw fail("usage", "\(arg) requires an integer.") }; flags[key] = number }
-            else { flags[key] = value }
+            else if arrayFlags.contains(name) {
+                guard let list = (try? JSONSerialization.jsonObject(with: Data(value.utf8))) as? [Any] else { throw fail("usage", "\(arg) requires a JSON array of strings.") }
+                flags[key] = list
+            } else if objectFlags.contains(name) {
+                guard let map = (try? JSONSerialization.jsonObject(with: Data(value.utf8))) as? [String: Any] else { throw fail("usage", "\(arg) requires a JSON object with string values.") }
+                flags[key] = map
+            } else { flags[key] = value }
         } else { words.append(arg) }
     }
     if words == ["mcp-manifest"] {
-        guard flags.isEmpty, !show else { throw fail("usage", "mcp-manifest accepts only global output/data flags.") }
-        print(json(["tools": ControlCommand.all.map { ["name": $0.tool, "description": $0.description, "inputSchema": $0.schema] }])); exit(0)
+        guard flags.isEmpty, !sawShow else { throw fail("usage", "mcp-manifest accepts only global output/data flags.") }
+        print(json(["version": version, "tools": commands.map(\.manifest)])); exit(0)
     }
     let action = words.first == "status" ? "status" : words.prefix(2).joined(separator: ".")
-    guard let command = ControlCommand.all.first(where: { $0.action == action }) else { throw fail("usage", "Unknown command. See --help.") }
+    guard let command = commands.first(where: { $0.action == action }) else { throw fail("usage", "Unknown command. See --help.") }
     let consumed = action == "status" ? 1 : 2
     let rest = Array(words.dropFirst(consumed))
     if !rest.isEmpty {
-        guard command.required.contains("project"), rest.count == 1, flags["project"] == nil else { throw fail("usage", "Unexpected or duplicate project argument.") }
-        flags["project"] = rest[0]
+        guard let positional = command.positional, rest.count == 1, flags[positional] == nil else { throw fail("usage", "Unexpected or duplicate argument. \(action) takes \(command.positional.map { "one <\($0)>" } ?? "no bare words").") }
+        flags[positional] = rest[0]
     }
-    if show { flags["show"] = true }
+    // --show is global: commands that cannot show anything simply ignore it.
+    if sawShow, command.booleans.contains("show") { flags["show"] = show }
     do { try command.validate(flags) } catch { throw fail("usage", error.localizedDescription) }
     let root: URL
     if let dataDirectory {
@@ -81,24 +109,45 @@ do {
     let path = root.appendingPathComponent("control.sock").path
     guard path.utf8.count < 104 else { throw fail("usage", "Socket path is too long; use a shorter data directory.") }
     var connection = connectSocket(path)
+    // A busy app can refuse a connection for a moment (its queue of waiting callers is full). A socket file that exists
+    // means an app owns it, so wait a few seconds before concluding that nothing is running and launching another copy.
+    if connection == nil, FileManager.default.fileExists(atPath: path) {
+        let patience = Date().addingTimeInterval(4)
+        while connection == nil && Date() < patience { Thread.sleep(forTimeInterval: 0.1); connection = connectSocket(path) }
+    }
     if connection == nil && action == "status" { print(wantsJSON ? json(["running": false]) : "CreatorOS is not running."); exit(0) }
     if connection == nil {
-        let launch = Process(); launch.executableURL = URL(fileURLWithPath: "/usr/bin/open")
         let executable = Bundle.main.executableURL!.resolvingSymlinksInPath()
         let bundle = executable.deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
-        var launchArgs = ["-g", "-n"]
-        launchArgs += bundle.pathExtension == "app" ? ["-a", bundle.path] : ["-b", "local.projecttemplates.mac"]
-        launchArgs += ["--args", "--background"]
-        if dataDirectory != nil { launchArgs += ["--data-directory", root.path] }
-        launch.arguments = launchArgs
-        launch.standardOutput = FileHandle.nullDevice; launch.standardError = FileHandle.nullDevice
-        try launch.run(); launch.waitUntilExit()
+        let launch = Process()
+        launch.standardInput = FileHandle.nullDevice; launch.standardOutput = FileHandle.nullDevice; launch.standardError = FileHandle.nullDevice
+        var viaOpen = true
+        if bundle.pathExtension == "app" {
+            launch.executableURL = URL(fileURLWithPath: "/usr/bin/open")
+            launch.arguments = ["-g", "-n", "-a", bundle.path, "--args", "--background"] + (dataDirectory != nil ? ["--data-directory", root.path] : [])
+        } else {
+            // Not inside an app: this CLI came from a build folder. Start the ProjectTemplates beside it, never the installed app,
+            // which may be an older release that does not know these commands.
+            let sibling = executable.deletingLastPathComponent().appendingPathComponent("ProjectTemplates")
+            if FileManager.default.isExecutableFile(atPath: sibling.path) {
+                viaOpen = false
+                launch.executableURL = sibling
+                launch.arguments = ["--background"] + (dataDirectory != nil ? ["--data-directory", root.path] : [])
+            } else if dataDirectory != nil {
+                throw fail("no_app", "No ProjectTemplates executable sits beside this creatoros, so it cannot start a test instance. Build it (swift build) or run creatoros from inside CreatorOS.app.", 1)
+            } else {
+                launch.executableURL = URL(fileURLWithPath: "/usr/bin/open")
+                launch.arguments = ["-g", "-n", "-b", "local.projecttemplates.mac", "--args", "--background"]
+            }
+        }
+        try launch.run()
+        if viaOpen { launch.waitUntilExit() }
         let deadline = Date().addingTimeInterval(10)
         while connection == nil && Date() < deadline { Thread.sleep(forTimeInterval: 0.1); connection = connectSocket(path) }
     }
     guard let fd = connection else { throw fail("timeout", "CreatorOS did not start its control socket within 10 s.", 1) }
     defer { close(fd) }
-    let seconds = action == "project.create" || action == "project.rename" ? 600 : 30
+    let seconds = command.seconds
     var timeout = timeval(tv_sec: seconds, tv_usec: 0), noSignal: Int32 = 1
     setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))
     setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))

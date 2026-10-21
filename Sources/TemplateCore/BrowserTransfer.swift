@@ -26,7 +26,8 @@ public enum BrowserTransfer {
 
     /// Dropped folders move as folders, files go through the regular-file engine. Every folder is validated
     /// before any is renamed, and a rename failure puts the already-renamed folders back.
-    public static func transfer(_ sources: [URL], into destination: URL, runtime: AppRuntime, forceCopy: Bool = false,
+    /// With `validateOnly` every check runs and nothing is moved or copied.
+    public static func transfer(_ sources: [URL], into destination: URL, runtime: AppRuntime, forceCopy: Bool = false, validateOnly: Bool = false,
                                 cancellation: Cancellation = Cancellation(), progress: (Int, Int) -> Void = { _, _ in }) throws -> [URL] {
         try cancellation.check()
         guard !sources.isEmpty, sources.count <= 100 else { throw AppFailure("Drop between 1 and 100 files or folders at a time.") }
@@ -36,6 +37,7 @@ public enum BrowserTransfer {
         if !folders.isEmpty, forceCopy { throw AppFailure("Folders can be moved here, not copied. Drop without Option.") }
         let planned = try folders.map { try folderMoveTarget($0, into: destination, runtime: runtime) }
         if !files.isEmpty { _ = try transferFiles(files, into: destination, runtime: runtime, forceCopy: forceCopy, cancellation: cancellation, validateOnly: true) }
+        if validateOnly { return [] }
         var movedFolders: [(from: URL, to: URL)] = []
         do {
             for (source, target) in zip(folders, planned) {

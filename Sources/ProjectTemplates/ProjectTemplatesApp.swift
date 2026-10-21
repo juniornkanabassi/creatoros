@@ -56,6 +56,8 @@ extension NSSplitView { @objc func refuseAutosaveName(_ name: String?) {} }
         // so a relaunch from Spotlight showed nothing. Always open the main window instead; it keeps its own frame below.
         UserDefaults.standard.register(defaults: ["ApplePersistenceIgnoreState": true])
         if dataRootArgument(ProcessInfo.processInfo.arguments) != nil { FrameAutosave.refuse() }
+        // A test run (--data-directory) stays out of the Dock and never takes focus unless --show is given.
+        if Self.quietLaunch { NSApplication.shared.setActivationPolicy(.accessory) }
         // A second launch should activate the running app, not open a second
         // writer over the same library. Test bundles use a separate identifier.
         // A copy that is still finishing its quit (saving the library) must not swallow the new launch: Junior's
@@ -73,18 +75,23 @@ extension NSSplitView { @objc func refuseAutosaveName(_ name: String?) {} }
             let deadline = Date().addingTimeInterval(8)
             while alive() && Date() < deadline { Thread.sleep(forTimeInterval: 0.1) }
             if alive() {
-                if !ProcessInfo.processInfo.arguments.contains("--background") { existing.activate(options: [.activateAllWindows]) }
+                if !ProcessInfo.processInfo.arguments.contains("--background"), !Self.quietLaunch { existing.activate(options: [.activateAllWindows]) }
                 exit(0)
             }
         }
+    }
+    /// An isolated run: no Dock tile, no activation, unless the launch asked for --show.
+    static var quietLaunch: Bool {
+        let arguments = ProcessInfo.processInfo.arguments
+        return dataRootArgument(arguments) != nil && !arguments.contains("--show")
     }
     var body: some Scene {
         WindowGroup(AppInfo.label) {
             MainView().environmentObject(model).frame(minWidth: 1000, minHeight: 680)
                 .onAppear {
                     delegate.model = model
-                    NSApp.setActivationPolicy(.regular)
-                    if !ProcessInfo.processInfo.arguments.contains("--background") { NSApp.activate(ignoringOtherApps: true) }
+                    NSApp.setActivationPolicy(Self.quietLaunch ? .accessory : .regular)
+                    if !ProcessInfo.processInfo.arguments.contains("--background"), !Self.quietLaunch { NSApp.activate(ignoringOtherApps: true) }
                     model.startControl(); model.refresh()
                     WindowSetup.apply(zoom: { model.zoom($0) }, reset: { model.zoomLevel = 0 })
                 }

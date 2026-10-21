@@ -235,3 +235,121 @@ func plainCopyChecks(base: URL) throws {
     try check(roundTrip.restored == ["01 Documents"] && inside(try digestTree(withIcons)) == iconTree, "strip then restore returns the original icons")
     try rejects("strip refuses a missing project") { _ = try IconService.strip(project: out.appendingPathComponent("nowhere")) }
 }
+
+
+/// A later folder such as `06 Media Revised` takes the icon of the template folder whose name it extends (`03 Media`).
+func inheritedIconChecks(base: URL) throws {
+    let fm = FileManager.default
+    let template = base.appendingPathComponent("Inherit/Template"), project = base.appendingPathComponent("Inherit/Project")
+    var flagged = Data(count: 32); flagged[8] = 0x04
+    func icon(_ folder: URL) throws {
+        try fm.createDirectory(at: folder, withIntermediateDirectories: true)
+        try Data("icon \(folder.lastPathComponent)".utf8).write(to: folder.appendingPathComponent("Icon\r"))
+        _ = flagged.withUnsafeBytes { setxattr(folder.path, "com.apple.FinderInfo", $0.baseAddress, 32, 0, XATTR_NOFOLLOW) }
+    }
+    try icon(template.appendingPathComponent("03 Media"))
+    try icon(template.appendingPathComponent("02 Project Files/01 Premiere Pro"))
+    try fm.createDirectory(at: template.appendingPathComponent("01 Documents"), withIntermediateDirectories: true)
+    for folder in ["03 Media", "06 Media Revised", "07 Unrelated", "08 Mediabox", "Media Extras", "01 Documents", "02 Project Files/01 Premiere Pro", "02 Project Files/05 Premiere Pro Archive"] {
+        try fm.createDirectory(at: project.appendingPathComponent(folder), withIntermediateDirectories: true)
+    }
+    try Data("clip".utf8).write(to: project.appendingPathComponent("06 Media Revised/take.mov"))
+    let fields = ProjectFields(number: "000", format: "Short", title: "Inherit")
+    func hasIcon(_ path: String) -> Bool {
+        let folder = project.appendingPathComponent(path)
+        return fm.fileExists(atPath: folder.appendingPathComponent("Icon\r").path) && ((try? IconService.attribute("com.apple.FinderInfo", at: folder))??[8] ?? 0) & 0x04 != 0
+    }
+    let filesBefore = try digestTree(project).filter { !$0.key.contains("::") }
+    let preview = try IconService.restorePreview(template: template, fields: fields, onto: project)
+    try check(preview.restored == ["02 Project Files/01 Premiere Pro", "03 Media"] && preview.inherited == ["02 Project Files/05 Premiere Pro Archive", "06 Media Revised"] && preview.unmatched.isEmpty,
+              "icon restore preview lists exact and inherited folders")
+    try check(!hasIcon("03 Media") && !hasIcon("06 Media Revised"), "icon restore preview writes nothing")
+    let report = try IconService.restore(template: template, fields: fields, onto: project)
+    try check(report.restored == preview.restored && report.inherited == preview.inherited && report.failed.isEmpty, "restore reports inherited folders apart from exact ones")
+    try check(hasIcon("03 Media") && hasIcon("06 Media Revised") && hasIcon("02 Project Files/05 Premiere Pro Archive"), "a folder extending a template folder's name inherits its icon, at the root and nested")
+    try check(!hasIcon("07 Unrelated") && !hasIcon("08 Mediabox") && !hasIcon("Media Extras"), "unrelated folders and folders that merely start with the same letters get no icon")
+    try check(try Data(contentsOf: project.appendingPathComponent("06 Media Revised/take.mov")) == Data("clip".utf8) && (try children(project)).sorted() == ["01 Documents", "02 Project Files", "03 Media", "06 Media Revised", "07 Unrelated", "08 Mediabox", "Media Extras"],
+              "inheriting an icon touches no file and creates no folder")
+    try check(report.summary.contains("2 more folders inherited"), "restore summary mentions inherited folders")
+    let again = try IconService.restore(template: template, fields: fields, onto: project)
+    try check(again.inherited.isEmpty && again.restored == preview.restored, "restoring twice leaves an inherited icon alone")
+    let dry = try IconService.strip(project: project, dryRun: true)
+    try check(dry.iconFilesRemoved.count == 4 && hasIcon("06 Media Revised"), "strip dry run lists the icon files and removes none")
+    let stripped = try IconService.strip(project: project)
+    try check(stripped.iconFilesRemoved.count == 4 && !hasIcon("06 Media Revised") && !hasIcon("03 Media"), "strip clears inherited icons too")
+    let restored = try IconService.restore(template: template, fields: fields, onto: project)
+    try check(restored.inherited == preview.inherited && hasIcon("06 Media Revised"), "strip then restore brings the inherited icons back")
+    try check(try digestTree(project).filter { !$0.key.contains("::") && !$0.key.hasSuffix("Icon\r") } == filesBefore.filter { !$0.key.hasSuffix("Icon\r") }, "regular files are identical after all of it")
+    // A stop returns what was already done instead of throwing it away.
+    let stop = Cancellation(); stop.cancel()
+    let halted = try IconService.strip(project: project, cancellation: stop)
+    try check(halted.cancelled && halted.iconFilesRemoved.isEmpty && hasIcon("06 Media Revised") && halted.summary.hasPrefix("Cancelled part way."), "a cancelled strip reports itself and leaves the icons it had not reached")
+    try rejects("a restore stopped before it writes anything throws and changes nothing") { _ = try IconService.restore(template: template, fields: fields, onto: project, cancellation: stop) }
+    // Two equally long template names that a folder extends: skipped and reported, never guessed.
+    try icon(template.appendingPathComponent("04 Media"))
+    try fm.createDirectory(at: project.appendingPathComponent("04 Media"), withIntermediateDirectories: true)
+    try fm.createDirectory(at: project.appendingPathComponent("09 Media Final"), withIntermediateDirectories: true)
+    let tie = try IconService.restorePreview(template: template, fields: fields, onto: project)
+    try check(tie.ambiguous == ["09 Media Final"] && !tie.inherited.contains("09 Media Final") && !tie.inherited.contains("06 Media Revised") && tie.restored.contains("04 Media"),
+              "a folder extending two equally long template names is reported as ambiguous and skipped")
+    // The numbered-prefix conflict rule is unchanged: a different spelling under the template's own prefix still blocks restore.
+    try fm.removeItem(at: project.appendingPathComponent("04 Media"))
+    try fm.createDirectory(at: project.appendingPathComponent("04 Media Alt"), withIntermediateDirectories: true)
+    try rejects("a folder sharing a template folder's number still fails the layout check") { _ = try IconService.restore(template: template, fields: fields, onto: project) }
+}
+
+
+/// Remove Folder Icons takes the icon and nothing else: colour labels, tags and comments stay.
+func stripKeepsMetadataChecks(base: URL) throws {
+    let fm = FileManager.default
+    let template = base.appendingPathComponent("StripKeeps/Template"), project = base.appendingPathComponent("StripKeeps/Project")
+    var flagged = Data(count: 32); flagged[8] = 0x04
+    let docs = template.appendingPathComponent("01 Documents")
+    try fm.createDirectory(at: docs, withIntermediateDirectories: true)
+    try Data("icon".utf8).write(to: docs.appendingPathComponent("Icon\r"))
+    _ = flagged.withUnsafeBytes { setxattr(docs.path, "com.apple.FinderInfo", $0.baseAddress, 32, 0, XATTR_NOFOLLOW) }
+    let fields = ProjectFields(number: "000", format: "Short", title: "Keeps")
+    let created = try CreationEngine.create(plan: TemplateReader.scan(template, fields: fields), destination: { try fm.createDirectory(at: project, withIntermediateDirectories: true); return project }(), name: "000 — Short — Keeps")
+    let folder = created.appendingPathComponent("01 Documents"), plainFolder = created.appendingPathComponent("02 Plain")
+    try fm.createDirectory(at: plainFolder, withIntermediateDirectories: true)
+    var labelled = Data(count: 32); labelled[8] = 0x04; labelled[9] = 0x0C
+    _ = labelled.withUnsafeBytes { setxattr(folder.path, "com.apple.FinderInfo", $0.baseAddress, 32, 0, XATTR_NOFOLLOW) }
+    try FinderTags.write([.init(name: "Client", colour: .red)], to: folder)
+    let comment = Data("remember this".utf8)
+    _ = comment.withUnsafeBytes { setxattr(folder.path, "com.apple.metadata:kMDItemFinderComment", $0.baseAddress, comment.count, 0, XATTR_NOFOLLOW) }
+    var onlyLabel = Data(count: 32); onlyLabel[9] = 0x0C
+    _ = onlyLabel.withUnsafeBytes { setxattr(plainFolder.path, "com.apple.FinderInfo", $0.baseAddress, 32, 0, XATTR_NOFOLLOW) }
+    let dry = try IconService.strip(project: created, dryRun: true)
+    try check(dry.foldersCleared == ["01 Documents"] && (try IconService.attribute("com.apple.FinderInfo", at: folder))?[8] == 0x04, "strip dry run names the folder with an icon flag and changes nothing")
+    let report = try IconService.strip(project: created)
+    let after = try IconService.attribute("com.apple.FinderInfo", at: folder)
+    try check(report.foldersCleared == ["01 Documents"] && report.failed.isEmpty && !fm.fileExists(atPath: folder.appendingPathComponent("Icon\r").path), "strip removes the icon file and clears the folder flag")
+    try check(after?[8] == 0 && after?[9] == 0x0C, "strip keeps the colour label bits of FinderInfo")
+    try check(try FinderTags.read(folder) == [.init(name: "Client", colour: .red)], "strip keeps Finder tags")
+    try check(try IconService.attribute("com.apple.metadata:kMDItemFinderComment", at: folder) == comment, "strip keeps Finder comments")
+    try check(try IconService.attribute("com.apple.FinderInfo", at: plainFolder)?[9] == 0x0C, "strip leaves a folder that only has a colour label alone")
+    let zeroed = created.appendingPathComponent("03 Only icon")
+    try fm.createDirectory(at: zeroed, withIntermediateDirectories: true)
+    _ = flagged.withUnsafeBytes { setxattr(zeroed.path, "com.apple.FinderInfo", $0.baseAddress, 32, 0, XATTR_NOFOLLOW) }
+    _ = try IconService.strip(project: created)
+    try check(try IconService.attribute("com.apple.FinderInfo", at: zeroed) == nil, "FinderInfo that is all zeros once the flag is cleared is removed")
+    let restored = try IconService.restore(template: template, fields: fields, onto: created)
+    try check(restored.restored == ["01 Documents"] && restored.failed.isEmpty && fm.fileExists(atPath: folder.appendingPathComponent("Icon\r").path) && (try IconService.attribute("com.apple.FinderInfo", at: folder))?[8] == 0x04, "restore still brings the icon back")
+    try check(try FinderTags.read(folder) == [.init(name: "Client", colour: .red)], "restore keeps the Finder tags too")
+}
+
+
+/// Arrow keys in the icon view: left and right inside a row, up and down by the real number of columns.
+func browserGridChecks() throws {
+    try check(BrowserGrid.columns(width: 600, minimum: 96, spacing: 6) == 5 && BrowserGrid.columns(width: 96, minimum: 96, spacing: 6) == 1 && BrowserGrid.columns(width: 30, minimum: 96, spacing: 6) == 1 && BrowserGrid.columns(width: 0, minimum: 96, spacing: 6) == 1, "icon grid column count comes from the width")
+    try check(BrowserGrid.columns(width: 1000, minimum: 96, spacing: 6) == 9, "a wide window shows more columns, not four")
+    // 10 items in rows of 4: 0-3, 4-7, 8-9.
+    try check(BrowserGrid.next(from: 5, count: 10, columns: 4, .right) == 6 && BrowserGrid.next(from: 7, count: 10, columns: 4, .right) == 7, "right moves within a row and stops at its end")
+    try check(BrowserGrid.next(from: 5, count: 10, columns: 4, .left) == 4 && BrowserGrid.next(from: 4, count: 10, columns: 4, .left) == 4, "left moves within a row and stops at its start")
+    try check(BrowserGrid.next(from: 9, count: 10, columns: 4, .right) == 9, "right stops at the last item")
+    try check(BrowserGrid.next(from: 1, count: 10, columns: 4, .down) == 5 && BrowserGrid.next(from: 5, count: 10, columns: 4, .up) == 1, "down and up move by the column count")
+    try check(BrowserGrid.next(from: 3, count: 10, columns: 4, .up) == 3 && BrowserGrid.next(from: 9, count: 10, columns: 4, .down) == 9, "up stops in the first row and down in the last")
+    try check(BrowserGrid.next(from: 6, count: 10, columns: 4, .down) == 9, "down from a row with nothing below goes to the last item")
+    try check(BrowserGrid.next(from: nil, count: 10, columns: 4, .down) == 0 && BrowserGrid.next(from: nil, count: 10, columns: 4, .up) == 9 && BrowserGrid.next(from: nil, count: 0, columns: 4, .down) == nil, "no selection starts at an end; an empty folder selects nothing")
+    try check(BrowserGrid.next(from: 2, count: 5, columns: 1, .down) == 3 && BrowserGrid.next(from: 2, count: 5, columns: 1, .right) == 2, "a single column moves by one with up and down only")
+}

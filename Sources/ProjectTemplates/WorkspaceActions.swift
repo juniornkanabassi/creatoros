@@ -9,36 +9,50 @@ extension AppModel {
             if let record { url = try record.resolve() }
             else { guard let selected = folderPanel(title: "Check a folder for LucidLink compatibility") else { return }; url = selected }
         } catch { self.error = error.localizedDescription; return }
-        run("Checking names for LucidLink") { token, _ in try Compatibility.scan(url, cancellation: token) } completion: { report in
-            self.compatibilityReport = report; self.compatibilityOutput = nil; self.compatibilityPresented = true
+        scanCompatibility(url) {
+            if case .success(let report) = $0 { self.compatibilityReport = report; self.compatibilityOutput = nil; self.compatibilityPresented = true }
         }
     }
+    /// Reads a folder's names for LucidLink trouble. The sheet and control share it; only the sheet shows the result.
+    func scanCompatibility(_ url: URL, onFinish: @escaping (Result<CompatibilityReport, Error>) -> Void) {
+        run("Checking names for LucidLink", cancelNote: "Nothing was changed.") { token, _ in try Compatibility.scan(url, cancellation: token) }
+            completion: { onFinish(.success($0)) } failure: { onFinish(.failure(AppFailure($0))) }
+    }
+    /// The report for the project in the New Project form, without showing it.
+    func prospectiveCompatibility() -> CompatibilityReport? {
+        guard let plan, let preview else { return nil }
+        return Compatibility.scan(plan: plainFolders ? plan.withoutIconFiles : plan, outerName: preview.outerFolderName)
+    }
     func checkProspectiveCompatibility() {
-        guard let plan, let preview else { return }
-        compatibilityReport = Compatibility.scan(plan: plainFolders ? plan.withoutIconFiles : plan, outerName: preview.outerFolderName)
+        guard let report = prospectiveCompatibility() else { return }
+        compatibilityReport = report
         compatibilityOutput = nil; compatibilityPresented = true
     }
     func copyCorrected(to destination: URL) {
         guard let report = compatibilityReport else { return }
+        makeCorrectedCopy(report, to: destination) { if case .success(let output) = $0 { self.compatibilityOutput = output } }
+    }
+    /// Writes a corrected copy of a scanned folder and leaves the original alone.
+    func makeCorrectedCopy(_ report: CompatibilityReport, to destination: URL, onFinish: @escaping (Result<URL, Error>) -> Void) {
         let runtime = runtime
-        run("Creating corrected copy") { token, progress in
+        run("Creating corrected copy", cancelNote: "The original is untouched; check the destination for a partial copy.") { token, progress in
             try runtime.requireWritable(destination)
             let proposal = try Compatibility.proposal(report)
             return try Compatibility.copy(proposal, destination: destination, cancellation: token, progress: progress)
         } completion: { output in
-            self.compatibilityOutput = output
             self.status = "Corrected copy created at \(output.path). Original unchanged."
-        }
+            onFinish(.success(output))
+        } failure: { onFinish(.failure(AppFailure($0))) }
     }
-    func createWorkspace(for idea: ProjectRecord, root: URL, templateID: UUID?) {
+    func createWorkspace(for idea: ProjectRecord, root: URL, templateID: UUID?, showBrowser: Bool = true, onFinish: ((Result<ProjectRecord, Error>) -> Void)? = nil) {
         let runtime = runtime
         let source = templateID.flatMap { library.template($0) }.map { store.payload($0) }
-        run("Creating idea workspace") { token, progress in
+        run("Creating idea workspace", cancelNote: "Nothing was registered; check the Ideas folder for a partial workspace.") { token, progress in
             try runtime.requireWritable(root)
             return try IdeaWorkspaceEngine.create(for: idea, root: root, payload: source, cancellation: token, progress: progress)
         } completion: { workspace in
             self.busy = true
-            Task {
+            self.continueHolding {
                 defer { self.busy = false }
                 do {
                     try await self.commitDurably { library in
@@ -47,19 +61,28 @@ extension AppModel {
                         library.projects[i].ideaWorkspace = workspace
                     }
                     self.workspacePrompt = nil
-                    self.workspaceToBrowse = self.library.projects.first { $0.id == idea.id }
-                } catch { self.error = "Workspace created at \(workspace.path), but its reference could not be saved. Keep it for recovery. \(error.localizedDescription)" }
+                    // The app shows the new workspace; a command does not leave a window open that would block its next command.
+                    let saved = self.library.projects.first { $0.id == idea.id }
+                    if showBrowser { self.workspaceToBrowse = saved }
+                    if let saved { onFinish?(.success(saved)) }
+                } catch {
+                    let failure = AppFailure("Workspace created at \(workspace.path), but its reference could not be saved. Keep it for recovery. \(error.localizedDescription)")
+                    self.error = failure.localizedDescription
+                    onFinish?(.failure(failure))
+                }
             }
-        }
+        } failure: { onFinish?(.failure(AppFailure($0))) }
+    }
+    /// The workspace folder this record owns, checked to be inside the writable area. Throws if it cannot be proved owned.
+    func confirmedWorkspace(for record: ProjectRecord) throws -> URL {
+        let url = try IdeaWorkspaceEngine.resolve(for: record)
+        try runtime.requireWritable(url)
+        return url
     }
     func requestBinIdea(_ record: ProjectRecord) {
         guard !busy else { return }
         do {
-            if record.ideaWorkspace != nil {
-                let url = try IdeaWorkspaceEngine.resolve(for: record)
-                try runtime.requireWritable(url)
-                confirmedWorkspaceURL = url
-            } else { confirmedWorkspaceURL = nil }
+            confirmedWorkspaceURL = record.ideaWorkspace != nil ? try confirmedWorkspace(for: record) : nil
             binIdea = record
         } catch { self.error = error.localizedDescription }
     }
@@ -68,58 +91,67 @@ extension AppModel {
         binIdea = nil
         if record.ideaWorkspace == nil { removeProject(record.id); return }
         guard let confirmed = confirmedWorkspaceURL else { return }
-        trashWorkspace(record, at: confirmed, removingRecord: record.isPlanned)
+        Task { do { try await trashWorkspace(record, at: confirmed, removingRecord: record.isPlanned) } catch { self.error = error.localizedDescription } }
     }
     func requestWorkspaceCleanup(_ record: ProjectRecord) {
         do {
-            let url = try IdeaWorkspaceEngine.resolve(for: record)
-            try runtime.requireWritable(url)
-            confirmedWorkspaceURL = url; binIdea = record; workspaceCleanup = nil
+            confirmedWorkspaceURL = try confirmedWorkspace(for: record); binIdea = record; workspaceCleanup = nil
         } catch { self.error = error.localizedDescription }
     }
     func keepAndDetachWorkspace(_ record: ProjectRecord) {
         guard !busy, !record.isPlanned else { return }
-        busy = true
-        Task {
-            defer { busy = false }
-            do {
-                try await commitDurably { lib in
-                    guard let i = lib.projects.firstIndex(where: { $0.id == record.id }), !lib.projects[i].isPlanned else {
-                        throw AppFailure("The promoted project is no longer available.")
-                    }
-                    lib.projects[i].ideaWorkspace = nil
-                }
-                workspaceCleanup = nil
-                status = "The old workspace stays at \(record.ideaWorkspace?.path ?? "its original location"). It is no longer managed by this project."
-            } catch { self.error = "The workspace link was retained because the library could not be saved. \(error.localizedDescription)" }
-        }
+        Task { do { try await detachWorkspace(record) } catch { self.error = error.localizedDescription } }
     }
-    private func trashWorkspace(_ record: ProjectRecord, at confirmed: URL, removingRecord: Bool) {
+    /// Keeps the old workspace folder and stops linking it to the started project. Saved before it returns.
+    func detachWorkspace(_ record: ProjectRecord) async throws {
+        try await withWriter { try await detachWorkspaceHoldingSlot(record) }
+    }
+    private func detachWorkspaceHoldingSlot(_ record: ProjectRecord) async throws {
         busy = true
-        Task {
-            defer { busy = false }
-            var trashed = false
-            var trashURL: URL?
-            do {
-                await saveTaskForWorkspace()
-                guard storeUsable, let current = library.projects.first(where: { $0.id == record.id }) else { throw AppFailure("The record is unavailable; nothing was put in the Bin.") }
-                try runtime.requireWritable(confirmed)
-                trashURL = try IdeaWorkspaceEngine.trash(for: current, confirmedURL: confirmed)
-                trashed = true
-                try await commitDurably { lib in
-                    if removingRecord { lib.projects.removeAll { $0.id == record.id } }
-                    else if let i = lib.projects.firstIndex(where: { $0.id == record.id }) { lib.projects[i].ideaWorkspace = nil }
+        defer { busy = false }
+        await writePauseForTests?()
+        do {
+            try await commitDurably { lib in
+                guard let i = lib.projects.firstIndex(where: { $0.id == record.id }), !lib.projects[i].isPlanned else {
+                    throw AppFailure("The promoted project is no longer available.")
                 }
-                if removingRecord {
-                    if pipelineSelection == record.id { pipelineSelection = nil }
-                    if selectedProject == record.id { selectedProject = nil }
-                }
-                status = "Workspace moved to the Bin. Finder can restore it."
-            } catch {
-                self.error = trashed
-                    ? "The workspace from \(confirmed.path) is in the Bin\(trashURL.map { " at " + $0.path } ?? ""), but its library record could not be saved and is retained. Restore that folder using Finder's Bin. \(error.localizedDescription)"
-                    : error.localizedDescription
+                lib.projects[i].ideaWorkspace = nil
             }
+        } catch { throw AppFailure("The workspace link was retained because the library could not be saved. \(error.localizedDescription)") }
+        workspaceCleanup = nil
+        status = "The old workspace stays at \(record.ideaWorkspace?.path ?? "its original location"). It is no longer managed by this project."
+    }
+    /// Moves an owned workspace to the Bin, then saves the record without it (or removes the idea). Returns the Bin location.
+    @discardableResult
+    func trashWorkspace(_ record: ProjectRecord, at confirmed: URL, removingRecord: Bool) async throws -> URL? {
+        // Refused before anything goes to the Bin when another writer holds the slot.
+        try await withWriter { try await trashWorkspaceHoldingSlot(record, at: confirmed, removingRecord: removingRecord) }
+    }
+    private func trashWorkspaceHoldingSlot(_ record: ProjectRecord, at confirmed: URL, removingRecord: Bool) async throws -> URL? {
+        busy = true
+        defer { busy = false }
+        var trashed = false
+        var trashURL: URL?
+        do {
+            await saveTaskForWorkspace()
+            guard storeUsable, let current = library.projects.first(where: { $0.id == record.id }) else { throw AppFailure("The record is unavailable; nothing was put in the Bin.") }
+            try runtime.requireWritable(confirmed)
+            trashURL = try IdeaWorkspaceEngine.trash(for: current, confirmedURL: confirmed)
+            trashed = true
+            try await commitDurably { lib in
+                if removingRecord { lib.projects.removeAll { $0.id == record.id } }
+                else if let i = lib.projects.firstIndex(where: { $0.id == record.id }) { lib.projects[i].ideaWorkspace = nil }
+            }
+            if removingRecord {
+                if pipelineSelection == record.id { pipelineSelection = nil }
+                if selectedProject == record.id { selectedProject = nil }
+            }
+            status = "Workspace moved to the Bin. Finder can restore it."
+            return trashURL
+        } catch {
+            throw trashed
+                ? AppFailure("The workspace from \(confirmed.path) is in the Bin\(trashURL.map { " at " + $0.path } ?? ""), but its library record could not be saved and is retained. Restore that folder using Finder's Bin. \(error.localizedDescription)")
+                : error
         }
     }
 }
