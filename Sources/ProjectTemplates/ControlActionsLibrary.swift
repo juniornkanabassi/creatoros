@@ -73,6 +73,18 @@ extension AppModel {
             try await durable()
             return try await controlReadBack(record.id)
 
+        case "project.register":
+            let url = try controlURL(params["path"] as! String, directory: true, writable: true)
+            let named = params["format"] as? String
+            if let named, !(Library.formats + ["Existing"]).contains(named) { throw ControlFailure(code: "invalid_params", message: "Use Long, Short, Podcast, Livestream or Existing.") }
+            try requireIdle()
+            let already = library.projects.contains { $0.path == url.path }
+            let record: ProjectRecord = try await awaiting { done in registerExisting(url, format: named, onFinish: done) }
+            try await durable()
+            var reply = try await controlReadBack(record.id)
+            reply["alreadyRegistered"] = already
+            return reply
+
         // Stages
         case "stage.list":
             let boards: [[String: Any]] = PipelineKind.allCases.map { kind in

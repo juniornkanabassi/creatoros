@@ -35,12 +35,16 @@ extension AppModel {
     /// An absolute path the caller names, never read when it is on an unticked location.
     func controlURL(_ path: String, directory: Bool? = nil, writable: Bool = false) throws -> URL {
         guard path.hasPrefix("/") else { throw ControlFailure(code: "invalid_params", message: "Use an absolute path.") }
-        let url = URL(fileURLWithPath: path).standardizedFileURL
+        // Kept as written (Foundation's standardizing turns /private/tmp into /tmp, which would not match stored paths).
+        guard !path.split(separator: "/").contains(where: { $0 == ".." || $0 == "." }) else { throw ControlFailure(code: "invalid_params", message: "Use a path without . or .. parts.") }
+        let url = URL(fileURLWithPath: path)
         guard !hiddenLocations.contains(ProjectLocation(path: url.path).key) else { throw ControlFailure(code: "location_hidden", message: "Tick this path's location in the GUI first.") }
         var isFolder: ObjCBool = false
         guard FileManager.default.fileExists(atPath: url.path, isDirectory: &isFolder) else { throw ControlFailure(code: "not_found", message: "Nothing exists at \(url.path).") }
         if let directory, isFolder.boolValue != directory { throw ControlFailure(code: "invalid_params", message: "\(url.path) must be a \(directory ? "folder" : "file").") }
-        if writable { try asInvalid { try runtime.requireWritable(url) } }
+        if writable {
+            do { try runtime.requireWritable(url) } catch { throw ControlFailure(code: "not_allowed", message: error.localizedDescription) }
+        }
         return url
     }
     func controlOutcome(_ kind: RelinkOutcome.Kind) -> [String: Any] {

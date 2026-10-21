@@ -83,5 +83,55 @@ import TemplateCore
         precondition(ordinary.id != idea.id && ordinary.campaign == nil && model.startingFrom == nil)
         precondition(model.library.projects.first { $0.id == idea.id }?.path == promoted.path)
         print("PASS 1 idea promotion check: kept-open sheet clears the idea link; identity and metadata kept; Next Project is ordinary creation")
+        // A caller meeting an open GUI sheet is refused with form_in_use and nothing changes.
+        func refusal(_ action: String, _ params: [String: Any]) async -> String? {
+            do { _ = try await model.controlAction(action, params); return nil }
+            catch let failure as ControlFailure { return failure.code } catch { return "other: \(error)" }
+        }
+        func expect(_ action: String, _ params: [String: Any], _ code: String) async {
+            let got = await refusal(action, params)
+            precondition(got == code, "\(action) answered \(String(describing: got)), expected \(code)")
+        }
+        let snapshot = try Data(contentsOf: model.store.file)
+        let target = model.library.projects.first { !$0.isPlanned }!
+        model.restoreIconsPrompt = target
+        await expect("project.icons-strip", ["project": target.id.uuidString], "form_in_use")
+        await expect("project.icons-restore", ["project": target.id.uuidString], "form_in_use")
+        model.restoreIconsPrompt = nil
+        model.newProjectPresented = true
+        await expect("project.create", ["format": "Short", "title": "Blocked"], "form_in_use")
+        await expect("field.add", ["name": "Blocked"], "form_in_use")
+        await expect("set.create", ["name": "Blocked"], "form_in_use")
+        await expect("format.set-destination", ["format": model.format, "path": model.runtime.projects.path], "form_in_use")
+        model.newProjectPresented = false
+        model.importPresented = true
+        await expect("template.import", ["path": model.runtime.root.path, "name": "Blocked", "mode": "full"], "form_in_use")
+        model.importPresented = false
+        model.busy = true
+        let pinned = await refusal("project.pin", ["project": target.id.uuidString]); precondition(pinned != "form_in_use" && pinned != "busy" || pinned == "busy")
+        await expect("project.icons-strip", ["project": target.id.uuidString], "busy")
+        model.busy = false
+        let unchanged = try Data(contentsOf: model.store.file) == snapshot
+        precondition(unchanged)
+        print("PASS 1 sheet collision check: icon, form, import and busy states refuse control actions with form_in_use or busy and leave the library untouched")
+        // A request id still matches when only the presentation flag `show` differs.
+        let renameParams: [String: Any] = ["project": target.id.uuidString, "title": "Show flag", "requestId": "show-1", "ignoreOpenApps": true]
+        let first = await model.control(["id": "a", "action": "project.rename", "params": renameParams.merging(["show": false]) { $1 }])
+        let second = await model.control(["id": "b", "action": "project.rename", "params": renameParams])
+        let firstResult = first["result"] as? [String: Any], secondResult = second["result"] as? [String: Any]
+        precondition(first["ok"] as? Bool == true, "first rename failed: \(first)")
+        precondition(second["ok"] as? Bool == true && secondResult?["newPath"] as? String == firstResult?["newPath"] as? String, "retry differing only in show was not served from the cache: \(second)")
+        print("PASS 1 request fingerprint check: a retry that differs only in the show flag returns the first result and acts once")
+        // Pipeline details: an untouched field is never overwritten by a stale form, and text is trimmed.
+        try model.saveDetails(target.id, campaign: "  Trimmed  ", series: ["a", " ", "b"])
+        precondition(model.library.projects.first { $0.id == target.id }?.campaign == "Trimmed" && model.library.projects.first { $0.id == target.id }?.series == ["a", "b"])
+        try model.saveDetails(target.id, editor: "Only editor")
+        let after = model.library.projects.first { $0.id == target.id }!
+        precondition(after.campaign == "Trimmed" && after.editor == "Only editor")
+        print("PASS 1 details check: saving one field leaves the others as they are")
+        // The stage change itself refuses an unknown record and a stage from the other board.
+        do { _ = try model.moveToStage("Idea", for: UUID()); preconditionFailure("unknown record accepted") } catch is AppFailure {}
+        do { _ = try model.moveToStage("Streamed", for: target.id); preconditionFailure("live stage accepted on a recording") } catch is AppFailure {}
+        print("PASS 1 stage boundary check: unknown ids and wrong-board stages are refused in the shared mutation")
     }
 }
