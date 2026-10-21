@@ -280,6 +280,11 @@ func inheritedIconChecks(base: URL) throws {
     let restored = try IconService.restore(template: template, fields: fields, onto: project)
     try check(restored.inherited == preview.inherited && hasIcon("06 Media Revised"), "strip then restore brings the inherited icons back")
     try check(try digestTree(project).filter { !$0.key.contains("::") && !$0.key.hasSuffix("Icon\r") } == filesBefore.filter { !$0.key.hasSuffix("Icon\r") }, "regular files are identical after all of it")
+    // A stop returns what was already done instead of throwing it away.
+    let stop = Cancellation(); stop.cancel()
+    let halted = try IconService.strip(project: project, cancellation: stop)
+    try check(halted.cancelled && halted.iconFilesRemoved.isEmpty && hasIcon("06 Media Revised") && halted.summary.hasPrefix("Cancelled part way."), "a cancelled strip reports itself and leaves the icons it had not reached")
+    try rejects("a restore stopped before it writes anything throws and changes nothing") { _ = try IconService.restore(template: template, fields: fields, onto: project, cancellation: stop) }
     // Two equally long template names that a folder extends: skipped and reported, never guessed.
     try icon(template.appendingPathComponent("04 Media"))
     try fm.createDirectory(at: project.appendingPathComponent("04 Media"), withIntermediateDirectories: true)

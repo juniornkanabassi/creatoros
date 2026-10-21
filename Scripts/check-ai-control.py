@@ -78,6 +78,9 @@ try:
     check(command('project','reveal','missing',code=1)['error']['code'] == 'not_found', 'project reveal error route without opening Finder')
     manifest = json.loads(subprocess.check_output([str(cli),'mcp-manifest']))
     check(isinstance(manifest.get('version'), str), 'mcp-manifest carries the app version for the shim')
+    if app.suffix == '.app':
+        import plistlib
+        check(manifest['version'] == plistlib.loads((app / 'Contents/Info.plist').read_bytes())['CFBundleShortVersionString'], 'the shim reports the bundle version, not a hard-coded one')
     preview = command('project','rename',ref,'--title','Renamed test','--dry-run','--request-id','rename-1')
     check(preview['dryRun'] and pathlib.Path(created['path']).exists(), 'rename dry-run changes nothing')
     renamed = command('project','rename',ref,'--title','Renamed test','--request-id','rename-1')
@@ -576,7 +579,7 @@ try:
 
     # -- every MCP tool through the shim, and explicit false / array / object over MCP ----------------------------------------
     sweep_state = world()
-    overrides = {'field_add': {'name': '[x]'}, 'set_create': {'name': ' '}}
+    overrides = {'field_add': {'name': '[x]'}, 'set_create': {'name': ' '}, 'project_create': {'format': 'x', 'title': 'x'}}
     calls = []
     for i, tool in enumerate(manifest['tools']):
         props = tool['inputSchema']['properties']
@@ -585,7 +588,6 @@ try:
             if key in args: continue
             kind = props[key]['type']
             args[key] = False if kind == 'boolean' else ([] if kind == 'array' else ({} if kind == 'object' else 'x'))
-        if tool['name'] in ('status', 'project_reveal', 'project_open_file', 'project_open_premiere', 'project_create'): continue
         calls.append({'jsonrpc': '2.0', 'id': 1000 + i, 'method': 'tools/call', 'params': {'name': tool['name'], 'arguments': args}})
     sweep = subprocess.run(['node', str(shim)], input=''.join(json.dumps(c) + '\n' for c in calls), capture_output=True, text=True, env=env, timeout=300)
     answers = {r['id']: r for r in map(json.loads, sweep.stdout.splitlines())}
@@ -596,7 +598,7 @@ try:
         assert 'error' not in answer, (c['params']['name'], answer)
         assert 'Unknown command' not in text and 'Unknown or invalid' not in text, (c['params']['name'], text)
         routed += 1
-    check(routed == len(calls) and routed >= 50, 'every MCP tool name is routed through the shim to its command (%d invoked, hyphenated ones included)' % routed)
+    check(routed == len(manifest['tools']), 'every MCP tool name is routed through the shim to its command (%d invoked, hyphenated ones included)' % routed)
     check(world() == sweep_state, 'the MCP sweep with invalid arguments changed nothing')
     def mcp_call(name, arguments):
         request = {'jsonrpc': '2.0', 'id': 1, 'method': 'tools/call', 'params': {'name': name, 'arguments': arguments}}

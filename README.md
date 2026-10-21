@@ -1,6 +1,6 @@
 # CreatorOS
 
-Native SwiftUI/AppKit Mac app that creates correctly named project folders from reusable content templates and tracks them through the content pipeline. **CreatorOS 1.4.1** (1.4.0's UI simplification, plus isolated launches no longer writing the production preferences) is released at `v1.4.1` and installed at `/Applications/JuniorOS Apps/CreatorOS.app`. Builds do not install, tag or push.
+Native SwiftUI/AppKit Mac app that creates correctly named project folders from reusable content templates and tracks them through the content pipeline. **CreatorOS 1.5.0** adds a `creatoros` command and MCP tool for every GUI action (see AI control). The installed release is 1.4.1 (`v1.4.1`) at `/Applications/JuniorOS Apps/CreatorOS.app` until 1.5.0 is built, checked and installed. Builds do not install, tag or push.
 
 CreatorOS keeps the established `local.projecttemplates.mac` identity and `~/Library/Application Support/Project Templates/` data root so existing preferences, templates, bookmarks and catalogue data continue without a lossy copy or merge. The internal executable remains `ProjectTemplates`; that is not a user-facing product name. Explicit `--data-directory` launches and ContentTool remain isolated from the everyday library. A build carrying the old alpha identifier or α channel also selects isolation, never production data.
 
@@ -41,7 +41,7 @@ Sources/TemplateCore/     engine, no UI
   Naming.swift            fields, tokens, the shared substitution rule, validation
   FileEngine.swift        template reader, copy plan, copy engine, icon service
   ProjectRename.swift     reviewed exclusive rename and rollback
-  ControlCommands.swift   shared CLI/help/MCP action table
+  ControlCommands.swift   shared CLI/help/MCP action table (59 commands)
   Preview.swift           placeholder rendering that can never become a copy plan
   Catalogue.swift         project discovery, availability, retained export indexing
   Locations.swift         drive and cloud classification, per-format numbering
@@ -58,6 +58,9 @@ Sources/ProjectTemplates/ the app
   ProjectFileBrowser.swift host for browsing a real folder with open rules
   SettingsView.swift      Settings window
   ProjectTemplatesApp.swift scene, menus, main split view, import sheet
+  ControlServer.swift     socket, request cache, mutation lock, dispatcher
+  ControlActions.swift    project, idea and creation commands, shared read-back
+  ControlActionsLibrary.swift  boards, settings, formats, templates, sets, locations, discovery, compatibility
 Sources/CoreChecks/       assertion suite
 Scripts/build-icon.sh    converts the checked-in stable and alpha PNG artwork to ICNS
 Scripts/notion-backup.py  offline Notion export backup utility with its tests; not part of the app
@@ -75,7 +78,7 @@ Resources/                Info.plist, pastel red slate stable AppIcon and orange
 - **Import** a folder or a Post Haste `.pht` as files and folders or as folder structure only, with a tree preview and size before copying. The original is never touched.
 - **New Project** shows the whole prospective folder as soon as a set and format are chosen, with `[Project Number]` and `[Project Name]` placeholders, and re-renders on every keystroke from a cached structural scan. Create is enabled only when the rendering is executable and a destination is chosen. After creation, the sheet confirms the saved project and offers Next Project (⌘↩) or Browse Project. Closing clears the completed form; unfinished drafts stay. Idea-workspace promotion closes directly to its existing workspace review.
 - **Naming**: Project Number, Content Format, optional Campaign, Project Name joined by ` — `. Files starting with `Template` take the full name; `[template]` and the four field tokens work; `[Conent Form]` is mapped for the old misspelling. Contents are never rewritten and package internals are never renamed.
-- **Icons**: the saved format icon goes on the outer folder; every nested `Icon\r` resource fork is preserved and hidden.
+- **Icons**: the saved format icon goes on the outer folder; every nested `Icon\r` resource fork is preserved and hidden. Restore Folder Icons also gives a project folder the template does not have, such as `06 Media Revised` beside `03 Media`, the icon of the template folder its name extends (the longest match wins; an exact tie is skipped and reported as ambiguous).
 - **Numbering**: the next number per format comes from the projects already in the list and can be typed over.
 - **Projects**: a searchable list across drives with a coloured location badge and connected dot per drive or cloud folder, an Unavailable chip, format, location and stage filters, pinning, grouping by folder creation date, previous locations, Open Folder, Reveal, Locate, Find Moved Folder and the file browser.
 - **Relinking**: searches are bounded to saved locations and configured destinations, not arbitrary whole drives. One match can relink automatically when the original volume is connected and the original folder is missing. Offline originals or multiple candidates require a choice, because another copy is not proof of a move. Previous paths are retained.
@@ -104,28 +107,103 @@ Ad-hoc signed, not Developer ID or notarised; do not distribute it as a finished
 
 ## AI control
 
-`creatoros` controls the running GUI through its existing main-actor actions. ContentTool remains an isolated test/audit utility. Commands do not activate CreatorOS or Finder unless `--show` is explicitly supplied. `status` works while stopped and returns `running: false` without launching. Other commands launch the bundled app with `open -g` and wait up to 10 seconds; action responses time out after 30 seconds, or 600 seconds for create/rename. CLI exits are 0 success, 1 action/transport failure, 2 usage error. `--json` prints a single result/error JSON line; successful output is concise JSON even without it.
+`creatoros` controls the running GUI through the same main-actor actions the buttons use, so a change made by a command is the change the window shows. Since 1.5.0 every GUI action that carries state has a command and an MCP tool; the audit that lists them against the GUI is `../00 Project State/CLI parity audit 2026-10-21.md`. ContentTool remains an isolated test/audit utility.
 
-| Command | Example |
-| --- | --- |
-| `status` | `creatoros status --json` |
-| `library stats` | `creatoros library stats --json` |
-| `project list` | `creatoros project list --format Short --stage Writing --search Example --limit 10 --offset 0` |
-| `project status <ref>` | `creatoros project status 001 --format Short` |
-| `project open <ref>` | `creatoros project open 001 --format Short` |
-| `project reveal <ref>` | `creatoros project reveal 001 --format Short --show` |
-| `project create` | `creatoros project create --format Short --title Example --number 001 --campaign Series --template Fixture --request-id create-001` |
-| `project rename <ref>` | `creatoros project rename 001 --format Short --title Updated --dry-run` |
-| `mcp-manifest` | `creatoros mcp-manifest` |
-| `help` / `--help` | `creatoros project rename --help` |
+Commands do not activate CreatorOS or Finder unless `--show` is given. `status` works while stopped and returns `running: false` without launching. Other commands launch the bundled app with `open -g` and wait up to 10 seconds. A response times out after 30 seconds, or 600 seconds for long actions (create, rename, relocate, find-moved, icons, add-files, import, scans, find-missing, tag-folders, compat). Exit codes are 0 success, 1 action or transport failure, 2 usage. `--json` prints one result or error JSON line; successful output is concise JSON either way. `creatoros --version` prints the version; the MCP shim reports the same one.
 
-References accept a UUID, exact folder name or number; use `--format` for ambiguous numbers, or `--project` instead of a positional reference. Global flags are `--json`, `--show`, `--data-directory PATH`, `--help`. A disposable data root can also come from `CREATOROS_DATA_DIRECTORY`; it must be a dedicated child of a temporary directory. Production uses the established Project Templates data root. List supports `--include-ideas`; hidden locations are never read or listed. Create needs format/title and accepts number, campaign and a unique template set or payload name/UUID. It retains New Project's saved form settings. Create and rename accept `--request-id`: a session retry with the same parameters returns the first successful result, a retry with different parameters is refused, dry runs are never cached, and an in-flight retry returns busy. A full session cache refuses further request IDs rather than risking a duplicate.
+### Rules every command follows
 
-Rename accepts title/number/campaign, `--dry-run`, `--update-headings` (off by default) and `--ignore-open-apps` (explicitly overrides the Adobe-running refusal). Dry runs return at most 50 items plus the complete change count. The GUI sheet lists every change. Media under `03 Media`, hidden items, symlinks and package internals are excluded; Markdown updates change only matching first-line headings in UTF-8 files up to 8 MiB. Names, case/Unicode collisions and a changed reviewed plan are refused before commit. Exclusive rename support is required; unlike project creation, rename does not fall back on SMB. Library save failure restores the original names. A manifest records the changes under `05 Other/` or the project root. Premiere relinking and Watchtower paths remain separate and unverified; no Adobe app is controlled. No token savings have been measured.
+- **One code path.** A command calls the AppModel action the GUI calls (a throwing core the GUI wraps in its alert). The one exception is `idea merge`, which has no GUI equivalent and is documented as control only.
+- **Durable before the reply.** When a mutating command returns, `library.json` is on disk (or the command fails with `store_unavailable`). The result is the record read back from the library: stage, pin, campaign, editor, series, notes, Notion link, idea workspace (path and state), previous paths and availability, so a caller never has to read the file.
+- **One mutation at a time.** Every mutating command takes one lock; a second caller gets `busy` instead of a lost update. Locking follows effects: `project open` (selecting can relink) and `project refresh` are mutating, reading commands are not. A busy GUI gives `busy`; an open sheet the action would collide with (New Project, icon restore, Bin confirmation, import, new set) gives `form_in_use`. Records are fetched again after every wait.
+- **Dry runs.** `--dry-run` is on project remove, relocate, find-moved, icons-strip, icons-restore, workspace-bin, add-files, create, rename, idea remove and merge, stage set and move-all, field remove, template import and remove, set remove, library find-missing and tag-folders, location scan and remove, and compat `--copy-to`. A dry run never changes the library, the disk or the GUI, and is never cached.
+- **Request ids.** `--request-id` on create, rename, register, idea add, idea create-workspace, field add, set create, template import and compat `--copy-to`: a retry with the same parameters in the same app session returns the first result and acts once; different parameters are refused; an in-flight retry returns `busy`. The presentation flag `--show` is not part of the match. The cache is per app session, so a restart forgets it. `app cancel --request-id ID` stops a running long operation only if that id started it (`not_running`, `not_owner` otherwise).
+- **Booleans, arrays, objects.** Every true/false flag accepts `--no-<flag>` to send false (`--no-enabled`, `--no-plain-folders`). Arrays are JSON text (`--stages '["Idea","Plan, draft"]'`, `--only '["/path"]'`) and objects too (`--extra '{"Sponsor":"Acme"}'`); MCP sends real arrays and objects. Series stays a comma string, as in the GUI. `--flag=value` also works, for a value that starts with `--`.
+- **Stages follow the boards.** A stage is accepted only if it is on the record's own board (`invalid_stage`); a live stream never gets a recording stage. A record with no stage reads as Unclassified, never Published. A stage change writes its Finder tag before the reply and reports `finderTag: applied|skipped|failed`; writes for one folder run in order and a newer change replaces an older one waiting.
+- **Hidden locations.** A location unticked in the GUI is never read: its projects are refused with `location_hidden` by every project command, and paths on it are refused. `location set --hidden` is GUI state shared by every caller, so it changes what other callers can see.
+- **Nothing outside the writable area.** `AppRuntime` still applies: an isolated run refuses any write outside its data folder (`not_allowed`). Paths must be absolute, without `.` or `..` parts. Deleting only ever means the Bin: workspace-bin and template remove move to Trash.
 
-The Unix socket is `<data root>/control.sock` (directory 0700, socket 0600, same-user peers only), with newline JSON requests `{"id":"1","action":"status","params":{}}` and `{"id":"1","ok":true,"result":{...}}` or `{"id":"1","ok":false,"error":{"code":"...","message":"..."}}`. Unknown params and requests over 65,536 bytes are refused. Only stale socket files are removed at launch. This is local control, with no authentication beyond OS ownership/peer identity and no remote listener.
+### Commands
 
-The bundled CLI is `Contents/MacOS/creatoros`, and `install.sh` links it into `~/.local/bin` only for the default install root, preserving non-symlink files. The MCP shim ships at `Contents/Resources/mcp/creatoros-mcp.mjs`, uses Node built-ins and the CLI's shared command manifest, and implements protocol 2025-06-18 (`initialize`, `notifications/initialized`, `tools/list`, `tools/call`, `ping`). Node must already be installed. Each app carries its own thin shim; accepted duplication avoids a shared runtime dependency.
+| Command | MCP tool | What it does | Example |
+| --- | --- | --- | --- |
+| `status` | `status` | Read app and GUI state without launching | `creatoros status --json` |
+| `library stats` | `library_stats` | Count visible library records | `creatoros library stats` |
+| `project list` | `project_list` | List projects on ticked locations; --deep also matches text inside documents | `creatoros project list --format Short --limit 10` |
+| `project status` | `project_status` | Inspect a project or idea: stage, pin, campaign, editor, series, notes, workspace, previous paths, availability | `creatoros project status 001 --format Short` |
+| `project open` | `project_open` | Select a project in the GUI (--page pipeline shows it on the board) | `creatoros project open 001 --format Short --page pipeline` |
+| `project refresh` | `project_refresh` | Re-read a project's folder state, as the Refresh Project menu does, and try to relink it if missing | `creatoros project refresh 001 --format Short` |
+| `project reveal` | `project_reveal` | Open the project folder in Finder | `creatoros project reveal 001 --format Short` |
+| `project create` | `project_create` | Create and register a project, or start one from an idea; --dry-run previews name, plan and compatibility | `creatoros project create --format Short --title Example --extra '{"Sponsor":"Acme"}' --request-id example-1` |
+| `project rename` | `project_rename` | Preview or apply the app's reviewed project rename | `creatoros project rename 001 --format Short --title Updated --dry-run` |
+| `project pin` | `project_pin` | Pin a project to the top of the list (idempotent) | `creatoros project pin 001 --format Short` |
+| `project unpin` | `project_unpin` | Unpin a project (idempotent) | `creatoros project unpin 001 --format Short` |
+| `project set-stage` | `project_set_stage` | Move a project or idea to a stage on its own board; the Finder tag is written before replying | `creatoros project set-stage 001 --format Short --stage Editing` |
+| `project update` | `project_update` | Edit pipeline details; an empty value clears. Series is comma separated | `creatoros project update 001 --format Short --editor Jon --series "Euro 2026, Finals"` |
+| `project relocate` | `project_relocate` | Point a record at a folder you name (Locate Folder); the record takes the folder's name | `creatoros project relocate 001 --format Short --path /Volumes/Drive/001 --dry-run` |
+| `project find-moved` | `project_find_moved` | Search the ticked drives for a moved folder; relinks only when exactly one safe match exists | `creatoros project find-moved 001 --format Short --dry-run` |
+| `project icons-strip` | `project_icons_strip` | Remove folder icons so the project can go to LucidLink (the template keeps them) | `creatoros project icons-strip 001 --format Short --dry-run` |
+| `project icons-restore` | `project_icons_restore` | Put a template set's folder icons back; later folders such as 06 Media Revised inherit the icon of the folder their name extends | `creatoros project icons-restore 001 --format Short --set Main --dry-run` |
+| `project remove` | `project_remove` | Remove a project from the list; its folder is never touched | `creatoros project remove 001 --format Short --dry-run` |
+| `project workspace-detach` | `project_workspace_detach` | Keep a started idea's old workspace folder and stop linking it | `creatoros project workspace-detach 001 --format Short` |
+| `project workspace-bin` | `project_workspace_bin` | Move a started idea's old workspace to the Bin (needs --confirm) | `creatoros project workspace-bin 001 --format Short --confirm` |
+| `project register` | `project_register` | Add one existing project folder to the list (Add Existing Project) | `creatoros project register --path /Volumes/Drive/005 --format Short --request-id reg-1` |
+| `project files` | `project_files` | List a project's files and folders (bounded; no symlinks or package contents) | `creatoros project files 001 --format Short --path "02 Project Files"` |
+| `project open-file` | `project_open_file` | Open a project document in its default app with the browser's safety checks | `creatoros project open-file 001 --format Short --path "01 Documents/Script.md"` |
+| `project add-files` | `project_add_files` | Move or copy a file or folder into a project as a browser drop does; never overwrites | `creatoros project add-files 001 --format Short --from /Users/me/clip.mov --to "03 Media" --copy` |
+| `project open-premiere` | `project_open_premiere` | List a project's Premiere documents, or open one with --file | `creatoros project open-premiere 001 --format Short --file "02 Project Files/001.prproj"` |
+| `idea add` | `idea_add` | Add an idea to the first column (recordings only) | `creatoros idea add --title "Ref bias" --format Short --request-id idea-1` |
+| `idea remove` | `idea_remove` | Bin an idea; one with a workspace needs --trash-workspace | `creatoros idea remove "Ref bias" --format Short --dry-run` |
+| `idea create-workspace` | `idea_create_workspace` | Create a draft workspace folder for an idea | `creatoros idea create-workspace "Ref bias" --format Short --template Main --request-id ws-1` |
+| `idea merge` | `idea_merge` | Fold an idea's empty-field metadata and notes into a project, then remove the idea (control only) | `creatoros idea merge "Ref bias" --into 001 --into-format Short --dry-run` |
+| `stage list` | `stage_list` | List both boards' stages with colours and record counts | `creatoros stage list` |
+| `stage set` | `stage_set` | Replace a board's stage list (JSON array, at least two); reports records left on orphaned stages | `creatoros stage set --board recordings --stages '["Idea","Writing","Editing","Published","Abandoned"]'` |
+| `stage set-colour` | `stage_set_colour` | Set a stage's colour (none, gray, green, purple, blue, yellow, red, orange) | `creatoros stage set-colour --stage Editing --colour purple` |
+| `stage move-all` | `stage_move_all` | Move every record in one stage to another on the same board, ignoring GUI filters | `creatoros stage move-all --from Editing --to Published --board recordings --dry-run` |
+| `settings finder-tags` | `settings_finder_tags` | Turn stage Finder tags on or off (--enabled / --no-enabled) | `creatoros settings finder-tags --no-enabled` |
+| `library tag-folders` | `library_tag_folders` | Write stage tags onto every staged folder on a connected, ticked drive | `creatoros library tag-folders --dry-run` |
+| `field list` | `field_list` | List custom naming fields | `creatoros field list` |
+| `field add` | `field_add` | Add a custom naming field | `creatoros field add --name Sponsor --exclude-from-name --request-id field-1` |
+| `field update` | `field_update` | Rename a field or change whether it goes in the folder name | `creatoros field update Sponsor --name Client --no-include-in-name` |
+| `field remove` | `field_remove` | Remove a custom field; --dry-run reports the creation form value it would drop | `creatoros field remove Sponsor --dry-run` |
+| `format list` | `format_list` | List formats with destination, icon and readiness | `creatoros format list` |
+| `format set-destination` | `format_set_destination` | Set where a format's projects are created (saved) | `creatoros format set-destination --format Short --path /Volumes/Drive/Short` |
+| `format set-icon` | `format_set_icon` | Set a format's folder icon from an image or from another folder's icon | `creatoros format set-icon --format Short --image /Users/me/icon.png` |
+| `template list` | `template_list` | List template sets, variants and managed templates | `creatoros template list` |
+| `template files` | `template_files` | List a managed template's files (read-only; opening or editing templates stays in the GUI) | `creatoros template files Main --path "01 Documents"` |
+| `template import` | `template_import` | Import a template folder or .pht; --dry-run returns the scan | `creatoros template import --path /Users/me/Template --name Main --mode full --set Main --format Short` |
+| `template remove` | `template_remove` | Delete a managed template (its copy goes to the Bin) and drop its assignments | `creatoros template remove Old --dry-run` |
+| `set create` | `set_create` | Create a template set, optionally mapping all formats to one template | `creatoros set create --name Main --from-template Fixture --request-id set-1` |
+| `set rename` | `set_rename` | Rename a template set | `creatoros set rename Main --name Channel` |
+| `set assign` | `set_assign` | Use a template for one format in a set | `creatoros set assign Main --format Short --template Fixture` |
+| `set unassign` | `set_unassign` | Stop using a template for one format in a set | `creatoros set unassign Main --format Short` |
+| `set remove` | `set_remove` | Delete a template set (templates stay) | `creatoros set remove Main --dry-run` |
+| `library find-missing` | `library_find_missing` | Find Missing Projects: relink the certain ones, report the rest | `creatoros library find-missing --dry-run` |
+| `library duplicates` | `library_duplicates` | Group projects registered under the same name | `creatoros library duplicates` |
+| `location list` | `location_list` | List locations (key, mounted, hidden, colour, count) and saved scan locations | `creatoros location list` |
+| `location set` | `location_set` | Hide, show or recolour a location in the GUI; hidden locations disappear for every caller | `creatoros location set volume:Drive --hidden --colour orange` |
+| `location scan` | `location_scan` | Scan a folder or saved location for projects; --dry-run lists them, --only registers a subset | `creatoros location scan --path /Volumes/Drive/Projects --dry-run` |
+| `location remove` | `location_remove` | Forget a saved scan location (registered projects stay) | `creatoros location remove Projects --dry-run` |
+| `compat check` | `compat_check` | Check names for LucidLink; --copy-to makes a corrected copy (--dry-run returns the rename proposal) | `creatoros compat check --project 001 --format Short --copy-to /Volumes/Drive/Out` |
+| `app cancel` | `app_cancel` | Cancel the running long operation, only if this request id started it | `creatoros app cancel --request-id create-1` |
+
+References: a project or idea is a UUID, its exact folder name or its number (`--format` disambiguates; ideas use their name). A set, template, field or saved location is a UUID or its exact name. Most commands take the reference as a bare word or as `--project`, `--set`, `--template`, `--field`, `--location`, `--key`.
+
+### Notes and limits
+
+- `project create` accepts `--from-idea REF` (the idea becomes the project and keeps its identity; format must match the idea; a workspace-backed idea goes through the same promotion as the GUI and the result says the old workspace still needs a decision), `--extra` (custom field values by field name), `--destination PATH` (a one-off destination for this project only, never saved, so it cannot race another caller's saved setting), `--plain-folders` / `--no-plain-folders` (omitted keeps the LucidLink rule) and `--dry-run`, which returns the rendered folder name, readiness, issues, renamed entries and the prospective LucidLink report without creating anything. It retains New Project's saved form settings.
+- `stage move-all` moves every record of a board's stage regardless of the GUI's search, format and stage filters (the GUI's Move All moves only what is showing); records on hidden locations are left alone. `stage set` takes names in a JSON array because a name may contain a comma, and reports records left on removed stages, which keep them.
+- `project icons-restore` defaults the format to the record's and the set to the only available candidate; otherwise it answers `ambiguous_set` and lists the candidates with their availability and reason. Folders that extend a template folder's name are restored too and reported under `inherited`; ties under `ambiguous`. A stopped strip or restore reports what it already did (`cancelled`), and a file that cannot be changed is listed under `failed` while the rest proceeds.
+- `project relocate` mirrors Locate Folder: the record takes the folder's name and the old path joins `previousPaths`; nothing is renamed on disk. `project find-moved` relinks only when exactly one safe candidate exists; otherwise it returns the candidates and `project relocate` finishes the job. Dry runs say `wouldRelink`.
+- `project files`, `open-file`, `open-premiere`, `add-files` and `template files` use the file browser's engines: no symlinks, no package contents, `Icon\r` hidden, applications, installers and scripts never opened, no overwriting, same-volume moves and cross-volume copies (`--copy` forces a copy; folders only move). Opening or editing a managed template stays GUI-only.
+- `location scan --dry-run` lists what it found with `alreadyRegistered`; applying registers everything found or the paths in `--only`, and saves the location either way.
+- `library tag-folders` skips hidden locations and checks each folder again before writing. `workspace-bin` and `idea remove --trash-workspace` need explicit confirmation flags; the folder goes to the Bin and the reply names where.
+- Template deletion saves the library before it finishes; if the save fails the files are put back from the Bin, or the error names their exact place in the Bin.
+- No token savings have been measured.
+
+The Unix socket is `<data root>/control.sock` (directory 0700, socket 0600, same-user peers only), with newline JSON requests `{"id":"1","action":"status","params":{}}` and `{"id":"1","ok":true,"result":{...}}` or `{"id":"1","ok":false,"error":{"code":"...","message":"..."}}`. Unknown params and requests over 65,536 bytes are refused. Only stale socket files are removed at launch. This is local control, with no authentication beyond OS ownership/peer identity and no remote listener. Error codes you may see include `busy`, `form_in_use`, `not_found`, `ambiguous_*`, `invalid_params`, `invalid_stage`, `location_hidden`, `not_allowed`, `workspace_review`, `confirmation_required`, `cancelled`, `store_unavailable`, `unavailable`, `tags_disabled` and `action_failed`.
+
+The bundled CLI is `Contents/MacOS/creatoros`, and `install.sh` links it into `~/.local/bin` only for the default install root, preserving non-symlink files. The MCP shim ships at `Contents/Resources/mcp/creatoros-mcp.mjs`, uses Node built-ins and the CLI's generated manifest (`creatoros mcp-manifest`), and implements protocol 2025-06-18 (`initialize`, `notifications/initialized`, `tools/list`, `tools/call`, `ping`). It routes each tool by the exact CLI words the manifest carries in `_meta.creatoros.words`, never by splitting the tool name, so tool names with `_` for both `.` and `-` (`project_set_stage`) are safe. Node must already be installed. Each app carries its own thin shim; accepted duplication avoids a shared runtime dependency. The shim starts one CLI process per call without waiting for the previous one, so two calls sent together can meet `busy`.
 
 ```sh
 claude mcp add creatoros -- node "/Applications/JuniorOS Apps/CreatorOS.app/Contents/Resources/mcp/creatoros-mcp.mjs"
@@ -138,7 +216,7 @@ command = "node"
 args = ["/Applications/JuniorOS Apps/CreatorOS.app/Contents/Resources/mcp/creatoros-mcp.mjs"]
 ```
 
-For a disposable build check: `zsh Scripts/check-ai-control.sh "/path/to/CreatorOS.app"`; `zsh Scripts/check-isolated-defaults.sh "/path/to/CreatorOS.app"` launches a re-identified copy with `--data-directory` and fails if anything reaches its defaults domain (it never touches the production domain); `python3 Scripts/check-control.py "/path/to/CreatorOS.app"` exercises the socket boundary. `MCP_CLI` overrides the shim's executable for testing. MCP inherits `CREATOROS_DATA_DIRECTORY`. UI gestures, physical disconnected drives, real LucidLink and Adobe relinking need separate acceptance evidence.
+For a disposable build check: `python3 Scripts/check-ai-control.py <built ProjectTemplates executable or CreatorOS.app>` (the executable form needs `creatoros` beside it) runs every command on synthetic data, sends every MCP tool through the shim and covers dry-run byte identity, request-id retries, hidden-location refusals and concurrent callers; `python3 Scripts/check-control.py <app> <scratch>` runs the socket boundary and the AppModel harness (`Scripts/check-control-model.swift`, including GUI-sheet collisions); `zsh Scripts/check-isolated-defaults.sh "/path/to/CreatorOS.app"` launches a re-identified copy with `--data-directory` and fails if anything reaches its defaults domain (it never touches the production domain). `MCP_CLI` overrides the shim's executable for testing. MCP inherits `CREATOROS_DATA_DIRECTORY`. UI gestures, physical disconnected drives, real LucidLink and Adobe relinking need separate acceptance evidence.
 
 
 ## 1.4.0 UI fix-round evidence
