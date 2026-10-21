@@ -113,7 +113,7 @@ extension AppModel {
             let mutating = command.mutates || (action == "compat.check" && params["copyTo"] != nil)
             if mutating {
                 // Every mutation, whatever handler it reaches, waits for a GUI operation in progress.
-                guard !busy else { throw ControlFailure(code: "busy", message: "Wait for the current operation.") }
+                guard !busy, guiWriteDepth == 0 else { throw ControlFailure(code: "busy", message: "Wait for the current operation.") }
                 guard !controlMutating else { throw ControlFailure(code: "busy", message: "Another control mutation is preparing or running.") }
                 controlMutating = true
                 controlOwner = params["requestId"] as? String

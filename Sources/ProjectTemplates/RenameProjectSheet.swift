@@ -27,6 +27,7 @@ extension AppModel {
     func renameProject(_ id: UUID, number: String, campaign: String, title: String, updateHeadings: Bool,
                        expectedChanges: [ProjectRenameChange]? = nil,
                        onFinish: @escaping (Result<ProjectRenameResult, Error>) -> Void = { _ in }) {
+        if writeLocked { error = Self.writeLockedMessage; onFinish(.failure(ControlFailure(code: "busy", message: Self.writeLockedMessage))); return }
         guard !busy, storeUsable else { onFinish(.failure(ControlFailure(code: busy ? "busy" : "store_unavailable", message: "Wait for the operation or resolve the library error."))); return }
         guard let record = library.projects.first(where: { $0.id == id }) else { onFinish(.failure(ControlFailure(code: "not_found", message: "Project is no longer registered."))); return }
         do { _ = try projectFolderForAction(record) } catch { onFinish(.failure(error)); return }

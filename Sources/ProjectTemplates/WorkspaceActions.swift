@@ -102,6 +102,7 @@ extension AppModel {
     }
     /// Keeps the old workspace folder and stops linking it to the started project. Saved before it returns.
     func detachWorkspace(_ record: ProjectRecord) async throws {
+        guard !writeLocked else { throw AppFailure(Self.writeLockedMessage) }
         busy = true
         defer { busy = false }
         do {
@@ -118,6 +119,8 @@ extension AppModel {
     /// Moves an owned workspace to the Bin, then saves the record without it (or removes the idea). Returns the Bin location.
     @discardableResult
     func trashWorkspace(_ record: ProjectRecord, at confirmed: URL, removingRecord: Bool) async throws -> URL? {
+        // Refused before anything goes to the Bin when another writer holds the slot.
+        guard !writeLocked else { throw AppFailure(Self.writeLockedMessage) }
         busy = true
         defer { busy = false }
         var trashed = false

@@ -319,9 +319,27 @@ enum BadgeColour: String, CaseIterable, Identifiable {
     /// True inside a control (creatoros/MCP) mutation; task-local so a click or a background task that happens to run at the
     /// same time does not count as the command.
     @TaskLocal static var inControlAction = false
-    /// Library writes happen one at a time through one path: while a command is changing the library, a click or a background
-    /// task is told to retry instead of interleaving with it.
-    var writeLocked: Bool { controlMutating && !Self.inControlAction }
+    /// There is one writer slot. A control mutation holds it from its start to its reply (`controlMutating`); a multi-step
+    /// write started in the app holds it through `withWriterSlot` (`guiWriteDepth`); a long operation holds it through `busy`.
+    /// Anyone else who wants to write, click or background task alike, is told to retry instead of interleaving.
+    var guiWriteDepth = 0
+    /// True inside the code of a multi-step write that holds the app's slot.
+    @TaskLocal static var slotHeld = false
+    var writeLocked: Bool {
+        if Self.inControlAction { return false }
+        return controlMutating || (guiWriteDepth > 0 && !Self.slotHeld)
+    }
+    /// Runs a multi-step write (one that waits between deciding and committing) while holding the writer slot. Refused at the
+    /// start, before anything is done, when another owner holds it. A control mutation already holds it for its own writes.
+    func withWriterSlot<T>(_ body: () async throws -> T) async throws -> T {
+        if Self.inControlAction { return try await body() }
+        guard !writeLocked, !busy, guiWriteDepth == 0 else { throw AppFailure(Self.writeLockedMessage) }
+        guiWriteDepth += 1
+        defer { guiWriteDepth -= 1 }
+        return try await Self.$slotHeld.withValue(true) { try await body() }
+    }
+    /// Test hook: awaited inside a slot-holding write so a check can try to start a second writer while the first waits.
+    var writePauseForTests: (() async -> Void)?
     static let writeLockedMessage = "Busy: a command from another tool is changing the library right now. Wait a moment and retry."
     func mutate(_ change: (inout Library) throws -> Void) throws {
         guard !writeLocked else { throw AppFailure(Self.writeLockedMessage) }
@@ -339,6 +357,8 @@ enum BadgeColour: String, CaseIterable, Identifiable {
     func commitDurably(_ change: (inout Library) throws -> Void) async throws {
         guard !writeLocked else { throw AppFailure(Self.writeLockedMessage) }
         await saveTask?.value
+        // Ownership is checked again after the wait: someone else may have taken the slot meanwhile.
+        guard !writeLocked else { throw AppFailure(Self.writeLockedMessage) }
         guard storeUsable else { throw AppFailure("The library is unavailable. The existing records have been retained.") }
         var next = library
         try change(&next)
@@ -576,6 +596,9 @@ enum BadgeColour: String, CaseIterable, Identifiable {
     /// put back, or the error names its exact place in the Bin, so the library never points at a payload that is gone.
     @discardableResult
     func deleteTemplate(_ record: TemplateRecord) async throws -> URL? {
+        try await withWriterSlot { try await deleteTemplateHoldingSlot(record) }
+    }
+    private func deleteTemplateHoldingSlot(_ record: TemplateRecord) async throws -> URL? {
         let payload = store.payload(record)
         try runtime.requireWritable(payload)
         var trashed: NSURL?
@@ -777,6 +800,8 @@ enum BadgeColour: String, CaseIterable, Identifiable {
         }
     }
     func setHidden(_ hidden: Bool, for location: ProjectLocation) {
+        // What a running command can see must not change under it.
+        guard !writeLocked else { error = Self.writeLockedMessage; return }
         if hidden { hiddenLocations.insert(location.key) } else { hiddenLocations.remove(location.key) }
         refreshMounts()
         scheduleDeepSearch()
@@ -808,6 +833,7 @@ enum BadgeColour: String, CaseIterable, Identifiable {
         BadgeColour(rawValue: locationColours[location.key] ?? defaults.string(forKey: "locationColour." + location.key) ?? location.defaultColour) ?? .gray
     }
     func setBadgeColour(_ colour: BadgeColour, for location: ProjectLocation) {
+        guard !writeLocked else { error = Self.writeLockedMessage; return }
         locationColours[location.key] = colour.rawValue
         defaults.set(colour.rawValue, forKey: "locationColour." + location.key)
     }
@@ -1090,6 +1116,10 @@ enum BadgeColour: String, CaseIterable, Identifiable {
     /// replaced, other tags stay). Saved before the tags are written. With `dryRun` it only counts.
     @discardableResult
     func renameStageCore(_ old: String, to new: String, on kind: PipelineKind, dryRun: Bool = false) async throws -> StageRenameReport {
+        if dryRun { return try await renameStageHoldingSlot(old, to: new, on: kind, dryRun: true) }
+        return try await withWriterSlot { try await renameStageHoldingSlot(old, to: new, on: kind, dryRun: false) }
+    }
+    private func renameStageHoldingSlot(_ old: String, to new: String, on kind: PipelineKind, dryRun: Bool) async throws -> StageRenameReport {
         let stages = library.stages(for: kind)
         guard let index = stages.firstIndex(of: old) else { throw AppFailure("‘\(old)’ is not a stage on the \(kind.title) board.") }
         var renamed = stages; renamed[index] = new
@@ -1101,6 +1131,7 @@ enum BadgeColour: String, CaseIterable, Identifiable {
         let taggable = { (r: ProjectRecord) in self.library.finderTagsEnabled && !r.isPlanned && !self.hiddenLocations.contains(r.location.key) && r.location.isMounted }
         report.tagsToRewrite = affected(library).filter(taggable).count
         if dryRun { return report }
+        await writePauseForTests?()
         let ids = Set(affected(library).map(\.id))
         let otherBoardUsesOld = library.stages(for: kind == .live ? .recordings : .live).contains(old)
         let colour = library.colour(of: old)
@@ -1135,6 +1166,7 @@ enum BadgeColour: String, CaseIterable, Identifiable {
     func removeFolderIcons(_ record: ProjectRecord) { stripFolderIcons(record) }
     /// The same action with a result for callers outside the GUI. Progress, status and alerts stay visible in the app.
     func stripFolderIcons(_ record: ProjectRecord, onFinish: ((Result<IconStripReport, Error>) -> Void)? = nil) {
+        if writeLocked { error = Self.writeLockedMessage; onFinish?(.failure(AppFailure(Self.writeLockedMessage))); return }
         guard !record.isPlanned else { onFinish?(.failure(AppFailure("An idea has no folder yet."))); return }
         let runtime = runtime
         run("Removing folder icons from \(record.name)", cancelNote: "Icons already removed stay removed; Restore Folder Icons puts them back.") { token, _ in
@@ -1174,6 +1206,7 @@ enum BadgeColour: String, CaseIterable, Identifiable {
         }
     }
     func restoreIcons(_ record: ProjectRecord, format: String, setID: UUID, onFinish: ((Result<IconRestoreReport, Error>) -> Void)? = nil) {
+        if writeLocked { error = Self.writeLockedMessage; onFinish?(.failure(AppFailure(Self.writeLockedMessage))); return }
         guard !record.isPlanned, Library.formats.contains(format),
               let set = library.set(setID), let payload = library.resolve(setID: setID, format: format) else {
             onFinish?(.failure(AppFailure("Choose a template set that has files for this format."))); return
