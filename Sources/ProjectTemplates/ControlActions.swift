@@ -14,6 +14,17 @@ extension AppModel {
         let path = record.isPlanned ? record.ideaWorkspace?.path : record.path
         return path.map { hiddenLocations.contains(ProjectLocation(path: $0).key) } ?? false
     }
+    /// The folder a record is browsed or opened at: its project folder, or an idea's workspace.
+    func controlPath(_ record: ProjectRecord) -> String { record.isPlanned ? record.ideaWorkspace?.path ?? "" : record.path }
+    /// Throws unless the record is still where it was and still visible. Handlers call it right after a wait and before
+    /// touching the filesystem; control() calls it once more before any read answers.
+    func stillCurrent(_ record: ProjectRecord) throws {
+        guard let now = library.projects.first(where: { $0.id == record.id }) else {
+            throw ControlFailure(code: "record_changed", message: "The project moved or changed while this ran; retry.")
+        }
+        guard !controlHidden(now) else { throw ControlFailure(code: "location_hidden", message: "Tick this project's location in the GUI first.") }
+        guard controlPath(now) == controlPath(record) else { throw ControlFailure(code: "record_changed", message: "The project moved or changed while this ran; retry.") }
+    }
     func asInvalid<T>(_ work: () throws -> T) throws -> T {
         do { return try work() } catch let failure as AppFailure { throw ControlFailure(code: "invalid_params", message: failure.localizedDescription) }
     }
@@ -335,16 +346,16 @@ extension AppModel {
             return reply
         case "project.files":
             let root = try await projectRoot(record)
-            return try await listFolder(root: root, relative: params["path"] as? String ?? "", params: params)
+            return try await listFolder(root: root, relative: params["path"] as? String ?? "", params: params, record: record)
         case "project.open-file":
             let root = try await projectRoot(record)
             let relative = params["path"] as! String
-            let url = try await asInvalidAsync { try await Self.openDocument(root: root, relative: relative, activates: params["show"] as? Bool == true) }
+            let url = try await asInvalidAsync { try await Self.openDocument(root: root, relative: relative, activates: params["show"] as? Bool == true, beforeOpen: { try self.stillCurrent(record) }) }
             return ["id": record.id.uuidString, "opened": url.path]
         case "project.open-premiere":
             let root = try await projectRoot(record)
             if let file = params["file"] as? String {
-                let url = try await asInvalidAsync { try await Self.openDocument(root: root, relative: file, expecting: "prproj", activates: params["show"] as? Bool == true) }
+                let url = try await asInvalidAsync { try await Self.openDocument(root: root, relative: file, expecting: "prproj", activates: params["show"] as? Bool == true, beforeOpen: { try self.stillCurrent(record) }) }
                 return ["id": record.id.uuidString, "opened": url.path]
             }
             let files = try await Task.detached { try ProjectBrowser.premiereFiles(root: root) }.value
@@ -393,12 +404,16 @@ extension AppModel {
         // An idea browses its owned workspace through the same validated resolver the GUI's Browse Workspace uses.
         if record.isPlanned { return try await folderToShow(record) }
         guard mountedLocations.contains(record.location.key) else { throw ControlFailure(code: "unavailable", message: "Connect the project's drive first.") }
-        do { return try await Task.detached { try ProjectBrowser.root(record) }.value }
-        catch { throw ControlFailure(code: "unavailable", message: error.localizedDescription) }
+        let root: URL
+        do { root = try await Task.detached { try ProjectBrowser.root(record) }.value }
+        catch { try stillCurrent(record); throw ControlFailure(code: "unavailable", message: error.localizedDescription) }
+        try stillCurrent(record)
+        return root
     }
     /// One bounded folder listing, the same engine the file browser uses.
-    func listFolder(root: URL, relative: String, params: [String: Any]) async throws -> [String: Any] {
+    func listFolder(root: URL, relative: String, params: [String: Any], record: ProjectRecord? = nil) async throws -> [String: Any] {
         await controlPauseForTests?()
+        if let record { try stillCurrent(record) }
         let items: [BrowserItem]
         do { items = try await Task.detached { try ProjectBrowser.list(root: root, relative: relative) }.value }
         catch { throw ControlFailure(code: "invalid_params", message: error.localizedDescription) }
@@ -410,9 +425,10 @@ extension AppModel {
                                        "modified": $0.modified.map(formatter.string(from:)) as Any? ?? NSNull()] as [String: Any] }]
     }
     /// Opens a document in its default app under the file browser's rules: no apps, installers or scripts.
-    static func openDocument(root: URL, relative: String, expecting ext: String? = nil, activates: Bool = true) async throws -> URL {
+    static func openDocument(root: URL, relative: String, expecting ext: String? = nil, activates: Bool = true, beforeOpen: () throws -> Void = {}) async throws -> URL {
         let item = BrowserItem(relativePath: relative, name: (relative as NSString).lastPathComponent, directory: false, package: false, bytes: 0, modified: nil)
         let url = try await Task.detached { try ProjectBrowser.openable(item, root: root) }.value
+        try beforeOpen()
         if let ext, url.pathExtension.lowercased() != ext { throw AppFailure("This is not a \(ext == "prproj" ? "Premiere project" : ext + " file").") }
         guard await NSWorkspace.shared.urlForApplication(toOpen: url) != nil else { throw AppFailure("No app is registered for this file type. Install or choose the appropriate editor in macOS first.") }
         let configuration = NSWorkspace.OpenConfiguration(); configuration.activates = activates
@@ -471,7 +487,8 @@ extension AppModel {
         let runtime = runtime
         if params["dryRun"] as? Bool == true {
             do { _ = try await Task.detached { try BrowserTransfer.transfer([source], into: destination, runtime: runtime, forceCopy: forceCopy, validateOnly: true) }.value }
-            catch { throw ControlFailure(code: "invalid_params", message: error.localizedDescription) }
+            catch { try stillCurrent(record); throw ControlFailure(code: "invalid_params", message: error.localizedDescription) }
+            try stillCurrent(record)
             return ["dryRun": true, "from": source.path, "into": destination.path, "wouldCopy": forceCopy, "valid": true]
         }
         try requireIdle()

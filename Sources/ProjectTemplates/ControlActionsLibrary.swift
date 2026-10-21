@@ -373,8 +373,10 @@ extension AppModel {
     func controlCompatibility(_ params: [String: Any]) async throws -> [String: Any] {
         let dryRun = params["dryRun"] as? Bool == true
         let url: URL
+        var watched: ProjectRecord?
         if params["project"] != nil {
             let record = try controlRecord(params)
+            watched = record
             url = try projectFolderForAction(record)
         } else { url = try controlURL(params["path"] as! String, directory: true) }
         try requireIdle()
@@ -384,6 +386,7 @@ extension AppModel {
             do { report = try await Task.detached { try Compatibility.scan(url) }.value }
             catch { throw ControlFailure(code: "action_failed", message: error.localizedDescription) }
         } else { report = try await awaiting { done in scanCompatibility(url, onFinish: done) } }
+        if let watched { try stillCurrent(watched) }
         var reply = compatibilitySummary(report)
         guard let target = params["copyTo"] as? String else { return reply }
         guard report.canCopy else { throw ControlFailure(code: "cannot_copy", message: "This scan cannot make a corrected copy: it is incomplete or has name collisions.") }

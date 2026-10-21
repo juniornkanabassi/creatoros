@@ -118,13 +118,17 @@ extension AppModel {
                 controlOwner = params["requestId"] as? String
             }
             defer { if mutating { controlMutating = false; controlOwner = nil } }
-            let result = try await controlAction(action, params)
-            // A read that waited must not answer for a project or path whose location was unticked meanwhile, whichever
-            // handler produced it. Mutations hold the lock above, and location changes are mutations, so they cannot overlap.
+            // A read that waits must not answer for a project that was hidden, moved or removed meanwhile, whichever handler
+            // produced the answer and whether it succeeded or failed. Mutations hold the lock above, and location changes are
+            // mutations, so they cannot overlap; reads are checked here against the record as it was when they started.
+            let watched = mutating || params["project"] == nil ? nil : try? controlRecord(params)
+            let outcome: Result<[String: Any], Error>
+            do { outcome = .success(try await controlAction(action, params)) } catch { outcome = .failure(error) }
             if !mutating {
-                if params["project"] != nil { _ = try controlRecord(params) }
-                if let refusal = cachedAccessRefusal(params, result) { throw refusal }
+                if let watched { try stillCurrent(watched) }
+                if case .success(let answer) = outcome, let refusal = cachedAccessRefusal(params, answer) { throw refusal }
             }
+            let result = try outcome.get()
             if let key { controlResults[key] = (parameters, result) }
             if params["show"] as? Bool == true, action != "project.reveal" { NSApp.activate(ignoringOtherApps: true) }
             return ["id": id, "ok": true, "result": result]

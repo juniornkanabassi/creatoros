@@ -179,6 +179,28 @@ import TemplateCore
         let racingCode = (racing["error"] as? [String: Any])?["code"] as? String
         precondition(racingCode == "location_hidden", "a listing that waited answered after its location was hidden: \(racing)")
         print("PASS 1 delayed listing check: the answer is withheld when the location is hidden during the wait")
+        // The project moves during the wait: the listing must not answer from the old folder, and must say why.
+        let moving = model.library.projects.first { $0.id == target.id }!
+        let oldFolder = URL(fileURLWithPath: moving.path)
+        let newFolder = model.runtime.root.appendingPathComponent("MovedDuringWait")
+        try FileManager.default.createDirectory(at: newFolder, withIntermediateDirectories: true)
+        try Data("old".utf8).write(to: oldFolder.appendingPathComponent("OLD.txt"))
+        try Data("new".utf8).write(to: newFolder.appendingPathComponent("NEW.txt"))
+        model.controlPauseForTests = { _ = try? model.relocate(moving, to: newFolder) }
+        let moved = await model.control(["id": "m", "action": "project.files", "params": ["project": target.id.uuidString]])
+        model.controlPauseForTests = nil
+        let movedCode = (moved["error"] as? [String: Any])?["code"] as? String
+        precondition(movedCode == "record_changed", "a listing answered after its project moved: \(moved)")
+        let nowRecord = model.library.projects.first { $0.id == target.id }!
+        _ = try model.relocate(nowRecord, to: oldFolder)
+        // Hidden during the wait while asking for a folder that does not exist: location_hidden, not a filesystem error.
+        model.controlPauseForTests = { model.hiddenLocations.insert(target.location.key) }
+        let missing = await model.control(["id": "h", "action": "project.files", "params": ["project": target.id.uuidString, "path": "DOES_NOT_EXIST"]])
+        model.controlPauseForTests = nil
+        model.hiddenLocations.remove(target.location.key)
+        let missingCode = (missing["error"] as? [String: Any])?["code"] as? String
+        precondition(missingCode == "location_hidden", "an error path leaked past a hidden location: \(missing)")
+        print("PASS 1 record change during a wait: a moved project gives record_changed and a hidden one gives location_hidden, on success and on error paths")
         // While a New Project, rename or start-from-idea form is open, nothing it is built from may change under it.
         let beforeForm = try Data(contentsOf: model.store.file)
         let guarded: [(String, [String: Any])] = [("set.unassign", ["set": "x", "format": "Short"]), ("set.assign", ["set": "x", "format": "Short", "template": "x"]),
