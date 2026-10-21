@@ -235,3 +235,60 @@ func plainCopyChecks(base: URL) throws {
     try check(roundTrip.restored == ["01 Documents"] && inside(try digestTree(withIcons)) == iconTree, "strip then restore returns the original icons")
     try rejects("strip refuses a missing project") { _ = try IconService.strip(project: out.appendingPathComponent("nowhere")) }
 }
+
+
+/// A later folder such as `06 Media Revised` takes the icon of the template folder whose name it extends (`03 Media`).
+func inheritedIconChecks(base: URL) throws {
+    let fm = FileManager.default
+    let template = base.appendingPathComponent("Inherit/Template"), project = base.appendingPathComponent("Inherit/Project")
+    var flagged = Data(count: 32); flagged[8] = 0x04
+    func icon(_ folder: URL) throws {
+        try fm.createDirectory(at: folder, withIntermediateDirectories: true)
+        try Data("icon \(folder.lastPathComponent)".utf8).write(to: folder.appendingPathComponent("Icon\r"))
+        _ = flagged.withUnsafeBytes { setxattr(folder.path, "com.apple.FinderInfo", $0.baseAddress, 32, 0, XATTR_NOFOLLOW) }
+    }
+    try icon(template.appendingPathComponent("03 Media"))
+    try icon(template.appendingPathComponent("02 Project Files/01 Premiere Pro"))
+    try fm.createDirectory(at: template.appendingPathComponent("01 Documents"), withIntermediateDirectories: true)
+    for folder in ["03 Media", "06 Media Revised", "07 Unrelated", "08 Mediabox", "Media Extras", "01 Documents", "02 Project Files/01 Premiere Pro", "02 Project Files/05 Premiere Pro Archive"] {
+        try fm.createDirectory(at: project.appendingPathComponent(folder), withIntermediateDirectories: true)
+    }
+    try Data("clip".utf8).write(to: project.appendingPathComponent("06 Media Revised/take.mov"))
+    let fields = ProjectFields(number: "000", format: "Short", title: "Inherit")
+    func hasIcon(_ path: String) -> Bool {
+        let folder = project.appendingPathComponent(path)
+        return fm.fileExists(atPath: folder.appendingPathComponent("Icon\r").path) && ((try? IconService.attribute("com.apple.FinderInfo", at: folder))??[8] ?? 0) & 0x04 != 0
+    }
+    let filesBefore = try digestTree(project).filter { !$0.key.contains("::") }
+    let preview = try IconService.restorePreview(template: template, fields: fields, onto: project)
+    try check(preview.restored == ["02 Project Files/01 Premiere Pro", "03 Media"] && preview.inherited == ["02 Project Files/05 Premiere Pro Archive", "06 Media Revised"] && preview.unmatched.isEmpty,
+              "icon restore preview lists exact and inherited folders")
+    try check(!hasIcon("03 Media") && !hasIcon("06 Media Revised"), "icon restore preview writes nothing")
+    let report = try IconService.restore(template: template, fields: fields, onto: project)
+    try check(report.restored == preview.restored && report.inherited == preview.inherited && report.failed.isEmpty, "restore reports inherited folders apart from exact ones")
+    try check(hasIcon("03 Media") && hasIcon("06 Media Revised") && hasIcon("02 Project Files/05 Premiere Pro Archive"), "a folder extending a template folder's name inherits its icon, at the root and nested")
+    try check(!hasIcon("07 Unrelated") && !hasIcon("08 Mediabox") && !hasIcon("Media Extras"), "unrelated folders and folders that merely start with the same letters get no icon")
+    try check(try Data(contentsOf: project.appendingPathComponent("06 Media Revised/take.mov")) == Data("clip".utf8) && (try children(project)).sorted() == ["01 Documents", "02 Project Files", "03 Media", "06 Media Revised", "07 Unrelated", "08 Mediabox", "Media Extras"],
+              "inheriting an icon touches no file and creates no folder")
+    try check(report.summary.contains("2 more folders inherited"), "restore summary mentions inherited folders")
+    let again = try IconService.restore(template: template, fields: fields, onto: project)
+    try check(again.inherited.isEmpty && again.restored == preview.restored, "restoring twice leaves an inherited icon alone")
+    let dry = try IconService.strip(project: project, dryRun: true)
+    try check(dry.iconFilesRemoved.count == 4 && hasIcon("06 Media Revised"), "strip dry run lists the icon files and removes none")
+    let stripped = try IconService.strip(project: project)
+    try check(stripped.iconFilesRemoved.count == 4 && !hasIcon("06 Media Revised") && !hasIcon("03 Media"), "strip clears inherited icons too")
+    let restored = try IconService.restore(template: template, fields: fields, onto: project)
+    try check(restored.inherited == preview.inherited && hasIcon("06 Media Revised"), "strip then restore brings the inherited icons back")
+    try check(try digestTree(project).filter { !$0.key.contains("::") && !$0.key.hasSuffix("Icon\r") } == filesBefore.filter { !$0.key.hasSuffix("Icon\r") }, "regular files are identical after all of it")
+    // Two equally long template names that a folder extends: skipped and reported, never guessed.
+    try icon(template.appendingPathComponent("04 Media"))
+    try fm.createDirectory(at: project.appendingPathComponent("04 Media"), withIntermediateDirectories: true)
+    try fm.createDirectory(at: project.appendingPathComponent("09 Media Final"), withIntermediateDirectories: true)
+    let tie = try IconService.restorePreview(template: template, fields: fields, onto: project)
+    try check(tie.ambiguous == ["09 Media Final"] && !tie.inherited.contains("09 Media Final") && !tie.inherited.contains("06 Media Revised") && tie.restored.contains("04 Media"),
+              "a folder extending two equally long template names is reported as ambiguous and skipped")
+    // The numbered-prefix conflict rule is unchanged: a different spelling under the template's own prefix still blocks restore.
+    try fm.removeItem(at: project.appendingPathComponent("04 Media"))
+    try fm.createDirectory(at: project.appendingPathComponent("04 Media Alt"), withIntermediateDirectories: true)
+    try rejects("a folder sharing a template folder's number still fails the layout check") { _ = try IconService.restore(template: template, fields: fields, onto: project) }
+}

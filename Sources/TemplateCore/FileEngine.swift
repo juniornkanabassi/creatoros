@@ -173,11 +173,18 @@ public enum IconService {
 /// Result of putting a template's folder icons back onto a project that lost them, for example one that lived in LucidLink.
 public struct IconRestoreReport: Sendable {
     public var restored: [String] = []
+    /// Project folders the template does not have, such as `06 Media Revised`, that took the icon of the template folder
+    /// their name extends (`03 Media`).
+    public var inherited: [String] = []
+    /// Folders that extend two equally long template names; they are skipped rather than guessed.
+    public var ambiguous: [String] = []
     public var unmatched: [String] = []
     public var failed: [String] = []
     public var outerIconApplied = false
     public var summary: String {
         var parts = ["Restored \(restored.count) folder icons."]
+        if !inherited.isEmpty { parts.append("\(inherited.count) more folders inherited the icon of the template folder their name extends.") }
+        if !ambiguous.isEmpty { parts.append("\(ambiguous.count) folders match more than one template folder and were skipped.") }
         if outerIconApplied { parts.append("Project icon applied.") }
         if !unmatched.isEmpty { parts.append("\(unmatched.count) template folders were not found in the project and were skipped.") }
         if !failed.isEmpty { parts.append("\(failed.count) could not be written.") }
@@ -258,36 +265,105 @@ public extension IconService {
         }
     }
 
+    /// One folder that will receive an icon: the template's `Icon\r` and folder, and where they go in the project.
+    private struct RestoreStep {
+        let icon: URL, templateFolder: URL, target: URL, folder: URL, label: String, inherited: Bool
+    }
+    /// The folders a restore would write to, found without writing anything. Exact matches come first, in template order;
+    /// then project folders that are not in the template but extend the name of one that has an icon.
+    private static func restoreSteps(plan: CopyPlan, payload: URL, project: URL) throws -> (steps: [RestoreStep], unmatched: [String], ambiguous: [String]) {
+        let fm = FileManager.default
+        func isFolder(_ url: URL) -> Bool {
+            guard let values = try? url.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey]) else { return false }
+            return values.isDirectory == true && values.isSymbolicLink != true
+        }
+        func hasCustomIcon(_ url: URL) -> Bool {
+            guard let info = try? attribute("com.apple.FinderInfo", at: url), info.count > 8 else { return false }
+            return info[8] & 0x04 != 0
+        }
+        // The name after the numeric prefix: "03 Media" gives "media". "06 Media Revised" extends it.
+        func plainName(_ name: String) -> String? {
+            guard name.first?.isNumber == true else { return nil }
+            let rest = name.drop(while: \.isNumber).drop(while: { " -._".contains($0) })
+            return rest.isEmpty ? nil : Naming.key(String(rest))
+        }
+        var steps: [RestoreStep] = [], unmatched: [String] = []
+        for entry in plan.entries where entry.metadata {
+            let target = project.appendingPathComponent(entry.output), folder = target.deletingLastPathComponent()
+            let parent = (entry.output as NSString).deletingLastPathComponent
+            guard (try? folder.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true else { unmatched.append(parent); continue }
+            let source = payload.appendingPathComponent(entry.source)
+            steps.append(RestoreStep(icon: source, templateFolder: source.deletingLastPathComponent(), target: target, folder: folder,
+                                     label: parent.isEmpty ? "." : parent, inherited: false))
+        }
+        var candidates: [String: [(length: Int, step: RestoreStep)]] = [:]
+        for entry in plan.entries where entry.metadata {
+            let templateFolder = (entry.output as NSString).deletingLastPathComponent
+            guard let base = plainName((templateFolder as NSString).lastPathComponent) else { continue }
+            let parent = (templateFolder as NSString).deletingLastPathComponent
+            let projectParent = parent.isEmpty ? project : project.appendingPathComponent(parent)
+            guard isFolder(projectParent),
+                  let siblings = try? fm.contentsOfDirectory(at: projectParent, includingPropertiesForKeys: [.isDirectoryKey, .isSymbolicLinkKey]) else { continue }
+            let known = Set(plan.entries.filter { $0.directory && ($0.output as NSString).deletingLastPathComponent == parent }
+                .map { Naming.key(($0.output as NSString).lastPathComponent) })
+            for sibling in siblings where isFolder(sibling) && !known.contains(Naming.key(sibling.lastPathComponent)) {
+                guard let extended = plainName(sibling.lastPathComponent), extended.hasPrefix(base + " "), !hasCustomIcon(sibling) else { continue }
+                let source = payload.appendingPathComponent(entry.source)
+                let step = RestoreStep(icon: source, templateFolder: source.deletingLastPathComponent(), target: sibling.appendingPathComponent("Icon\r"), folder: sibling,
+                                       label: (parent.isEmpty ? "" : parent + "/") + sibling.lastPathComponent, inherited: true)
+                candidates[sibling.path, default: []].append((base.count, step))
+            }
+        }
+        // The longest template name wins when a folder extends more than one; an exact tie is skipped and reported.
+        var ambiguous: [String] = [], inherited: [RestoreStep] = []
+        for options in candidates.values {
+            let longest = options.map(\.length).max() ?? 0, top = options.filter { $0.length == longest }
+            if top.count == 1 { inherited.append(top[0].step) } else { ambiguous.append(top[0].step.label) }
+        }
+        steps += inherited.sorted { $0.label.localizedStandardCompare($1.label) == .orderedAscending }
+        return (steps, unmatched, ambiguous.sorted())
+    }
+
+    /// Which folders `restore` would write to, found without writing anything. Runs the same layout check first.
+    static func restorePreview(template payload: URL, fields: ProjectFields, onto project: URL,
+                               cancellation: Cancellation = Cancellation()) throws -> IconRestoreReport {
+        let plan = try TemplateReader.scan(payload, fields: fields, cancellation: cancellation)
+        try preflight(plan: plan, onto: project)
+        let found = try restoreSteps(plan: plan, payload: payload, project: project)
+        var report = IconRestoreReport()
+        report.restored = found.steps.filter { !$0.inherited }.map(\.label)
+        report.inherited = found.steps.filter(\.inherited).map(\.label)
+        report.unmatched = found.unmatched; report.ambiguous = found.ambiguous
+        return report
+    }
+
     /// Reattaches every custom folder icon the template carries onto the matching folders of an existing project,
     /// matched by the same substituted paths creation would have produced. Files are never touched, folders are never
-    /// created, renamed or removed; a folder the project no longer has is reported, not made. The outer folder gets
-    /// the preset icon when one is given. Works only on a filesystem that accepts the `Icon\r` support file.
+    /// created, renamed or removed; a folder the project no longer has is reported, not made. A project folder the template
+    /// does not have but whose name extends a template folder's (`06 Media Revised` beside `03 Media`) takes that icon too.
+    /// The outer folder gets the preset icon when one is given. Works only on a filesystem that accepts the `Icon\r` support file.
     static func restore(template payload: URL, fields: ProjectFields, onto project: URL, presetIcon: Data? = nil,
                         cancellation: Cancellation = Cancellation()) throws -> IconRestoreReport {
         let plan = try TemplateReader.scan(payload, fields: fields, cancellation: cancellation)
         try preflight(plan: plan, onto: project)
         var report = IconRestoreReport()
         let fm = FileManager.default
+        let found = try restoreSteps(plan: plan, payload: payload, project: project)
+        report.unmatched = found.unmatched; report.ambiguous = found.ambiguous
         // Icon\r files first, then their folders, so the custom-icon flag never points at a missing file.
-        for entry in plan.entries where entry.metadata {
+        for step in found.steps {
             try cancellation.check()
-            let source = payload.appendingPathComponent(entry.source)
-            let target = project.appendingPathComponent(entry.output)
-            let folder = target.deletingLastPathComponent()
-            guard (try? folder.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true else {
-                report.unmatched.append((entry.output as NSString).deletingLastPathComponent); continue
-            }
             var createdIcon = false
             do {
-                if !fm.fileExists(atPath: target.path) { try Data(contentsOf: source).write(to: target, options: .withoutOverwriting); createdIcon = true }
-                let values = try target.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey])
+                if !fm.fileExists(atPath: step.target.path) { try Data(contentsOf: step.icon).write(to: step.target, options: .withoutOverwriting); createdIcon = true }
+                let values = try step.target.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey])
                 guard values.isRegularFile == true, values.isSymbolicLink != true else { throw AppFailure("Icon support must be an ordinary file.") }
-                try copyMetadata(from: source, to: target)
-                try copyMetadata(from: source.deletingLastPathComponent(), to: folder)
-                report.restored.append((entry.output as NSString).deletingLastPathComponent.isEmpty ? "." : (entry.output as NSString).deletingLastPathComponent)
+                try copyMetadata(from: step.icon, to: step.target)
+                try copyMetadata(from: step.templateFolder, to: step.folder)
+                if step.inherited { report.inherited.append(step.label) } else { report.restored.append(step.label) }
             } catch {
-                if createdIcon { try? fm.removeItem(at: target) }
-                report.failed.append("\(entry.output): \(error.localizedDescription)")
+                if createdIcon { try? fm.removeItem(at: step.target) }
+                report.failed.append("\(step.label): \(error.localizedDescription)")
             }
         }
         if let presetIcon {
@@ -313,7 +389,8 @@ public extension IconService {
     /// Removes custom folder icons from a project so it can be copied to a drive that cannot hold them:
     /// every `Icon\r` file goes, and every folder loses its FinderInfo and resource fork. Ordinary files are never touched.
     /// The template keeps the icons, so `restore` can put them back later.
-    static func strip(project: URL, cancellation: Cancellation = Cancellation()) throws -> IconStripReport {
+    /// With `dryRun` nothing is removed or cleared; the report lists what would be.
+    static func strip(project: URL, dryRun: Bool = false, cancellation: Cancellation = Cancellation()) throws -> IconStripReport {
         guard (try project.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true else { throw AppFailure("The project folder is unavailable.") }
         var report = IconStripReport()
         let fm = FileManager.default
@@ -326,7 +403,7 @@ public extension IconService {
             if values.isPackage == true { enumerator.skipDescendants(); continue }
             if url.lastPathComponent == "Icon\r" {
                 guard values.isRegularFile == true else { enumerator.skipDescendants(); report.failed.append(relative(url, to: project) + ": not an ordinary icon file"); continue }
-                do { try fm.removeItem(at: url); report.iconFilesRemoved.append(relative(url, to: project)) }
+                do { if !dryRun { try fm.removeItem(at: url) }; report.iconFilesRemoved.append(relative(url, to: project)) }
                 catch { report.failed.append("\(relative(url, to: project)): \(error.localizedDescription)") }
             } else if values.isDirectory == true { folders.append(url) }
         }
@@ -334,7 +411,7 @@ public extension IconService {
             try cancellation.check()
             var changed = false, problem: String?
             for name in attributes where (try? attribute(name, at: folder)) ?? nil != nil {
-                if removexattr(folder.path, name, XATTR_NOFOLLOW) == 0 { changed = true } else { problem = String(cString: strerror(errno)) }
+                if dryRun || removexattr(folder.path, name, XATTR_NOFOLLOW) == 0 { changed = true } else { problem = String(cString: strerror(errno)) }
             }
             if let problem { report.failed.append("\(relative(folder, to: project)): \(problem)") }
             else if changed { report.foldersCleared.append(relative(folder, to: project)) }
