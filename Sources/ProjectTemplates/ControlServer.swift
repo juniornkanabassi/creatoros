@@ -124,7 +124,10 @@ extension AppModel {
             // mutations, so they cannot overlap; reads are checked here against the record as it was when they started.
             let watched = mutating || params["project"] == nil ? nil : try? controlRecord(params)
             let outcome: Result<[String: Any], Error>
-            do { outcome = .success(try await controlAction(action, params)) } catch { outcome = .failure(error) }
+            do {
+                // Only the command's own library writes pass the lock; a click or background task running meanwhile is told to retry.
+                outcome = .success(mutating ? try await AppModel.$inControlAction.withValue(true) { try await controlAction(action, params) } : try await controlAction(action, params))
+            } catch { outcome = .failure(error) }
             if !mutating {
                 if let watched { try stillCurrent(watched) }
                 if case .success(let answer) = outcome, let refusal = cachedAccessRefusal(params, answer) { throw refusal }

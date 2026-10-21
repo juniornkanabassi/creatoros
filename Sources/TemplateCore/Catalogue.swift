@@ -100,9 +100,7 @@ public enum Catalogue {
             let hasProjectFile = items.contains { ["prproj", "aep", "drp", "sesx"].contains($0.pathExtension.lowercased()) }
             let numbered = folder.lastPathComponent.range(of: #"^\d+\s*[—–-]"#, options: .regularExpression) != nil
             if markers >= 2 || hasProjectFile || (numbered && hasExports) {
-                var record = try ProjectRecord(url: folder, format: inferredFormat(folder))
-                record = try indexExports(record, root: folder, cancellation: cancellation)
-                projects.append(record)
+                projects.append(try ProjectRecord(url: folder, format: inferredFormat(folder)))
                 return // Do not inspect source media or nested project package internals.
             }
             guard depth < 8 else { if !dirs.isEmpty { notes.append("Depth limit reached at \(folder.path). Add this folder separately if needed.") }; return }
@@ -126,51 +124,6 @@ public enum Catalogue {
         }
         return child
     }
-    public static func indexExports(_ project: ProjectRecord, root: URL, cancellation: Cancellation = Cancellation()) throws -> ProjectRecord {
-        let root = try canonicalURL(root)
-        var updated = project
-        var roots = project.exportFolders ?? []
-        let direct = try children(root)
-        roots += direct.filter { isExportFolder($0.lastPathComponent) }.map(\.lastPathComponent)
-        // A manually registered project may store finished movies directly at its root.
-        var exports: [ExportRecord] = []; var notes: [String] = []; var visited = 0
-        func collect(_ url: URL, depth: Int) throws {
-            try cancellation.check(); visited += 1
-            guard visited <= 50_000 else { throw AppFailure("Export index limit reached. Choose a smaller export folder.") }
-            let values = try url.resourceValues(forKeys: keys)
-            if values.isSymbolicLink == true { notes.append("Skipped symbolic link \(url.lastPathComponent)"); return }
-            if values.isDirectory == true {
-                if values.isPackage == true || TemplateReader.packages.contains(url.pathExtension.lowercased()) { return }
-                guard depth < 12 else { notes.append("Export depth limit at \(url.lastPathComponent)"); return }
-                for child in try children(url) { try collect(child, depth: depth + 1) }
-            } else if values.isRegularFile == true && movieExtensions.contains(url.pathExtension.lowercased()) {
-                let relative = String(url.path.dropFirst(root.path.count + 1))
-                _ = try safeChild(relative, under: root)
-                exports.append(ExportRecord(relativePath: relative, bytes: Int64(values.fileSize ?? 0), modified: values.contentModificationDate))
-            }
-        }
-        for relative in Set(roots).sorted() {
-            do { try collect(safeChild(relative, under: root), depth: 0) }
-            catch is CancellationError { throw CancellationError() }
-            catch { notes.append("\(relative): \(error.localizedDescription)") }
-        }
-        for item in direct where movieExtensions.contains(item.pathExtension.lowercased()) {
-            try collect(item, depth: 0)
-        }
-        if !notes.isEmpty {
-            // A partial scan is not evidence that previously indexed exports were deleted.
-            exports += project.exports ?? []
-            notes.append("Scan incomplete. Previously indexed exports are retained and may be unavailable.")
-        }
-        var seen = Set<String>()
-        updated.exports = exports.filter { seen.insert($0.relativePath).inserted }.sorted {
-            if $0.modified != $1.modified { return ($0.modified ?? .distantPast) > ($1.modified ?? .distantPast) }
-            return $0.relativePath.localizedStandardCompare($1.relativePath) == .orderedAscending
-        }
-        updated.lastIndexed = Date(); updated.scanNotes = notes
-        // Keep the pinned final even if currently absent, so it can be recovered later.
-        return updated
-    }
     /// Availability only. Resolves the bookmark and checks the folder and drive identity without indexing or saving.
     public static func availability(_ record: ProjectRecord) -> ProjectInspection {
         do {
@@ -191,15 +144,8 @@ public enum Catalogue {
     public static func merge(_ found: [ProjectRecord], into existing: [ProjectRecord]) -> [ProjectRecord] {
         var result = existing
         for new in found {
-            if let i = result.firstIndex(where: { $0.path == new.path }) {
-                // Collection discovery does not know this record's custom export folders.
-                // Retain those cached entries until a full per-project refresh checks them.
-                let custom = result[i].exportFolders ?? []
-                let retained = (result[i].exports ?? []).filter { export in custom.contains { export.relativePath.hasPrefix($0 + "/") } }
-                var seen = Set<String>()
-                result[i].exports = ((new.exports ?? []) + retained).filter { seen.insert($0.relativePath).inserted }
-                result[i].lastIndexed = new.lastIndexed; result[i].scanNotes = new.scanNotes
-            } else { result.append(new) }
+            // Already registered: keep the record exactly as it is, including fields this version no longer fills in.
+            if !result.contains(where: { $0.path == new.path }) { result.append(new) }
         }
         return result // Never remove unobserved projects when a drive is offline.
     }

@@ -297,3 +297,59 @@ func inheritedIconChecks(base: URL) throws {
     try fm.createDirectory(at: project.appendingPathComponent("04 Media Alt"), withIntermediateDirectories: true)
     try rejects("a folder sharing a template folder's number still fails the layout check") { _ = try IconService.restore(template: template, fields: fields, onto: project) }
 }
+
+
+/// Remove Folder Icons takes the icon and nothing else: colour labels, tags and comments stay.
+func stripKeepsMetadataChecks(base: URL) throws {
+    let fm = FileManager.default
+    let template = base.appendingPathComponent("StripKeeps/Template"), project = base.appendingPathComponent("StripKeeps/Project")
+    var flagged = Data(count: 32); flagged[8] = 0x04
+    let docs = template.appendingPathComponent("01 Documents")
+    try fm.createDirectory(at: docs, withIntermediateDirectories: true)
+    try Data("icon".utf8).write(to: docs.appendingPathComponent("Icon\r"))
+    _ = flagged.withUnsafeBytes { setxattr(docs.path, "com.apple.FinderInfo", $0.baseAddress, 32, 0, XATTR_NOFOLLOW) }
+    let fields = ProjectFields(number: "000", format: "Short", title: "Keeps")
+    let created = try CreationEngine.create(plan: TemplateReader.scan(template, fields: fields), destination: { try fm.createDirectory(at: project, withIntermediateDirectories: true); return project }(), name: "000 — Short — Keeps")
+    let folder = created.appendingPathComponent("01 Documents"), plainFolder = created.appendingPathComponent("02 Plain")
+    try fm.createDirectory(at: plainFolder, withIntermediateDirectories: true)
+    var labelled = Data(count: 32); labelled[8] = 0x04; labelled[9] = 0x0C
+    _ = labelled.withUnsafeBytes { setxattr(folder.path, "com.apple.FinderInfo", $0.baseAddress, 32, 0, XATTR_NOFOLLOW) }
+    try FinderTags.write([.init(name: "Client", colour: .red)], to: folder)
+    let comment = Data("remember this".utf8)
+    _ = comment.withUnsafeBytes { setxattr(folder.path, "com.apple.metadata:kMDItemFinderComment", $0.baseAddress, comment.count, 0, XATTR_NOFOLLOW) }
+    var onlyLabel = Data(count: 32); onlyLabel[9] = 0x0C
+    _ = onlyLabel.withUnsafeBytes { setxattr(plainFolder.path, "com.apple.FinderInfo", $0.baseAddress, 32, 0, XATTR_NOFOLLOW) }
+    let dry = try IconService.strip(project: created, dryRun: true)
+    try check(dry.foldersCleared == ["01 Documents"] && (try IconService.attribute("com.apple.FinderInfo", at: folder))?[8] == 0x04, "strip dry run names the folder with an icon flag and changes nothing")
+    let report = try IconService.strip(project: created)
+    let after = try IconService.attribute("com.apple.FinderInfo", at: folder)
+    try check(report.foldersCleared == ["01 Documents"] && report.failed.isEmpty && !fm.fileExists(atPath: folder.appendingPathComponent("Icon\r").path), "strip removes the icon file and clears the folder flag")
+    try check(after?[8] == 0 && after?[9] == 0x0C, "strip keeps the colour label bits of FinderInfo")
+    try check(try FinderTags.read(folder) == [.init(name: "Client", colour: .red)], "strip keeps Finder tags")
+    try check(try IconService.attribute("com.apple.metadata:kMDItemFinderComment", at: folder) == comment, "strip keeps Finder comments")
+    try check(try IconService.attribute("com.apple.FinderInfo", at: plainFolder)?[9] == 0x0C, "strip leaves a folder that only has a colour label alone")
+    let zeroed = created.appendingPathComponent("03 Only icon")
+    try fm.createDirectory(at: zeroed, withIntermediateDirectories: true)
+    _ = flagged.withUnsafeBytes { setxattr(zeroed.path, "com.apple.FinderInfo", $0.baseAddress, 32, 0, XATTR_NOFOLLOW) }
+    _ = try IconService.strip(project: created)
+    try check(try IconService.attribute("com.apple.FinderInfo", at: zeroed) == nil, "FinderInfo that is all zeros once the flag is cleared is removed")
+    let restored = try IconService.restore(template: template, fields: fields, onto: created)
+    try check(restored.restored == ["01 Documents"] && restored.failed.isEmpty && fm.fileExists(atPath: folder.appendingPathComponent("Icon\r").path) && (try IconService.attribute("com.apple.FinderInfo", at: folder))?[8] == 0x04, "restore still brings the icon back")
+    try check(try FinderTags.read(folder) == [.init(name: "Client", colour: .red)], "restore keeps the Finder tags too")
+}
+
+
+/// Arrow keys in the icon view: left and right inside a row, up and down by the real number of columns.
+func browserGridChecks() throws {
+    try check(BrowserGrid.columns(width: 600, minimum: 96, spacing: 6) == 5 && BrowserGrid.columns(width: 96, minimum: 96, spacing: 6) == 1 && BrowserGrid.columns(width: 30, minimum: 96, spacing: 6) == 1 && BrowserGrid.columns(width: 0, minimum: 96, spacing: 6) == 1, "icon grid column count comes from the width")
+    try check(BrowserGrid.columns(width: 1000, minimum: 96, spacing: 6) == 9, "a wide window shows more columns, not four")
+    // 10 items in rows of 4: 0-3, 4-7, 8-9.
+    try check(BrowserGrid.next(from: 5, count: 10, columns: 4, .right) == 6 && BrowserGrid.next(from: 7, count: 10, columns: 4, .right) == 7, "right moves within a row and stops at its end")
+    try check(BrowserGrid.next(from: 5, count: 10, columns: 4, .left) == 4 && BrowserGrid.next(from: 4, count: 10, columns: 4, .left) == 4, "left moves within a row and stops at its start")
+    try check(BrowserGrid.next(from: 9, count: 10, columns: 4, .right) == 9, "right stops at the last item")
+    try check(BrowserGrid.next(from: 1, count: 10, columns: 4, .down) == 5 && BrowserGrid.next(from: 5, count: 10, columns: 4, .up) == 1, "down and up move by the column count")
+    try check(BrowserGrid.next(from: 3, count: 10, columns: 4, .up) == 3 && BrowserGrid.next(from: 9, count: 10, columns: 4, .down) == 9, "up stops in the first row and down in the last")
+    try check(BrowserGrid.next(from: 6, count: 10, columns: 4, .down) == 9, "down from a row with nothing below goes to the last item")
+    try check(BrowserGrid.next(from: nil, count: 10, columns: 4, .down) == 0 && BrowserGrid.next(from: nil, count: 10, columns: 4, .up) == 9 && BrowserGrid.next(from: nil, count: 0, columns: 4, .down) == nil, "no selection starts at an end; an empty folder selects nothing")
+    try check(BrowserGrid.next(from: 2, count: 5, columns: 1, .down) == 3 && BrowserGrid.next(from: 2, count: 5, columns: 1, .right) == 2, "a single column moves by one with up and down only")
+}

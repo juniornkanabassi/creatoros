@@ -63,7 +63,7 @@ extension AppModel {
     func controlGlobal(_ action: String, _ params: [String: Any]) async throws -> [String: Any]? {
         let dryRun = params["dryRun"] as? Bool == true
         // Anything that can change what an open New Project, import or rename form is built from waits until it is closed.
-        let changesFormSources: Set<String> = ["stage.set", "field.add", "field.update", "field.remove", "format.set-destination", "format.set-icon",
+        let changesFormSources: Set<String> = ["stage.set", "stage.rename", "field.add", "field.update", "field.remove", "format.set-destination", "format.set-icon",
                                               "template.import", "template.remove", "set.create", "set.rename", "set.assign", "set.unassign", "set.remove"]
         if changesFormSources.contains(action), !dryRun {
             try requireNoSheet(newProjectPresented || importPresented || renamePrompt != nil || startingFrom != nil, "project form, rename or import window")
@@ -111,6 +111,17 @@ extension AppModel {
             try applyStages(stages, for: kind)
             try await durable()
             return ["board": kind.rawValue, "stages": library.stages(for: kind), "orphaned": report]
+        case "stage.rename":
+            let kind = try controlBoard(params["board"] as? String)
+            let from = params["from"] as! String, to = params["to"] as! String
+            guard library.stages(for: kind).contains(from) else { throw ControlFailure(code: "invalid_stage", message: "‘\(from)’ is not a stage on the \(kind.title) board: " + library.stages(for: kind).joined(separator: ", ")) }
+            if !dryRun { try requireIdle() }
+            let report = try await asInvalidAsync { try await renameStageCore(from, to: to, on: kind, dryRun: dryRun) }
+            if !dryRun { try await durable() }
+            var reply: [String: Any] = ["board": kind.rawValue, "from": from, "to": to, "projects": report.projects, "tagsToRewrite": report.tagsToRewrite,
+                                        "stages": library.stages(for: kind)]
+            if dryRun { reply["dryRun"] = true } else { reply["tags"] = tagCounts(report.tags) }
+            return reply
         case "stage.set-colour":
             let stage = params["stage"] as! String
             guard let colour = StageColour(rawValue: params["colour"] as! String) else { throw ControlFailure(code: "invalid_params", message: "Colour must be one of " + StageColour.allCases.map(\.rawValue).joined(separator: ", ") + ".") }

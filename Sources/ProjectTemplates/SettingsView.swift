@@ -248,7 +248,7 @@ private struct StageSettingsRow: View {
                 .accessibilityLabel("Remove \(stage)")
         }.onAppear { name = stage }.onChange(of: stage) { name = stage }
     }
-    func save() { var s = stages; guard s.indices.contains(index) else { return }; s[index] = name; m.setStages(s, for: kind) }
+    func save() { guard stages.indices.contains(index), name != stage else { return }; m.renameStage(stage, to: name, on: kind) }
     func colourValue(_ colour: StageColour) -> Color {
         BadgeColour(rawValue: colour.rawValue)?.colour ?? .secondary
     }

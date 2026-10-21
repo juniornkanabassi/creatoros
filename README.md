@@ -41,7 +41,7 @@ Sources/TemplateCore/     engine, no UI
   Naming.swift            fields, tokens, the shared substitution rule, validation
   FileEngine.swift        template reader, copy plan, copy engine, icon service
   ProjectRename.swift     reviewed exclusive rename and rollback
-  ControlCommands.swift   shared CLI/help/MCP action table (59 commands)
+  ControlCommands.swift   shared CLI/help/MCP action table (60 commands)
   Preview.swift           placeholder rendering that can never become a copy plan
   Catalogue.swift         project discovery, availability, retained export indexing
   Locations.swift         drive and cloud classification, per-format numbering
@@ -121,6 +121,7 @@ Commands do not activate CreatorOS or Finder unless `--show` is given. `status` 
 - **Booleans, arrays, objects.** Every true/false flag accepts `--no-<flag>` to send false (`--no-enabled`, `--no-plain-folders`). Arrays are JSON text (`--stages '["Idea","Plan, draft"]'`, `--only '["/path"]'`) and objects too (`--extra '{"Sponsor":"Acme"}'`); MCP sends real arrays and objects. Series stays a comma string, as in the GUI. `--flag=value` also works, for a value that starts with `--`.
 - **Stages follow the boards.** A stage is accepted only if it is on the record's own board (`invalid_stage`); a live stream never gets a recording stage. A record with no stage reads as Unclassified, never Published. A stage change writes its Finder tag before the reply and reports `finderTag: applied|skipped|failed`; writes for one folder run in order and a newer change replaces an older one waiting.
 - **Hidden locations.** A location unticked in the GUI is never read: its projects are refused with `location_hidden` by every project command, and paths on it are refused. `location set --hidden` is GUI state shared by every caller, so it changes what other callers can see.
+- **One writer at a time.** A command that changes anything waits for a busy app or an open form (`busy`, `form_in_use`), and while it runs the app's own writes are refused with a plain "Busy, retry" message instead of interleaving: stage changes, pins, details, settings, sets, templates, fields, relocate, remove and icons. Background writes (date backfill, the quiet relink on selection, mount refresh) skip while a command runs and try again later. Reads are checked again after they wait, and answer `location_hidden` or `record_changed` if the project was hidden, moved or removed meanwhile.
 - **Nothing outside the writable area.** `AppRuntime` still applies: an isolated run refuses any write outside its data folder (`not_allowed`). Paths must be absolute, without `.` or `..` parts. Deleting only ever means the Bin: workspace-bin and template remove move to Trash.
 
 ### Commands
@@ -158,6 +159,7 @@ Commands do not activate CreatorOS or Finder unless `--show` is given. `status` 
 | `idea merge` | `idea_merge` | Fold an idea's empty-field metadata and notes into a project, then remove the idea (control only) | `creatoros idea merge "Ref bias" --into 001 --into-format Short --dry-run` |
 | `stage list` | `stage_list` | List both boards' stages with colours and record counts | `creatoros stage list` |
 | `stage set` | `stage_set` | Replace a board's stage list (JSON array, at least two); reports records left on orphaned stages | `creatoros stage set --board recordings --stages '["Idea","Writing","Editing","Published","Abandoned"]'` |
+| `stage rename` | `stage_rename` | Rename a stage: its records, colour and saved filter move with it, and Finder tags are rewritten | `creatoros stage rename --board recordings --from Editing --to Cutting --dry-run` |
 | `stage set-colour` | `stage_set_colour` | Set a stage's colour (none, gray, green, purple, blue, yellow, red, orange) | `creatoros stage set-colour --stage Editing --colour purple` |
 | `stage move-all` | `stage_move_all` | Move every record in one stage to another on the same board, ignoring GUI filters | `creatoros stage move-all --from Editing --to Published --board recordings --dry-run` |
 | `settings finder-tags` | `settings_finder_tags` | Turn stage Finder tags on or off (--enabled / --no-enabled) | `creatoros settings finder-tags --no-enabled` |
@@ -198,6 +200,10 @@ References: a project or idea is a UUID, its exact folder name or its number (`-
 - `project files`, `open-file`, `open-premiere`, `add-files` and `template files` use the file browser's engines: no symlinks, no package contents, `Icon\r` hidden, applications, installers and scripts never opened, no overwriting, same-volume moves and cross-volume copies (`--copy` forces a copy; folders only move). Opening or editing a managed template stays GUI-only.
 - `location scan --dry-run` lists what it found with `alreadyRegistered`; applying registers everything found or the paths in `--only`, and saves the location either way.
 - `library tag-folders` skips hidden locations and checks each folder again before writing. `workspace-bin` and `idea remove --trash-workspace` need explicit confirmation flags; the folder goes to the Bin and the reply names where.
+- `stage rename` (and the rename field in Settings, which uses the same core) moves the records on the old stage, re-keys its colour, updates the saved stage filter and rewrites the Finder tag on every staged folder on a connected, ticked drive: the old tag goes, other tags stay. It reports projects changed and tags rewritten; `--dry-run` only counts. `stage set` does not detect renames; a name that is no longer in the list leaves its records on it as an orphan.
+- Remove Folder Icons (`project icons-strip`) deletes the `Icon\r` files and clears only the custom-icon bit of each folder's FinderInfo; colour labels, tags, comments and other attributes stay, and the attribute is removed only if clearing the bit leaves it all zeros.
+- Export indexing is retired: nothing in the app read the export lists, so discovery and Add Existing Project no longer scan for movies. The optional `exports`, `exportFolders`, `finalExportPath(s)`, `lastIndexed` and `scanNotes` fields stay in the schema so older libraries decode and save unchanged.
+- In the icon view, left and right move within a row and up and down move by the number of columns on screen (worked out from the window width); Return opens.
 - Template deletion saves the library before it finishes; if the save fails the files are put back from the Bin, or the error names their exact place in the Bin.
 - No token savings have been measured.
 

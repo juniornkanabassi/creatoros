@@ -392,7 +392,7 @@ public struct IconStripReport: Sendable {
 
 public extension IconService {
     /// Removes custom folder icons from a project so it can be copied to a drive that cannot hold them:
-    /// every `Icon\r` file goes, and every folder loses its FinderInfo and resource fork. Ordinary files are never touched.
+    /// every `Icon\r` file goes, and every folder loses its custom-icon flag (and nothing else in its Finder metadata). Ordinary files are never touched.
     /// The template keeps the icons, so `restore` can put them back later.
     /// With `dryRun` nothing is removed or cleared; the report lists what would be.
     static func strip(project: URL, dryRun: Bool = false, cancellation: Cancellation = Cancellation()) throws -> IconStripReport {
@@ -416,8 +416,15 @@ public extension IconService {
         for folder in folders {
             if cancellation.isCancelled { report.cancelled = true; return report }
             var changed = false, problem: String?
-            for name in attributes where (try? attribute(name, at: folder)) ?? nil != nil {
-                if dryRun || removexattr(folder.path, name, XATTR_NOFOLLOW) == 0 { changed = true } else { problem = String(cString: strerror(errno)) }
+            // Only the custom-icon flag goes. Colour label bits, tags, comments and every other attribute stay; the attribute
+            // itself is removed only when clearing the flag leaves it all zeros.
+            if let info = try? attribute("com.apple.FinderInfo", at: folder), info.count > 8, info[8] & 0x04 != 0 {
+                var next = info; next[8] &= ~0x04
+                let outcome: Int32
+                if dryRun { outcome = 0 }
+                else if next.allSatisfy({ $0 == 0 }) { outcome = removexattr(folder.path, "com.apple.FinderInfo", XATTR_NOFOLLOW) }
+                else { outcome = next.withUnsafeBytes { setxattr(folder.path, "com.apple.FinderInfo", $0.baseAddress, next.count, 0, XATTR_NOFOLLOW) } }
+                if outcome == 0 { changed = true } else { problem = String(cString: strerror(errno)) }
             }
             if let problem { report.failed.append("\(relative(folder, to: project)): \(problem)") }
             else if changed { report.foldersCleared.append(relative(folder, to: project)) }

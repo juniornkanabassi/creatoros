@@ -316,7 +316,15 @@ enum BadgeColour: String, CaseIterable, Identifiable {
 
     /// Applies a change at once and writes the library shortly after, off the main thread, so a click never waits for the disk.
     /// Changes made while a write is in flight are coalesced into the next write; a failed write stops further changes.
+    /// True inside a control (creatoros/MCP) mutation; task-local so a click or a background task that happens to run at the
+    /// same time does not count as the command.
+    @TaskLocal static var inControlAction = false
+    /// Library writes happen one at a time through one path: while a command is changing the library, a click or a background
+    /// task is told to retry instead of interleaving with it.
+    var writeLocked: Bool { controlMutating && !Self.inControlAction }
+    static let writeLockedMessage = "Busy: a command from another tool is changing the library right now. Wait a moment and retry."
     func mutate(_ change: (inout Library) throws -> Void) throws {
+        guard !writeLocked else { throw AppFailure(Self.writeLockedMessage) }
         guard storeUsable else { throw AppFailure("Library is read-only after a load error.") }
         var next = library; try change(&next)
         try runtime.validate(next)
@@ -329,6 +337,7 @@ enum BadgeColour: String, CaseIterable, Identifiable {
     func saveTaskForWorkspace() async { await saveTask?.value }
     /// Transactional operations wait for older snapshots, then save before publishing or offering cleanup.
     func commitDurably(_ change: (inout Library) throws -> Void) async throws {
+        guard !writeLocked else { throw AppFailure(Self.writeLockedMessage) }
         await saveTask?.value
         guard storeUsable else { throw AppFailure("The library is unavailable. The existing records have been retained.") }
         var next = library
@@ -680,6 +689,7 @@ enum BadgeColour: String, CaseIterable, Identifiable {
     func run<T: Sendable>(_ label: String, cancelNote: String = "Work that finished before the stop is still in place.",
                           operation: @escaping @Sendable (Cancellation, @escaping CreationEngine.Progress) async throws -> T,
                           completion: @escaping (T) -> Void, failure: @escaping (String) -> Void = { _ in }) {
+        if writeLocked { error = Self.writeLockedMessage; failure(Self.writeLockedMessage); return }
         guard !busy, storeUsable else { failure(storeUsable ? "Another operation is running. Wait for it to finish." : "The library is unavailable."); return }
         busy = true; status = label; fraction = 0; cancellation = Cancellation()
         let token = cancellation
@@ -729,7 +739,8 @@ enum BadgeColour: String, CaseIterable, Identifiable {
     }
     /// One stat per distinct location, never per project, so it is safe to call on every appearance.
     func refreshMounts() {
-        guard storeUsable, !checkingMounts else { return }
+        // A background refresh waits while a command is changing things; the 20-second timer tries again.
+        guard storeUsable, !checkingMounts, !writeLocked else { return }
         checkingMounts = true
         let locations = distinctLocations.filter { !hiddenLocations.contains($0.key) }
         Task.detached(priority: .utility) {
@@ -747,7 +758,7 @@ enum BadgeColour: String, CaseIterable, Identifiable {
     private var backfilling = false
     /// Records registered before folder dates were kept get their creation date read once from disk, when the drive is there.
     func backfillFolderDates() {
-        guard !backfilling, storeUsable else { return }
+        guard !backfilling, storeUsable, !writeLocked else { return }
         let pending = library.projects.filter { !$0.isPlanned && $0.folderCreated == nil && !attemptedDates.contains($0.id) && mountedLocations.contains($0.location.key) && $0.location.kind != .cloud }
         guard !pending.isEmpty else { return }
         backfilling = true
@@ -908,6 +919,8 @@ enum BadgeColour: String, CaseIterable, Identifiable {
     @discardableResult
     func searchForMoved(_ record: ProjectRecord, quietly: Bool = false, searchAllLocations: Bool = false, apply: Bool = true, alert: Bool = true) async -> RelinkOutcome.Kind {
         guard !relinking.contains(record.id), !record.isPlanned, !hiddenLocations.contains(record.location.key) else { return .stillThere }
+        // The quiet search that runs when a project is merely selected writes a relink; it waits while a command is writing.
+        if quietly && apply && writeLocked { return .stillThere }
         relinking.insert(record.id)
         defer { relinking.remove(record.id) }
         // A quiet search, the one that runs when a project is merely selected, stays on the project's own drive.
@@ -1013,7 +1026,7 @@ enum BadgeColour: String, CaseIterable, Identifiable {
             throw AppFailure("‘\(target)’ is not a stage on the board these records are on.")
         }
         try mutate { lib in for i in lib.projects.indices where wanted.contains(lib.projects[i].id) { lib.projects[i].stage = target } }
-        return library.projects.filter { wanted.contains($0.id) }.map(tagFolder)
+        return library.projects.filter { wanted.contains($0.id) }.map { tagFolder($0) }
     }
     func addIdea(title: String, format: String, campaign: String, notes: String) {
         do { pipelineSelection = try addIdeaRecord(title: title, format: format, campaign: campaign, notes: notes).id }
@@ -1067,11 +1080,48 @@ enum BadgeColour: String, CaseIterable, Identifiable {
         let checked = try Configuration.stages(stages)
         try mutate { if kind == .live { $0.liveStages = checked } else { $0.stages = checked } }
     }
+    struct StageRenameReport { var projects = 0, tagsToRewrite = 0, tags: [TagOutcome] = [] }
+    /// The rename field in Settings.
+    func renameStage(_ old: String, to new: String, on kind: PipelineKind) {
+        Task { do { _ = try await renameStageCore(old, to: new, on: kind) } catch { self.error = error.localizedDescription } }
+    }
+    /// Renames a stage on one board and takes everything that used the old name with it: the records on that stage, its colour,
+    /// the saved stage filter, and the Finder tag on every staged folder that is on a connected, ticked drive (the old tag is
+    /// replaced, other tags stay). Saved before the tags are written. With `dryRun` it only counts.
+    @discardableResult
+    func renameStageCore(_ old: String, to new: String, on kind: PipelineKind, dryRun: Bool = false) async throws -> StageRenameReport {
+        let stages = library.stages(for: kind)
+        guard let index = stages.firstIndex(of: old) else { throw AppFailure("‘\(old)’ is not a stage on the \(kind.title) board.") }
+        var renamed = stages; renamed[index] = new
+        let checked = try Configuration.stages(renamed)
+        guard checked[index] != old else { throw AppFailure("The new name is the same as the old one.") }
+        let name = checked[index]
+        func affected(_ lib: Library) -> [ProjectRecord] { lib.projects.filter { kind.includes(format: $0.format) && $0.stage == old } }
+        var report = StageRenameReport(projects: affected(library).count)
+        let taggable = { (r: ProjectRecord) in self.library.finderTagsEnabled && !r.isPlanned && !self.hiddenLocations.contains(r.location.key) && r.location.isMounted }
+        report.tagsToRewrite = affected(library).filter(taggable).count
+        if dryRun { return report }
+        let ids = Set(affected(library).map(\.id))
+        let otherBoardUsesOld = library.stages(for: kind == .live ? .recordings : .live).contains(old)
+        let colour = library.colour(of: old)
+        try await commitDurably { lib in
+            if kind == .live { lib.liveStages = checked } else { lib.stages = checked }
+            for i in lib.projects.indices where kind.includes(format: lib.projects[i].format) && lib.projects[i].stage == old { lib.projects[i].stage = name }
+            var colours = lib.stageColours ?? [:]
+            if colour != .none, colours[name] == nil { colours[name] = colour.rawValue }
+            if !otherBoardUsesOld { colours[old] = nil }
+            lib.stageColours = colours
+        }
+        if excludedStages.contains(old) && !otherBoardUsesOld { excludedStages.remove(old); excludedStages.insert(name) }
+        let tasks = library.projects.filter { ids.contains($0.id) }.map { tagFolder($0, replacing: old) }
+        for task in tasks { report.tags.append(await task.value) }
+        return report
+    }
     func setStageColour(_ colour: StageColour, for stage: String) { attempt { _ = try applyStageColour(colour, for: stage) } }
     @discardableResult
     func applyStageColour(_ colour: StageColour, for stage: String) throws -> [Task<TagOutcome, Never>] {
         try mutate { lib in var colours = lib.stageColours ?? [:]; colours[stage] = colour.rawValue; lib.stageColours = colours }
-        return library.projects.filter { $0.stage == stage }.map(tagFolder)
+        return library.projects.filter { $0.stage == stage }.map { tagFolder($0) }
     }
     func setFinderTags(_ enabled: Bool) { attempt { try applyFinderTags(enabled) } }
     func applyFinderTags(_ enabled: Bool) throws { try mutate { $0.finderTags = enabled } }
@@ -1156,14 +1206,15 @@ enum BadgeColour: String, CaseIterable, Identifiable {
     /// Failures are silent in the GUI because the record is already saved; control callers read the outcome.
     /// What a tag write would do for this record right now, or nil when it should be skipped (tags off, an idea, an unknown
     /// stage, an unticked or disconnected location).
-    private func tagPlan(_ record: ProjectRecord) -> (stage: String, colour: StageColour, known: [String], url: URL)? {
+    private func tagPlan(_ record: ProjectRecord, replacing old: String? = nil) -> (stage: String, colour: StageColour, known: [String], url: URL)? {
         guard library.finderTagsEnabled, !record.isPlanned, let stage = record.stage, library.allStages.contains(stage),
               !hiddenLocations.contains(record.location.key), record.location.isMounted else { return nil }
-        return (stage, library.colour(of: stage), library.allStages, URL(fileURLWithPath: record.path))
+        // After a stage rename the old name is no longer configured, but its tag must still be the one that is replaced.
+        return (stage, library.colour(of: stage), library.allStages + (old.map { [$0] } ?? []), URL(fileURLWithPath: record.path))
     }
     @discardableResult
-    func tagFolder(_ record: ProjectRecord) -> Task<TagOutcome, Never> {
-        guard let first = tagPlan(record) else { return Task { .skipped } }
+    func tagFolder(_ record: ProjectRecord, replacing old: String? = nil) -> Task<TagOutcome, Never> {
+        guard let first = tagPlan(record, replacing: old) else { return Task { .skipped } }
         guard (try? runtime.requireWritable(first.url)) != nil else { return Task { .failed } }
         let id = record.id
         let generation = (tagGeneration[id] ?? 0) + 1
@@ -1173,7 +1224,7 @@ enum BadgeColour: String, CaseIterable, Identifiable {
             _ = await previous?.value
             guard self.tagGeneration[id] == generation else { return .skipped }
             // The wait may have been long: look at the record, its location and the settings again just before writing.
-            guard let current = self.library.projects.first(where: { $0.id == id }), let plan = self.tagPlan(current) else { return .skipped }
+            guard let current = self.library.projects.first(where: { $0.id == id }), let plan = self.tagPlan(current, replacing: old) else { return .skipped }
             guard (try? self.runtime.requireWritable(plan.url)) != nil else { return .failed }
             let (stage, colour, known, url) = plan
             return await Task.detached(priority: .utility) {

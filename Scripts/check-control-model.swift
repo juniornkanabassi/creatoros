@@ -220,6 +220,38 @@ import TemplateCore
         let formUnchanged = try Data(contentsOf: model.store.file) == beforeForm
         precondition(formUnchanged)
         print("PASS 1 open form check: set, template, field, format and stage-list changes are refused with form_in_use while a form is open, dry runs are not")
+        // One writer at a time: while a command is changing the library, the app's own writes are told to retry.
+        let lockedTarget = model.library.projects.first { !$0.isPlanned }!
+        let lockedBefore = try Data(contentsOf: model.store.file)
+        let lockedSnapshot = model.library.projects.count
+        model.controlMutating = true
+        func retryRefused(_ name: String, _ work: () throws -> Void) {
+            do { try work(); preconditionFailure("\(name) was not refused while a command was writing") }
+            catch let failure as AppFailure { precondition(failure.localizedDescription.contains("retry"), "\(name): \(failure.localizedDescription)") }
+            catch { preconditionFailure("\(name): \(error)") }
+        }
+        retryRefused("pin") { try model.setPinned(true, for: lockedTarget.id) }
+        retryRefused("stage") { _ = try model.moveToStage("Idea", for: lockedTarget.id) }
+        retryRefused("details") { try model.saveDetails(lockedTarget.id, notes: "x") }
+        retryRefused("settings") { try model.applyFinderTags(false) }
+        retryRefused("set") { _ = try model.createSet(named: "Locked", mapping: nil) }
+        retryRefused("field") { _ = try model.addField("Locked") }
+        retryRefused("remove") { try model.removeRecord(lockedTarget.id) }
+        retryRefused("relocate") { _ = try model.relocate(lockedTarget, to: URL(fileURLWithPath: lockedTarget.path)) }
+        model.error = nil
+        model.stripFolderIcons(lockedTarget)
+        precondition(model.error?.contains("retry") == true && !model.busy, "icons were not refused while a command was writing")
+        model.error = nil
+        let quiet = await model.searchForMoved(lockedTarget, quietly: true)
+        if case .stillThere = quiet {} else { preconditionFailure("a quiet relink ran while a command was writing") }
+        // The command's own writes pass.
+        try AppModel.$inControlAction.withValue(true) { try model.setPinned(lockedTarget.isPinned, for: lockedTarget.id) }
+        model.controlMutating = false
+        model.error = nil
+        precondition(model.library.projects.count == lockedSnapshot)
+        try model.setPinned(lockedTarget.isPinned, for: lockedTarget.id)
+        _ = lockedBefore
+        print("PASS 1 write lock check: pin, stage, details, settings, sets, fields, remove, relocate, icons and quiet relinks are told to retry while a command writes; the command itself and later clicks are not")
         // A dry-run compatibility check leaves the app's status text alone.
         let compatRoot = model.runtime.root.appendingPathComponent("CompatDry")
         try FileManager.default.createDirectory(at: compatRoot.appendingPathComponent("Out"), withIntermediateDirectories: true)

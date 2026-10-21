@@ -19,6 +19,8 @@ func help() {
     Data root: explicit flag, CREATOROS_DATA_DIRECTORY, then the stable app library.
     status never launches the app. Other commands launch in the background and wait up to 10 seconds.
     Project reference: UUID, exact folder name or number; --format disambiguates. Ideas use their name.
+    One writer at a time: a command that changes anything waits for a busy app or an open form (busy, form_in_use), and while it runs the app's own
+    clicks and background tasks are told to retry instead of interleaving with it. Reads are checked again after they wait.
     Request ids make a retry in the same app session return the first result instead of acting twice.
     """)
     for command in ControlCommand.all {

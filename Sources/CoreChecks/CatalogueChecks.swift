@@ -22,13 +22,11 @@ func catalogueChecks(base: URL) throws {
     try check(discovered.projects.count == 2, "catalogue recognises numbered and legacy structures")
     var record = try discovered.projects.first { URL(fileURLWithPath: $0.path).lastPathComponent == root.lastPathComponent }.unwrap("Missing fixture project \(root.path); found \(discovered.projects.map(\.path))")
     try check(record.format == "Long", "catalogue infers format from path")
-    try check(record.exports?.map(\.relativePath) == ["04 Exports/01 Video/Final.mp4"], "catalogue excludes raw footage, packages and symlinks")
-    try check(record.finalExportPath == nil, "filename Final never automatically approves an export")
-    try check(record.scanNotes?.contains(where: { $0.contains("symbolic link") }) == true, "catalogue reports skipped links")
-    try check(discovered.projects.first { $0.format == "Podcast" }?.exports?.count == 1, "catalogue indexes legacy deliverables case-insensitively")
+    try check(record.exports == nil && record.finalExportPath == nil && record.lastIndexed == nil, "discovery no longer indexes exports; the optional fields stay empty")
+    try check(discovered.projects.contains { $0.format == "Podcast" }, "catalogue recognises a legacy structure")
+    // The retired fields still decode, save and survive a rescan on records from older libraries.
     record.exportFolders = ["Review Deliveries"]
-    record = try Catalogue.indexExports(record, root: root)
-    try check(record.exports?.count == 2, "custom export subfolder is indexed")
+    record.exports = [ExportRecord(relativePath: "Review Deliveries/custom.mov", bytes: 0, modified: nil), ExportRecord(relativePath: "04 Exports/01 Video/Final.mp4", bytes: 1, modified: nil)]
     record.finalExportPath = "Review Deliveries/custom.mov"
     try check(record.markedFinals == ["Review Deliveries/custom.mov"], "legacy single final selection is retained")
     record.finalExportPaths = ["Review Deliveries/custom.mov", "04 Exports/01 Video/Final.mp4"]
@@ -39,7 +37,7 @@ func catalogueChecks(base: URL) throws {
     try check(merged.count == 2 && merged.first?.id == id, "rescan deduplicates without replacing record identity")
     try check(merged.first?.finalExportPath == record.finalExportPath && merged.first?.previousPaths == record.previousPaths, "rescan preserves final choice and location history")
     try check(merged.first?.markedFinals == record.markedFinals, "rescan preserves multiple final choices")
-    try check(merged.first?.exports?.count == 2, "collection scan preserves custom export index")
+    try check(merged.first?.exports?.count == 2 && merged.first?.exportFolders == ["Review Deliveries"], "a rescan leaves the retired export fields of a registered project as they were")
     merged = Catalogue.merge([], into: merged)
     try check(merged.count == 2, "empty or disconnected collection does not delete catalogue")
     try check(record.searchableText.contains("Previous Drive") && !record.searchableText.contains("custom.mov"), "search includes previous locations but not the retired export index")
@@ -49,8 +47,7 @@ func catalogueChecks(base: URL) throws {
     try check(record.id == id && record.previousPaths?.contains(where: { $0.hasSuffix(root.lastPathComponent) }) == true, "locating moved folder preserves identity and records old path")
     try check(record.finalExportPath == "Review Deliveries/custom.mov", "relative final reference survives relocation")
     let inspected = Catalogue.availability(record)
-    let refreshed = try Catalogue.indexExports(record, root: record.resolve())
-    try check(inspected.available && refreshed.exports?.count == 2, "relocated project resolves and refreshes exports")
+    try check(inspected.available, "relocated project resolves")
     record.bookmark = nil; record.path = "/Volumes/ProjectTemplates-Unmounted-Fixture/project"
     record.volumePath = "/Volumes/ProjectTemplates-Unmounted-Fixture"
     record.volumeName = "Test offline drive"

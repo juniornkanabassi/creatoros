@@ -106,8 +106,8 @@ extension AppModel {
     /// Registers one project folder made outside the app. Returns the library's record for it, new or already there.
     func registerExisting(_ url: URL, format: String? = nil, onFinish: ((Result<ProjectRecord, Error>) -> Void)? = nil) {
         run("Registering existing project", cancelNote: "Nothing was registered.") { token, _ in
-            let record = try ProjectRecord(url: url, format: format ?? Catalogue.inferredFormat(url))
-            return try Catalogue.indexExports(record, root: url.resolvingSymlinksInPath(), cancellation: token)
+            try token.check()
+            return try ProjectRecord(url: url, format: format ?? Catalogue.inferredFormat(url))
         } completion: { record in
             do {
                 try self.mutate { $0.projects = Catalogue.merge([record], into: $0.projects) }
