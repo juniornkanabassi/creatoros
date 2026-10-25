@@ -214,6 +214,16 @@ enum BadgeColour: String, CaseIterable, Identifiable {
     var structureCache: [UUID: CachedStructure] = [:]
     var inspectionRevision = 0
 
+    /// CreatorOS was local.projecttemplates.mac until its public release. Copy that domain's preferences across once,
+    /// so the rename keeps the page, view modes and window frames. The old domain is left untouched.
+    static func adoptLegacyPreferences(into defaults: UserDefaults) {
+        let marker = "adoptedLegacyPreferences"
+        guard !defaults.bool(forKey: marker), let legacy = defaults.persistentDomain(forName: AppRuntime.legacyIdentifier) else { return }
+        let current = defaults.persistentDomain(forName: Bundle.main.bundleIdentifier ?? AppRuntime.releaseIdentifier) ?? [:]
+        for (key, value) in legacy where current[key] == nil { defaults.set(value, forKey: key) }
+        defaults.set(true, forKey: marker)
+    }
+
     init() {
         let arguments = ProcessInfo.processInfo.arguments
         var startupError: String?
@@ -226,6 +236,7 @@ enum BadgeColour: String, CaseIterable, Identifiable {
         catch { startupError = error.localizedDescription; runtime = try! AppRuntime.isolated() }
         store = LibraryStore(root: runtime.root)
         defaults = runtime.isIsolated ? UserDefaults(suiteName: runtime.defaultsSuite)! : .standard
+        if !runtime.isIsolated { Self.adoptLegacyPreferences(into: defaults) }
         page = Page(rawValue: defaults.string(forKey: "page") ?? "") ?? .projects
         format = defaults.string(forKey: "format") ?? "Short"
         selection = defaults.string(forKey: "selection").flatMap(TemplateSelection.init(stored:))

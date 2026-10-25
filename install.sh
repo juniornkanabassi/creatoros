@@ -9,7 +9,7 @@ DEST="$INSTALL_ROOT/$APP_NAME.app"
 ARCHIVE="${1:-}"
 EXPECTED_VERSION=$(/usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' "$SOURCE_ROOT/Resources/Info.plist")
 EXPECTED_ID=$(/usr/libexec/PlistBuddy -c 'Print CFBundleIdentifier' "$SOURCE_ROOT/Resources/Info.plist")
-[[ "$EXPECTED_ID" == "local.projecttemplates.mac" && "$APP_NAME" == "CreatorOS" ]] || { print -u2 "This installer only installs the reviewed CreatorOS release identity."; exit 1; }
+[[ "$EXPECTED_ID" == "com.juniornkanabassi.CreatorOS" && "$APP_NAME" == "CreatorOS" ]] || { print -u2 "This installer only installs the reviewed CreatorOS release identity."; exit 1; }
 if (( $# > 1 )); then print -u2 "Usage: zsh install.sh [CreatorOS <version>.zip]"; exit 2; fi
 CHANNEL_SUFFIX="${APP_CHANNEL:+ $APP_CHANNEL}"
 if [[ -z "$ARCHIVE" ]]; then ARCHIVE="$OUTPUT_ROOT/$APP_NAME $EXPECTED_VERSION$CHANNEL_SUFFIX.zip"; fi

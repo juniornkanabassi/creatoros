@@ -2,7 +2,7 @@
 # An isolated (--data-directory) launch must write nothing to the app's own defaults domain. AppKit and SwiftUI
 # save window and split-view frames there, which for the stable app is Junior's production preferences.
 # The check runs a copy of the packaged app under a throwaway bundle identifier, so the domain it inspects is
-# disposable and the real local.projecttemplates.mac preferences are never read or written.
+# disposable and the real com.juniornkanabassi.CreatorOS preferences are never read or written.
 # Usage: zsh Scripts/check-isolated-defaults.sh <packaged CreatorOS.app>
 set -euo pipefail
 app="${1:?usage: check-isolated-defaults.sh <CreatorOS.app>}"
