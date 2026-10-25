@@ -9,7 +9,7 @@
 	<key>CFBundleIconFile</key>
 	<string>AppIcon</string>
 	<key>CFBundleIdentifier</key>
-	<string>local.projecttemplates.mac</string>
+	<string>com.juniornkanabassi.CreatorOS</string>
 	<key>CFBundleName</key>
 	<string>CreatorOS</string>
 	<key>CFBundlePackageType</key>

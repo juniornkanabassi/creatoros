@@ -20,7 +20,8 @@ func runtimeChecks(base: URL) throws {
     try rejects("production refuses home as a write destination") { try production.requireWritable(FileManager.default.homeDirectoryForCurrentUser) }
     try rejects("production rejects relative stored paths before URL normalisation") { var bad = Library(); bad.presets[0].destination = "relative/project"; try production.validate(bad) }
     try check(try AppRuntime.forLaunch(bundleIdentifier: AppRuntime.alphaIdentifier, channel: "α", dataRoot: alpha).isIsolated, "alpha identity remains isolated")
-    try check(try !AppRuntime.forLaunch(bundleIdentifier: "local.projecttemplates.mac", channel: "").isIsolated, "release identity selects production")
+    try check(try !AppRuntime.forLaunch(bundleIdentifier: AppRuntime.releaseIdentifier, channel: "").isIsolated, "release identity selects production")
+    try rejects("the pre-release identity no longer opens production") { _ = try AppRuntime.forLaunch(bundleIdentifier: AppRuntime.legacyIdentifier, channel: "") }
     try rejects("unknown identity cannot open production") { _ = try AppRuntime.forLaunch(bundleIdentifier: "example.unreviewed", channel: "") }
     try rejects("alpha refuses stable data root") { _ = try AppRuntime(root: stable, stableRoot: stable) }
     try rejects("alpha refuses ancestor of stable root") { _ = try AppRuntime(root: base, stableRoot: stable) }
@@ -37,6 +38,6 @@ func runtimeChecks(base: URL) throws {
     try rejects("alpha refuses symlink data root") { _ = try AppRuntime(root: alias, stableRoot: base.appendingPathComponent("OtherStable")) }
     var imported = Library(); imported.presets[0].destination = stable.path
     try rejects("alpha refuses imported external destination before background work") { try runtime.validate(imported) }
-    try check(runtime.sharesProductionPreferences(bundleIdentifier: "local.projecttemplates.mac") && !runtime.sharesProductionPreferences(bundleIdentifier: AppRuntime.alphaIdentifier) && !production.sharesProductionPreferences(bundleIdentifier: "local.projecttemplates.mac"), "only an isolated stable-bundle launch shares the production preferences domain")
+    try check(runtime.sharesProductionPreferences(bundleIdentifier: AppRuntime.releaseIdentifier) && !runtime.sharesProductionPreferences(bundleIdentifier: AppRuntime.alphaIdentifier) && !production.sharesProductionPreferences(bundleIdentifier: AppRuntime.releaseIdentifier), "only an isolated stable-bundle launch shares the production preferences domain")
     try check(runtime.defaultsSuite != (try AppRuntime(root: base.appendingPathComponent("Alpha2"), stableRoot: stable)).defaultsSuite, "disposable alpha roots use separate preferences")
 }
