@@ -31,6 +31,8 @@ ROOT="${0:A:h}"
 REPO=juniornkanabassi/creatoros
 ACCOUNT="${CREATOROS_SPARKLE_ACCOUNT:-creatoros}"
 BUILD_ROOT="${CONTENT_TEMPLATE_BUILD_ROOT:-${TMPDIR:-/private/tmp}/creatoros-build}"  # build.sh's default
+[[ $BUILD_ROOT == /* ]] || BUILD_ROOT="$ROOT/$BUILD_ROOT"
+export CONTENT_TEMPLATE_BUILD_ROOT="$BUILD_ROOT"
 SIGN_UPDATE="$BUILD_ROOT/artifacts/sparkle/Sparkle/bin/sign_update"
 DRY=0 RESUME=0 WEBSITE="" NOTES="" ZIP="" DMG="" OUT=""
 die() { print -u2 "release.sh: $*"; exit 1; }
@@ -58,28 +60,40 @@ HEAD=$(git -C "$ROOT" rev-parse HEAD)
 CLEAN=$([[ -z $(git -C "$ROOT" status --porcelain) ]] && print 1 || print 0)
 step() { print "\n== $*"; }
 
+# Sparkle compares build numbers and the feed serves only full releases, so prereleases are never published here.
+[[ $SRC_VERSION =~ '^[0-9]+\.[0-9]+(\.[0-9]+)?$' ]] || die "version '$SRC_VERSION' is not a release number (x.y or x.y.z); prereleases are not published"
 EXISTS=0 TAGGED=0
-if (( ! DRY )); then
-  (( CLEAN )) || die "the source has uncommitted changes; commit them first"
-  if git -C "$ROOT" rev-parse -q --verify "refs/tags/v$SRC_VERSION" >/dev/null; then
-    (( RESUME )) && [[ $(git -C "$ROOT" rev-parse "v$SRC_VERSION^{commit}") == $HEAD ]] \
-      || die "tag v$SRC_VERSION already exists$( (( RESUME )) && print " on another commit" || print "; --resume finishes that release")"
-    TAGGED=1
-  fi
-  gh auth status >/dev/null 2>&1 || die "gh is not signed in"
+preflight=()   # read-only checks: a real run stops on any of them, a dry run lists them
+(( CLEAN )) || preflight+=("the source has uncommitted changes; commit them first")
+# The tag is pushed to origin and the release is made on $REPO, so they must be the same repository.
+ORIGIN=$(git -C "$ROOT" remote get-url origin 2>/dev/null || true)
+[[ ${${ORIGIN%.git}:l} == (https://github.com/|git@github.com:)${REPO:l} ]] || preflight+=("origin is '$ORIGIN', not $REPO")
+if git -C "$ROOT" rev-parse -q --verify "refs/tags/v$SRC_VERSION" >/dev/null; then
+  if (( RESUME )) && [[ $(git -C "$ROOT" rev-parse "v$SRC_VERSION^{commit}") == $HEAD ]]; then TAGGED=1
+  else preflight+=("tag v$SRC_VERSION already exists$( (( RESUME )) && print " on another commit" || print "; --resume finishes that release")"); fi
+fi
+if gh auth status >/dev/null 2>&1; then
   # Sparkle and website visitors download anonymously, so a release on a private repository would publish an appcast
   # whose every download fails. Refuse until Junior has made the repository public.
-  VISIBILITY=$(gh repo view $REPO --json visibility --jq .visibility 2>/dev/null) || die "could not read $REPO's visibility"
-  [[ $VISIBILITY == PUBLIC ]] || die "$REPO is ${VISIBILITY:l}: its release downloads would fail for everyone; make it public first"
+  VISIBILITY=$(gh repo view $REPO --json visibility --jq .visibility 2>/dev/null) || VISIBILITY=UNREADABLE
+  [[ $VISIBILITY == PUBLIC ]] || preflight+=("$REPO is ${VISIBILITY:l}: its release downloads would fail for everyone; make it public first")
   # The release is made from the pushed tag, so a tag already on origin must be this HEAD (peeled, for annotated tags).
   RTAG=$(git -C "$ROOT" ls-remote origin "refs/tags/v$SRC_VERSION" "refs/tags/v$SRC_VERSION^{}" | sort -k2 | tail -1 | cut -f1)
-  [[ -z $RTAG || $RTAG == $HEAD ]] || die "tag v$SRC_VERSION on origin points at another commit ($RTAG)"
+  [[ -z $RTAG || $RTAG == $HEAD ]] || preflight+=("tag v$SRC_VERSION on origin points at another commit ($RTAG)")
   if gh release view "v$SRC_VERSION" --repo $REPO >/dev/null 2>&1; then
-    (( RESUME )) || die "release v$SRC_VERSION already exists on $REPO; --resume finishes it if it holds this zip"
+    (( RESUME )) || preflight+=("release v$SRC_VERSION already exists on $REPO; --resume finishes it if it holds this zip")
     EXISTS=1
   fi
 else
+  preflight+=("gh is not signed in")
+fi
+if (( ${#preflight} )); then
+  (( DRY )) || die "refusing: ${(j:; :)preflight}"
+  for p in $preflight; do print "dry run: a real run would refuse: $p"; done
+fi
+if (( DRY )); then
   [[ -n $OUT ]] || OUT=$(mktemp -d /private/tmp/creatoros-release-dry.XXXXXX)
+  OUT=${OUT:A}   # from the caller's folder, before build.sh changes into the repository
   mkdir -p "$OUT"
 fi
 WORK=$(mktemp -d /private/tmp/creatoros-release.XXXXXX)
@@ -147,7 +161,9 @@ done
 CDHASH=$(cdhash "$APP")
 [[ -n $CDHASH && $(cdhash "$DAPP") == $CDHASH ]] || problems+=("the app in the disk image has CDHash '$(cdhash "$DAPP")', the zipped app '$CDHASH'")
 detach || die "the disk image is still mounted at $MNT"
-for k in CFBundleIdentifier CFBundleShortVersionString CFBundleVersion SUPublicEDKey; do
+DEVELOPER_ID='anchor apple generic and certificate 1[field.1.2.840.113635.100.6.2.6] exists and certificate leaf[field.1.2.840.113635.100.6.1.13] exists and certificate leaf[subject.OU] = M6L2VW4W5Z'
+/usr/bin/codesign --verify -R="$DEVELOPER_ID" "$APP" 2>/dev/null || problems+=("the zipped app is not signed with Junior's Developer ID (team M6L2VW4W5Z), so its updater would stay off")
+for k in CFBundleIdentifier CFBundleShortVersionString CFBundleVersion SUPublicEDKey SUFeedURL; do
   [[ $(plist $k) == $(src $k) ]] || problems+=("$k is '$(plist $k)' in the zip but '$(src $k)' in the source")
 done
 [[ $SIGNING == notarised ]] || problems+=("the zipped app is not notarised and stapled")
@@ -295,6 +311,15 @@ else
   # The tag goes on the commit checked in step 1; refuse if the checkout moved or changed since.
   [[ $(git -C "$ROOT" rev-parse HEAD) == $HEAD && -z $(git -C "$ROOT" status --porcelain) ]] \
     || die "the checkout changed since step 1 (HEAD was $HEAD); nothing uploaded"
+  # The release is made from the tag: make it on the checked commit if needed, push it, and read it back from origin
+  # before anything is uploaded or published.
+  if (( ! TAGGED )); then
+    git -C "$ROOT" tag -a "v$VERSION" -m "CreatorOS $VERSION" "$HEAD" || die "git tag failed"
+    TAGGED=1
+  fi
+  git -C "$ROOT" push origin "refs/tags/v$VERSION" || die "could not push tag v$VERSION (rerun with --resume --zip ${(q)SRC_ZIP} --dmg ${(q)SRC_DMG})"
+  RTAG=$(git -C "$ROOT" ls-remote origin "refs/tags/v$VERSION" "refs/tags/v$VERSION^{}" | sort -k2 | tail -1 | cut -f1)
+  [[ $RTAG == $HEAD ]] || die "tag v$VERSION on origin is '$RTAG', not $HEAD; nothing uploaded"
   if (( EXISTS )); then
     # A prerelease is not what /releases/latest serves, so the appcast and website must not point at it. A draft is
     # what an interrupted gh release create leaves: it is finished below once its assets check out.
@@ -319,11 +344,6 @@ else
     [[ $(gh release view "v$VERSION" --repo $REPO --json isDraft,isPrerelease --jq '"\(.isDraft) \(.isPrerelease)"') == "false false" ]] \
       || die "v$VERSION on $REPO is still a draft or prerelease"
   else
-    if (( ! TAGGED )); then
-      git -C "$ROOT" tag -a "v$VERSION" -m "CreatorOS $VERSION" "$HEAD" || die "git tag failed"
-      TAGGED=1
-    fi
-    git -C "$ROOT" push origin "refs/tags/v$VERSION" || die "could not push tag v$VERSION (rerun with --resume --zip ${(q)SRC_ZIP} --dmg ${(q)SRC_DMG})"
     gh release create "v$VERSION" --verify-tag "$WORK/CreatorOS_$VERSION.zip" "$WORK/CreatorOS_$VERSION.dmg" --repo $REPO --title "CreatorOS $VERSION (build $BUILD)" --notes-file "$NOTES" || die "gh release create failed (rerun with --resume --zip ${(q)SRC_ZIP} --dmg ${(q)SRC_DMG})"
   fi
   for name in $NAMES; do
@@ -353,9 +373,6 @@ step "7. Tag v$VERSION"
 if (( DRY )); then
   print "dry run: the tag is made and pushed in step 5"
   print "\nDry run done: appcast $APPCAST"
-elif (( TAGGED )); then
-  print "v$VERSION is on HEAD. The website session commits $APPCAST and the release object above."
 else
-  git -C "$ROOT" tag -a "v$VERSION" -m "CreatorOS $VERSION" "$HEAD" || die "git tag failed"
-  print "Tagged v$VERSION (not pushed). The website session commits $APPCAST and the release object above."
+  print "v$VERSION is on HEAD and origin. The website session commits $APPCAST and the release object above."
 fi
