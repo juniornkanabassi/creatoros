@@ -26,6 +26,10 @@ cp "$BIN_PATH/creatoros" "$APP_PATH/Contents/MacOS/creatoros"
 mkdir -p "$APP_PATH/Contents/Resources/mcp"
 cp mcp/creatoros-mcp.mjs "$APP_PATH/Contents/Resources/mcp/"
 cp Resources/Info.plist "$APP_PATH/Contents/Info.plist"
+# Sparkle, found through the app's rpath @executable_path/../Frameworks; ditto keeps its symlinks.
+[[ -d "$BIN_PATH/Sparkle.framework" ]] || { print -u2 "No Sparkle.framework in $BIN_PATH"; exit 1; }
+mkdir -p "$APP_PATH/Contents/Frameworks"
+/usr/bin/ditto "$BIN_PATH/Sparkle.framework" "$APP_PATH/Contents/Frameworks/Sparkle.framework"
 cp "$ICON_SOURCE" "$APP_PATH/Contents/Resources/AppIcon.icns"
 # Finder/File Provider can attach FinderInfo to this newly made bundle directory.
 # Remove it only from our generated app root, never from imported template data.
@@ -43,6 +47,22 @@ SIGN_OPTS=(--force --options runtime --sign "$SIGN_ID")
 [[ "$SIGN_ID" == "-" ]] || SIGN_OPTS+=(--timestamp)   # notarisation needs Apple's secure timestamp
 # Inside-out with no --deep: the bundled CLI first, under its own identifier, then the app.
 /usr/bin/codesign "${SIGN_OPTS[@]}" --identifier com.juniornkanabassi.CreatorOS.cli "$APP_PATH/Contents/MacOS/creatoros"
+# Updates only in a Developer ID build with a real public key. Any other build has no feed, so the app starts no
+# updater and shows no Check for Updates item (Updates.swift), and can never replace itself with a release.
+PUBLIC_KEY=$(/usr/libexec/PlistBuddy -c 'Print SUPublicEDKey' "$APP_PATH/Contents/Info.plist" 2>/dev/null || true)
+if [[ "$SIGN_ID" != "$DEV_ID_SHA" || -z "$PUBLIC_KEY" || "$PUBLIC_KEY" == REPLACE_WITH_* ]]; then
+  /usr/libexec/PlistBuddy -c "Delete :SUFeedURL" -c "Delete :SUPublicEDKey" "$APP_PATH/Contents/Info.plist"
+  print "Updates off in this build (no Developer ID identity, or SUPublicEDKey is not set)"
+fi
+# Sparkle's nested code inside-out, as its documentation gives for apps outside the App Store, then the framework.
+# The XPC services keep their own entitlements. No --deep on the app: it would re-sign all of this.
+SPARKLE="$APP_PATH/Contents/Frameworks/Sparkle.framework"
+/usr/bin/codesign "${SIGN_OPTS[@]}" "$SPARKLE/Versions/B/Autoupdate"
+/usr/bin/codesign "${SIGN_OPTS[@]}" "$SPARKLE/Versions/B/Updater.app"
+for xpc in "$SPARKLE"/Versions/B/XPCServices/*.xpc(N); do
+  /usr/bin/codesign "${SIGN_OPTS[@]}" --preserve-metadata=entitlements "$xpc"
+done
+/usr/bin/codesign "${SIGN_OPTS[@]}" "$SPARKLE"
 /usr/bin/codesign "${SIGN_OPTS[@]}" "$APP_PATH"
 /usr/bin/codesign --verify --strict "$APP_PATH/Contents/MacOS/creatoros"
 /usr/bin/codesign --verify --strict "$APP_PATH"

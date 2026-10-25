@@ -79,6 +79,7 @@ extension NSSplitView { @objc func refuseAutosaveName(_ name: String?) {} }
                 exit(0)
             }
         }
+        Updates.shared.start()
     }
     /// An isolated run: no Dock tile, no activation, unless the launch asked for --show.
     static var quietLaunch: Bool {
@@ -133,6 +134,7 @@ extension NSSplitView { @objc func refuseAutosaveName(_ name: String?) {} }
                     Button(page.rawValue) { model.page = page }.keyboardShortcut(KeyEquivalent(Character("\(index + 1)")), modifiers: [.command, .shift])
                 }
             }
+            UpdateCommands()
         }
         // Settings is a standard window at standard size. It is not zoomed: the AppKit tab view inside a scaled
         // subtree drew in one place and took clicks in another, which is why nothing in Settings responded when zoomed.
