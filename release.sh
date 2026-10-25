@@ -34,6 +34,8 @@ BUILD_ROOT="${CONTENT_TEMPLATE_BUILD_ROOT:-${TMPDIR:-/private/tmp}/creatoros-bui
 [[ $BUILD_ROOT == /* ]] || BUILD_ROOT="$ROOT/$BUILD_ROOT"
 export CONTENT_TEMPLATE_BUILD_ROOT="$BUILD_ROOT"
 SIGN_UPDATE="$BUILD_ROOT/artifacts/sparkle/Sparkle/bin/sign_update"
+# Every gh call names github.com, so GH_HOST cannot point publication at another host.
+GHREPO="github.com/$REPO"
 DRY=0 RESUME=0 WEBSITE="" NOTES="" ZIP="" DMG="" OUT=""
 die() { print -u2 "release.sh: $*"; exit 1; }
 while (( $# )); do case $1 in
@@ -48,7 +50,7 @@ while (( $# )); do case $1 in
   *) die "unknown argument $1 (see --help)";; esac; done
 [[ -n $WEBSITE && -f $WEBSITE/lib/apps.json ]] || die "--website must be the website checkout (no lib/apps.json in '$WEBSITE')"
 [[ -n $NOTES && -s $NOTES ]] || die "--notes must name a non-empty Markdown file"
-! grep -q ']]>' "$NOTES" || die "the notes may not contain ]]>"
+! grep -q -e ']]>' -e '<item' -e '</item>' "$NOTES" || die "the notes may not contain ]]>, <item or </item>"
 # A resumed run must reuse the zip already uploaded: rebuilding would replace it with different bytes.
 (( ! RESUME )) || [[ -n $ZIP ]] || die "--resume needs --zip naming the zip the first run published"
 (( DRY )) || [[ -z $OUT ]] || die "--out is for --dry-run only"
@@ -68,24 +70,31 @@ preflight=()   # read-only checks: a real run stops on any of them, a dry run li
 # The tag is pushed to origin and the release is made on $REPO, so they must be the same repository.
 ORIGIN=$(git -C "$ROOT" remote get-url origin 2>/dev/null || true)
 [[ ${${ORIGIN%.git}:l} == (https://github.com/|git@github.com:)${REPO:l} ]] || preflight+=("origin is '$ORIGIN', not $REPO")
+for url in ${(f)"$(git -C "$ROOT" remote get-url --push --all origin 2>/dev/null)"}; do
+  [[ ${${url%.git}:l} == (https://github.com/|git@github.com:)${REPO:l} ]] || preflight+=("origin pushes to '$url', not $REPO")
+done
 if git -C "$ROOT" rev-parse -q --verify "refs/tags/v$SRC_VERSION" >/dev/null; then
   if (( RESUME )) && [[ $(git -C "$ROOT" rev-parse "v$SRC_VERSION^{commit}") == $HEAD ]]; then TAGGED=1
   else preflight+=("tag v$SRC_VERSION already exists$( (( RESUME )) && print " on another commit" || print "; --resume finishes that release")"); fi
 fi
-if gh auth status >/dev/null 2>&1; then
+if gh auth status --hostname github.com >/dev/null 2>&1; then
   # Sparkle and website visitors download anonymously, so a release on a private repository would publish an appcast
   # whose every download fails. Refuse until Junior has made the repository public.
-  VISIBILITY=$(gh repo view $REPO --json visibility --jq .visibility 2>/dev/null) || VISIBILITY=UNREADABLE
+  VISIBILITY=$(gh repo view $GHREPO --json visibility --jq .visibility 2>/dev/null) || VISIBILITY=UNREADABLE
   [[ $VISIBILITY == PUBLIC ]] || preflight+=("$REPO is ${VISIBILITY:l}: its release downloads would fail for everyone; make it public first")
   # The release is made from the pushed tag, so a tag already on origin must be this HEAD (peeled, for annotated tags).
   RTAG=$(git -C "$ROOT" ls-remote origin "refs/tags/v$SRC_VERSION" "refs/tags/v$SRC_VERSION^{}" | sort -k2 | tail -1 | cut -f1)
   [[ -z $RTAG || $RTAG == $HEAD ]] || preflight+=("tag v$SRC_VERSION on origin points at another commit ($RTAG)")
-  if gh release view "v$SRC_VERSION" --repo $REPO >/dev/null 2>&1; then
+  if [[ $RTAG == $HEAD ]] && (( RESUME && ! TAGGED && ! DRY )); then
+    git -C "$ROOT" fetch -q origin "refs/tags/v$SRC_VERSION:refs/tags/v$SRC_VERSION" || die "could not fetch tag v$SRC_VERSION"
+    TAGGED=1
+  fi
+  if gh release view "v$SRC_VERSION" --repo $GHREPO >/dev/null 2>&1; then
     (( RESUME )) || preflight+=("release v$SRC_VERSION already exists on $REPO; --resume finishes it if it holds this zip")
     EXISTS=1
   fi
 else
-  preflight+=("gh is not signed in")
+  preflight+=("gh is not signed in to github.com")
 fi
 if (( ${#preflight} )); then
   (( DRY )) || die "refusing: ${(j:; :)preflight}"
@@ -153,13 +162,17 @@ MOUNTED=1
 DAPP="$MNT/CreatorOS.app"
 [[ -d $DAPP ]] || die "no CreatorOS.app inside $DMG"
 /usr/bin/codesign --verify --deep --strict "$DAPP" 2>/dev/null || problems+=("the app in the disk image does not verify")
-cdhash() { /usr/bin/codesign -dv --verbose=4 "$1" 2>&1 | sed -n 's/^CDHash=//p'; }
+cdhash() { /usr/bin/codesign -dv --verbose=4 --arch "$2" "$1" 2>&1 | sed -n 's/^CDHash=//p'; }
 dplist() { /usr/libexec/PlistBuddy -c "Print $1" "$DAPP/Contents/Info.plist" 2>/dev/null || true; }
 for k in CFBundleShortVersionString CFBundleVersion CreatorOSSourceCommit; do
   [[ $(dplist $k) == $(plist $k) ]] || problems+=("$k is '$(dplist $k)' in the disk image but '$(plist $k)' in the zip")
 done
-CDHASH=$(cdhash "$APP")
-[[ -n $CDHASH && $(cdhash "$DAPP") == $CDHASH ]] || problems+=("the app in the disk image has CDHash '$(cdhash "$DAPP")', the zipped app '$CDHASH'")
+ARCHS=$(/usr/bin/lipo -archs "$APP/Contents/MacOS/ProjectTemplates") || die "could not read the app's architectures"
+[[ $(/usr/bin/lipo -archs "$DAPP/Contents/MacOS/ProjectTemplates" 2>/dev/null) == $ARCHS ]] || problems+=("the app in the disk image is not built for '$ARCHS' like the zipped app")
+for arch in ${=ARCHS}; do
+  CDHASH=$(cdhash "$APP" $arch)
+  [[ -n $CDHASH && $(cdhash "$DAPP" $arch) == $CDHASH ]] || problems+=("the $arch code in the disk image has CDHash '$(cdhash "$DAPP" $arch)', the zipped app '$CDHASH'")
+done
 detach || die "the disk image is still mounted at $MNT"
 DEVELOPER_ID='anchor apple generic and certificate 1[field.1.2.840.113635.100.6.2.6] exists and certificate leaf[field.1.2.840.113635.100.6.1.13] exists and certificate leaf[subject.OU] = M6L2VW4W5Z'
 /usr/bin/codesign --verify -R="$DEVELOPER_ID" "$APP" 2>/dev/null || problems+=("the zipped app is not signed with Junior's Developer ID (team M6L2VW4W5Z), so its updater would stay off")
@@ -236,6 +249,8 @@ def items(text):
     for item in channels[0].findall("item"):
         if len(item.findall("enclosure")) != 1:
             sys.exit(f"an appcast item has {len(item.findall('enclosure'))} enclosures; only one download per item is supported")
+        if not (item.find("enclosure").get("url") or "").startswith("https://"):
+            sys.exit("an appcast item's enclosure has no https url, which makes Sparkle reject the whole feed")
         b = one(item, "version")
         if b is None or not b.isdigit():
             sys.exit(f"an appcast item's build number is {b!r}, not a whole number")
@@ -277,7 +292,7 @@ print(f"{'Replaced' if resumed else 'Added'} the item for {version} (build {buil
 PY
 
 step "4. Release object for lib/apps.json (newest first in the app's releases)"
-ARCH=$(/usr/bin/lipo -archs "$APP/Contents/MacOS/ProjectTemplates") || die "could not read the app's architectures"
+ARCH=$ARCHS
 [[ $ARCH == "x86_64 arm64" || $ARCH == "arm64 x86_64" ]] && ARCH=universal
 release_object() { cat <<JSON
 {
@@ -304,7 +319,7 @@ typeset -A WANT=("CreatorOS_$VERSION.zip" $SHA "CreatorOS_$VERSION.dmg" $DMG_SHA
 step "5. GitHub release v$VERSION on $REPO"
 if (( DRY )); then
   print "dry run, not run: git tag -a v$VERSION -m 'CreatorOS $VERSION' $HEAD; git push origin refs/tags/v$VERSION"
-  print "dry run, not run: gh release create v$VERSION --verify-tag ${(q)NAMES} --repo $REPO --title 'CreatorOS $VERSION (build $BUILD)' --notes-file '$NOTES'"
+  print "dry run, not run: gh release create v$VERSION --verify-tag ${(q)NAMES} --repo $GHREPO --title 'CreatorOS $VERSION (build $BUILD)' --notes-file '$NOTES'"
   print "asset CreatorOS_$VERSION.zip: $BYTES bytes, sha256 $SHA (Sparkle appcast enclosure)"
   print "asset CreatorOS_$VERSION.dmg: $DMG_BYTES bytes, sha256 $DMG_SHA (website download)"
 else
@@ -323,31 +338,31 @@ else
   if (( EXISTS )); then
     # A prerelease is not what /releases/latest serves, so the appcast and website must not point at it. A draft is
     # what an interrupted gh release create leaves: it is finished below once its assets check out.
-    STATE=$(gh release view "v$VERSION" --repo $REPO --json isDraft,isPrerelease --jq '"\(.isDraft) \(.isPrerelease)"')
+    STATE=$(gh release view "v$VERSION" --repo $GHREPO --json isDraft,isPrerelease --jq '"\(.isDraft) \(.isPrerelease)"')
     [[ $STATE == *" false" ]] || die "v$VERSION on $REPO is a prerelease; make it a full release first, then rerun with --resume --zip ${(q)SRC_ZIP}"
-    HAVE=$(gh release view "v$VERSION" --repo $REPO --json assets --jq '.assets[].name')
+    HAVE=$(gh release view "v$VERSION" --repo $GHREPO --json assets --jq '.assets[].name')
     missing=()
     for name in $NAMES; do   # every asset already there is checked first; only then is a missing one uploaded
       if print -r -- "$HAVE" | grep -qx "$name"; then
         print "v$VERSION already has $name; checking it is this file"
-        gh release download "v$VERSION" --repo $REPO --pattern "$name" --dir "$WORK/existing" || die "could not download the existing $name"
+        gh release download "v$VERSION" --repo $GHREPO --pattern "$name" --dir "$WORK/existing" || die "could not download the existing $name"
         [[ $(shasum -a 256 "$WORK/existing/$name" | cut -d' ' -f1) == $WANT[$name] ]] \
           || die "v$VERSION on $REPO already holds a different $name: refusing a conflicting release; nothing uploaded, the website appcast is unchanged"
       else
         missing+=($name)
       fi
     done
-    for name in $missing; do gh release upload "v$VERSION" "$WORK/$name" --repo $REPO || die "gh release upload $name failed"; done
+    for name in $missing; do gh release upload "v$VERSION" "$WORK/$name" --repo $GHREPO || die "gh release upload $name failed"; done
     if [[ $STATE == "true "* ]]; then
-      gh release edit "v$VERSION" --repo $REPO --draft=false --verify-tag || die "could not publish the draft v$VERSION"
+      gh release edit "v$VERSION" --repo $GHREPO --draft=false --verify-tag || die "could not publish the draft v$VERSION"
     fi
-    [[ $(gh release view "v$VERSION" --repo $REPO --json isDraft,isPrerelease --jq '"\(.isDraft) \(.isPrerelease)"') == "false false" ]] \
+    [[ $(gh release view "v$VERSION" --repo $GHREPO --json isDraft,isPrerelease --jq '"\(.isDraft) \(.isPrerelease)"') == "false false" ]] \
       || die "v$VERSION on $REPO is still a draft or prerelease"
   else
-    gh release create "v$VERSION" --verify-tag "$WORK/CreatorOS_$VERSION.zip" "$WORK/CreatorOS_$VERSION.dmg" --repo $REPO --title "CreatorOS $VERSION (build $BUILD)" --notes-file "$NOTES" || die "gh release create failed (rerun with --resume --zip ${(q)SRC_ZIP} --dmg ${(q)SRC_DMG})"
+    gh release create "v$VERSION" --verify-tag "$WORK/CreatorOS_$VERSION.zip" "$WORK/CreatorOS_$VERSION.dmg" --repo $GHREPO --title "CreatorOS $VERSION (build $BUILD)" --notes-file "$NOTES" || die "gh release create failed (rerun with --resume --zip ${(q)SRC_ZIP} --dmg ${(q)SRC_DMG})"
   fi
   for name in $NAMES; do
-    gh release download "v$VERSION" --repo $REPO --pattern "$name" --dir "$WORK/remote" || die "could not download $name back (rerun with --resume --zip ${(q)SRC_ZIP} --dmg ${(q)SRC_DMG})"
+    gh release download "v$VERSION" --repo $GHREPO --pattern "$name" --dir "$WORK/remote" || die "could not download $name back (rerun with --resume --zip ${(q)SRC_ZIP} --dmg ${(q)SRC_DMG})"
     [[ $(shasum -a 256 "$WORK/remote/$name" | cut -d' ' -f1) == $WANT[$name] ]] \
       || die "v$VERSION on $REPO holds a different $name (sha256 differs): refusing a conflicting release; the website appcast is unchanged"
     print "Published and verified $name (sha256 $WANT[$name])"
