@@ -35,7 +35,7 @@
 	<key>SUFeedURL</key>
 	<string>https://juniornkanabassi.com/apps/creatoros/appcast.xml</string>
 	<key>SUPublicEDKey</key>
-	<string>REPLACE_WITH_CREATOROS_PUBLIC_KEY</string>
+	<string>EID2azmyJ92wBTcxD3shVTjBCiOUswfzBJW4DJLZwIQ=</string>
 	<key>SUScheduledCheckInterval</key>
 	<integer>86400</integer>
 </dict>
