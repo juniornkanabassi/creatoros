@@ -34,7 +34,7 @@ CreatorOS checks for updates once a day and shows you the release notes before a
 
 ## Privacy
 
-CreatorOS works offline. It has no accounts, no analytics and no uploads; the only thing it fetches is the update check from juniornkanabassi.com. Your library is stored in `~/Library/Application Support/Project Templates/` (the app's earlier name), and every schema upgrade keeps a backup of the old file. Removing a project from the list never touches its folder, and templates, ideas and workspaces that CreatorOS deletes go to the Bin.
+CreatorOS works offline. It has no accounts, no analytics and no uploads. The only things it fetches are the update check from juniornkanabassi.com and the updates themselves from GitHub. Your library is stored in `~/Library/Application Support/Project Templates/` (the app's earlier name), and every schema upgrade keeps a backup of the old file. Removing a project from the list never touches its folder, and templates, ideas and workspaces that CreatorOS deletes go to the Bin.
 
 ## Command line and AI assistants
 
