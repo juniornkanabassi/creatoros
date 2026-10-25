@@ -8,9 +8,9 @@ There is no public download yet. The first one will be signed with my Developer 
 
 ## What it does
 
-You start with a template: a folder laid out the way you like to work, with your documents, project files and media folders inside it. CreatorOS imports a template from any folder, or from a Post Haste `.pht` file, and never changes the original. Templates can be grouped into sets, one per channel, brand or client, with a version for each format: Long, Short, Podcast and Live.
+You start with a template, a folder laid out the way you like to work, with your documents, project files and media folders inside it. CreatorOS imports a template from any folder, or from a Post Haste `.pht` file, and never changes the original. Templates can be grouped into sets, one per channel, brand or client, with a version for each format: Long, Short, Podcast and Live.
 
-New Project shows the whole folder it is about to create as soon as you choose a set and a format, and updates the preview as you type. Folder names are built from the project number, the format, an optional campaign and the project name. Files whose names start with `Template` take the project's name, and the next project number for each format is filled in for you. Every folder keeps its icon, and the outer folder gets the icon for its format.
+New Project shows the whole folder it is about to create as soon as you choose a set and a format, and updates the preview as you type. Folder names are built from the project number, the format, an optional campaign and the project name. A file named `Template`, or one whose name starts with `Template` followed by a space or a dot, takes the project's name. The next project number for each format is filled in for you. Every folder keeps its icon, and the outer folder gets the icon for its format.
 
 Projects lists everything you have made across your drives and cloud folders, with a coloured badge for each location and a clear sign when a drive is not connected. You can search, filter, pin and group projects, open them in Finder or Premiere Pro, and browse their files in icon, list or column view. If you move a project folder, CreatorOS can find it again within your saved locations.
 
@@ -30,15 +30,15 @@ Once a release is out, download the disk image from the [Releases page](https://
 
 ## Updates
 
-CreatorOS checks for updates once a day and shows you the release notes before anything changes. It installs an update only when you say yes, and CreatorOS › Check for Updates… checks straight away.
+Releases signed with my Developer ID check for updates once a day and show you the release notes before anything changes. They install an update only when you say yes, unless you tick the option to install updates automatically, and CreatorOS › Check for Updates… checks straight away. A copy you build yourself, or one launched with `--data-directory`, has updates turned off.
 
 ## Privacy
 
-CreatorOS works offline. It has no accounts, no analytics and no uploads. The only things it fetches are the update check from juniornkanabassi.com and the updates themselves from GitHub. Your library is stored in `~/Library/Application Support/Project Templates/` (the app's earlier name), and every schema upgrade keeps a backup of the old file. Removing a project from the list never touches its folder, and templates, ideas and workspaces that CreatorOS deletes go to the Bin.
+CreatorOS works offline. It has no accounts, no analytics and no uploads. The only things it fetches are the update check from juniornkanabassi.com and the updates themselves from GitHub. Your library is stored in `~/Library/Application Support/Project Templates/` (the app's earlier name), and every schema upgrade keeps a backup of the old file. Removing a project from the list never touches its folder, and templates and idea workspaces that CreatorOS deletes go to the Bin. Removing an idea takes it off the list for good.
 
 ## Command line and AI assistants
 
-Almost every action in the app is also a `creatoros` command and an MCP tool, so Claude, Codex and other assistants can create projects, move cards between stages and look things up for you. A command changes the app exactly as the matching button would, and most commands that move, rename or remove things accept `--dry-run` so you can see what would happen first.
+Almost every action in the app is also a `creatoros` command and an MCP tool, so Claude, Codex and other assistants can create projects, move cards between stages and look things up for you. A command uses the same action as the matching button, though a few reach further (`stage move-all` also moves cards the board's filters are hiding), and most commands that move, rename or remove things accept `--dry-run` so you can see what would happen first.
 
 ```sh
 CREATOROS="/Applications/CreatorOS.app/Contents/MacOS/creatoros"
