@@ -225,10 +225,3 @@ args = ["/Applications/JuniorOS Apps/CreatorOS.app/Contents/Resources/mcp/creato
 ```
 
 For a disposable build check: `python3 Scripts/check-ai-control.py <built ProjectTemplates executable or CreatorOS.app>` (the executable form needs `creatoros` beside it) runs every command on synthetic data, sends every MCP tool through the shim and covers dry-run byte identity, request-id retries, hidden-location refusals and concurrent callers; `python3 Scripts/check-control.py <app> <scratch>` runs the socket boundary and the AppModel harness (`Scripts/check-control-model.swift`, including GUI-sheet collisions); `zsh Scripts/check-isolated-defaults.sh "/path/to/CreatorOS.app"` launches a re-identified copy with `--data-directory` and fails if anything reaches its defaults domain (it never touches the production domain). `MCP_CLI` overrides the shim's executable for testing. MCP inherits `CREATOROS_DATA_DIRECTORY`. UI gestures, physical disconnected drives, real LucidLink and Adobe relinking need separate acceptance evidence.
-
-
-## 1.4.0 UI fix-round evidence
-
-On the disposable UI worktree, round 2 passes debug/release builds, 483 CoreChecks, 43 packaged AI checks, 26 packaged control checks (including the new completion regression), and the native-provider/durable-save harness. Window-only before/after captures cover every screen, both boards, all Settings tabs and browser modes. Dark/light navigation each passes 10 checks without changing the synthetic library.
-
-The final packaged instance at 150% passed coordinate clicks in Settings and New Project, field typing and Tab navigation, manual/automatic numbering, pointer and keyboard creation, pointer and keyboard Next Project, Browse Project, completed-form reset and unfinished-draft preservation. Settings intentionally stays unscaled. Evidence: `/private/tmp/ship/creatoros-ui-round2-final-pointer.json` and `/private/tmp/ship/creatoros-ui-screens/round-2/`. This is bounded UI evidence, not full keyboard/VoiceOver, drag, physical-drive or Adobe acceptance. The round report records two test-run constraint breaches; it does not certify production-data integrity.
