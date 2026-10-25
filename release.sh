@@ -60,7 +60,7 @@ SRC_VERSION=$(src CFBundleShortVersionString)
 [[ -z $(src CreatorOSChannel 2>/dev/null || true) && $(src CFBundleIdentifier) != local.creatoros.alpha ]] \
   || die "the source is the α channel, which is never released"
 HEAD=$(git -C "$ROOT" rev-parse HEAD)
-STATUS=$(git -C "$ROOT" status --porcelain) || die "git status failed"
+STATUS=$(git -C "$ROOT" status --porcelain --untracked-files=all) || die "git status failed"
 CLEAN=$([[ -z $STATUS ]] && print 1 || print 0)
 step() { print "\n== $*"; }
 
@@ -361,7 +361,7 @@ if (( DRY )); then
   fi
 else
   # The tag goes on the commit checked in step 1; refuse if the checkout moved or changed since.
-  STATUS=$(git -C "$ROOT" status --porcelain) || die "git status failed"
+  STATUS=$(git -C "$ROOT" status --porcelain --untracked-files=all) || die "git status failed"
   [[ $(git -C "$ROOT" rev-parse HEAD) == $HEAD && -z $STATUS ]] \
     || die "the checkout changed since step 1 (HEAD was $HEAD); nothing uploaded"
   # The release is made from the tag: make it on the checked commit if needed, push it, and read it back from origin
