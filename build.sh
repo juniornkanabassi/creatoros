@@ -63,7 +63,14 @@ for xpc in "$SPARKLE"/Versions/B/XPCServices/*.xpc(N); do
   /usr/bin/codesign "${SIGN_OPTS[@]}" --preserve-metadata=entitlements "$xpc"
 done
 /usr/bin/codesign "${SIGN_OPTS[@]}" "$SPARKLE"
-/usr/bin/codesign "${SIGN_OPTS[@]}" "$APP_PATH"
+# Hardened runtime only loads Sparkle when it shares the app's Team ID. A local identity (self-signed or ad hoc) has
+# none, so only those builds turn library validation off; Developer ID builds keep it.
+ENTITLEMENT_OPTS=()
+if [[ "$SIGN_ID" != "$DEV_ID_SHA" ]]; then
+  /usr/libexec/PlistBuddy -c "Add :com.apple.security.cs.disable-library-validation bool true" "$BUILD_STAGE/local.entitlements" >/dev/null
+  ENTITLEMENT_OPTS=(--entitlements "$BUILD_STAGE/local.entitlements")
+fi
+/usr/bin/codesign "${SIGN_OPTS[@]}" "${ENTITLEMENT_OPTS[@]}" "$APP_PATH"
 /usr/bin/codesign --verify --strict "$APP_PATH/Contents/MacOS/creatoros"
 /usr/bin/codesign --verify --strict "$APP_PATH"
 print "Signed with: $SIGN_ID"
