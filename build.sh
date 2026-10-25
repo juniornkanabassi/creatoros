@@ -4,7 +4,8 @@ cd "${0:A:h}"
 # The commit this builds, taken before compiling ("-dirty" with uncommitted changes); release.sh publishes only a
 # clean HEAD's build.
 SOURCE_COMMIT=$(git rev-parse HEAD)
-[[ -z $(git status --porcelain) ]] || SOURCE_COMMIT+="-dirty"
+STATUS=$(git status --porcelain) || { print -u2 "git status failed"; exit 1; }
+[[ -z $STATUS ]] || SOURCE_COMMIT+="-dirty"
 BUILD_ROOT="${CONTENT_TEMPLATE_BUILD_ROOT:-${TMPDIR:-/private/tmp}/creatoros-build}"
 OUTPUT_ROOT="${CONTENT_TEMPLATE_OUTPUT_ROOT:-../Outputs}"
 APP_VERSION=$(/usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' Resources/Info.plist)
@@ -38,7 +39,8 @@ cp "$ICON_SOURCE" "$APP_PATH/Contents/Resources/AppIcon.icns"
 # Finder/File Provider can attach FinderInfo to this newly made bundle directory.
 # Remove it only from our generated app root, never from imported template data.
 # Stamped once the bundle is assembled: a checkout that moved or changed meanwhile marks it dirty.
-[[ $(git rev-parse HEAD) == ${SOURCE_COMMIT%-dirty} && -z $(git status --porcelain) ]] || SOURCE_COMMIT="${SOURCE_COMMIT%-dirty}-dirty"
+STATUS=$(git status --porcelain) || { print -u2 "git status failed"; exit 1; }
+[[ $(git rev-parse HEAD) == ${SOURCE_COMMIT%-dirty} && -z $STATUS ]] || SOURCE_COMMIT="${SOURCE_COMMIT%-dirty}-dirty"
 /usr/libexec/PlistBuddy -c "Add :CreatorOSSourceCommit string $SOURCE_COMMIT" "$APP_PATH/Contents/Info.plist"
 if /usr/bin/xattr -p com.apple.FinderInfo "$APP_PATH" >/dev/null 2>&1; then
   /usr/bin/xattr -d com.apple.FinderInfo "$APP_PATH"
