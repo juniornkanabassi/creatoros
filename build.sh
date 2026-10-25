@@ -42,7 +42,8 @@ fi
 DEV_ID_SHA="C297CD17464A0EF6C93704A59BC2E1D4D1759400"
 NOTARY_PROFILE="${CREATOROS_NOTARY_PROFILE:-JuniorOS}"
 SIGN_ID="-"
-if [[ "$APP_CHANNEL" != "α" ]] && /usr/bin/security find-identity -v -p codesigning 2>/dev/null | grep -q "$DEV_ID_SHA"; then SIGN_ID="$DEV_ID_SHA"; fi
+# CREATOROS_LOCAL_SIGNING=1 signs ad hoc even with the certificate present, as a Mac without it would.
+if [[ "$APP_CHANNEL" != "α" && -z "${CREATOROS_LOCAL_SIGNING:-}" ]] && /usr/bin/security find-identity -v -p codesigning 2>/dev/null | grep -q "$DEV_ID_SHA"; then SIGN_ID="$DEV_ID_SHA"; fi
 SIGN_OPTS=(--force --options runtime --sign "$SIGN_ID")
 [[ "$SIGN_ID" == "-" ]] || SIGN_OPTS+=(--timestamp)   # notarisation needs Apple's secure timestamp
 # Inside-out with no --deep: the bundled CLI first, under its own identifier, then the app.

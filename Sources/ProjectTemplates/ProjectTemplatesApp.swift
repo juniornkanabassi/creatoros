@@ -62,8 +62,11 @@ extension NSSplitView { @objc func refuseAutosaveName(_ name: String?) {} }
         // writer over the same library. Test bundles use a separate identifier.
         // A copy that is still finishing its quit (saving the library) must not swallow the new launch: Junior's
         // relaunch from Spotlight used to activate that departing copy and exit, so nothing opened. Wait for it first.
+        // A production launch also defers to a running pre-rename CreatorOS, which writes the same library.
+        let isolated = dataRootArgument(ProcessInfo.processInfo.arguments) != nil
         if let identifier = Bundle.main.bundleIdentifier,
-           let existing = NSRunningApplication.runningApplications(withBundleIdentifier: identifier)
+           let existing = ([identifier] + (isolated ? [] : [AppRuntime.legacyIdentifier]))
+            .flatMap(NSRunningApplication.runningApplications(withBundleIdentifier:))
             .first(where: { app in
                 guard app.processIdentifier != ProcessInfo.processInfo.processIdentifier,
                       let args = launchArguments(for: app.processIdentifier) else { return false }

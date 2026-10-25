@@ -13,8 +13,9 @@ let package = Package(
     ],
     targets: [.target(name: "TemplateCore"),
               .executableTarget(name: "ProjectTemplates", dependencies: ["TemplateCore", .product(name: "Sparkle", package: "Sparkle")],
-                                // build.sh embeds Sparkle.framework in Contents/Frameworks.
-                                linkerSettings: [.unsafeFlags(["-Xlinker", "-rpath", "-Xlinker", "@executable_path/../Frameworks"])]),
+                                // build.sh embeds Sparkle.framework in Contents/Frameworks; a bare SwiftPM binary finds it beside itself.
+                                linkerSettings: [.unsafeFlags(["-Xlinker", "-rpath", "-Xlinker", "@executable_path/../Frameworks",
+                                                                    "-Xlinker", "-rpath", "-Xlinker", "@executable_path"])]),
               .executableTarget(name: "CoreChecks", dependencies: ["TemplateCore"]),
               .executableTarget(name: "creatoros", dependencies: ["TemplateCore"]),
               .executableTarget(name: "ContentTool", dependencies: ["TemplateCore"])],
