@@ -10,7 +10,7 @@ Read `../00 Project State/ARCHITECTURE-ESSENTIALS.md` before changing code. The 
 
 ## Build and run
 
-Apple silicon Mac, Xcode 26.6 or Swift 6 command-line tools with a macOS SDK. No third-party dependencies. Deployment target macOS 14; tested on macOS 26.6. The durable-save wrapper was also tested with Xcode 27 / Swift 6.4.
+Apple silicon Mac, Xcode 26.6 or Swift 6 command-line tools with a macOS SDK. The only dependency is Sparkle 2.10.0 (updates), fetched by SwiftPM. Deployment target macOS 14; tested on macOS 26.6. The durable-save wrapper was also tested with Xcode 27 / Swift 6.4.
 
 ```sh
 swift build --scratch-path /private/tmp/content-template-build
@@ -73,7 +73,7 @@ Resources/                Info.plist, pastel red slate stable AppIcon and orange
 
 ## Git
 
-`Source/` is a local git repository, tagged `v0.0.0` (baseline), `v0.1.0`, `v0.2.0` to `v0.11.0` at each delivery, following the PATCH/MINOR/MAJOR rule in `../../AGENTS.md`. Hooks are local config; after cloning run `git config core.hooksPath .githooks` and `git config commit.template .gitmessage`. Nothing is pushed anywhere until Junior says so.
+The repository is public at https://github.com/juniornkanabassi/creatoros (on my Mac it is the `Source/` folder), tagged `v0.0.0` (baseline), `v0.1.0`, `v0.2.0` to `v0.11.0` at each delivery, following the PATCH/MINOR/MAJOR rule in `../../AGENTS.md`. Hooks are local config; after cloning run `git config core.hooksPath .githooks` and `git config commit.template .gitmessage`. Pushes to main and releases still happen only on Junior's word.
 
 ## What the app does
 

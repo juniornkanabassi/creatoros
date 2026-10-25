@@ -63,11 +63,11 @@ command = "node"
 args = ["/Applications/CreatorOS.app/Contents/Resources/mcp/creatoros-mcp.mjs"]
 ```
 
-The control socket only accepts connections from your own user account on the same Mac. The full list of about sixty commands and the rules they follow are in [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md#ai-control).
+Change the paths if you installed the app somewhere else. The control socket only accepts connections from your own user account on the same Mac. The full list of about sixty commands and the rules they follow are in [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md#ai-control).
 
 ## Building from source
 
-You need an Apple silicon Mac and Xcode 26 or the Swift 6 command-line tools with a macOS SDK. There are no third-party dependencies.
+You need an Apple silicon Mac and Xcode 26 or the Swift 6 command-line tools with a macOS SDK. The only dependency is Sparkle 2.10.0, which handles updates; SwiftPM fetches it.
 
 ```sh
 swift build --scratch-path /private/tmp/content-template-build
