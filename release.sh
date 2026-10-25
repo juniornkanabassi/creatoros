@@ -249,6 +249,8 @@ def one(item, name):
     """A value Sparkle reads from any of the item's elements (it picks one by language) or from the enclosure's
     attribute; values that differ are ambiguous."""
     enclosure = item.find("enclosure")
+    if any(len(el) for el in item.findall(SP + name)):   # Sparkle reads all nested text; refuse rather than differ
+        sys.exit(f"an appcast item's {name} holds child elements: refusing to guess")
     values = [el.text or "" for el in item.findall(SP + name)] + ([] if enclosure is None else [enclosure.get(SP + name)])
     found = {v.strip() for v in values if v is not None}
     if len(found) > 1:
@@ -259,6 +261,9 @@ def items(text):
     """Every item's build and version; anything this script cannot read for certain stops it."""
     if any(uri != SP[1:-1] for uri in re.findall(r'xmlns:sparkle\s*=\s*["\']([^"\']*)', text)):
         sys.exit("the appcast binds the sparkle prefix to another namespace, which Sparkle would still read: refusing to guess")
+    # New items are written with the sparkle prefix, so the rss element itself must bind it to Sparkle's namespace.
+    if not re.search(r'<rss\b[^>]*\bxmlns:sparkle\s*=\s*["\']' + re.escape(SP[1:-1]) + '["\']', text):
+        sys.exit("the appcast's rss element does not declare xmlns:sparkle")
     root = ET.fromstring(text.encode("utf-8"))
     channels = root.findall("channel")
     if root.tag != "rss" or len(channels) != 1 or len(root.findall(".//item")) != len(channels[0].findall("item")):
