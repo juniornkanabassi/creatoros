@@ -197,7 +197,7 @@ struct SettingsView: View {
                 }.accessibilityAction { showAboutAdvanced.toggle() }
             }
             Section {
-                Text("© 2026 Junior Nkana Bassi. All rights reserved.").font(.caption).foregroundStyle(.secondary)
+                Text("© 2026 Junior Nkanabassi. Free software under the GNU GPL v3 or later.").font(.caption).foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, alignment: .center)
             }
         }.formStyle(.grouped)
