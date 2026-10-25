@@ -64,6 +64,7 @@ extension NSSplitView { @objc func refuseAutosaveName(_ name: String?) {} }
         // relaunch from Spotlight used to activate that departing copy and exit, so nothing opened. Wait for it first.
         // A production launch also defers to a running pre-rename CreatorOS, which writes the same library.
         let isolated = dataRootArgument(ProcessInfo.processInfo.arguments) != nil
+            || Bundle.main.bundleIdentifier == AppRuntime.alphaIdentifier || AppInfo.channel == "α"
         if let identifier = Bundle.main.bundleIdentifier,
            let existing = ([identifier] + (isolated ? [] : [AppRuntime.legacyIdentifier]))
             .flatMap(NSRunningApplication.runningApplications(withBundleIdentifier:))

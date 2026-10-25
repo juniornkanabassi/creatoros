@@ -73,7 +73,7 @@ if [[ "$SIGN_ID" != "$DEV_ID_SHA" ]]; then
 fi
 /usr/bin/codesign "${SIGN_OPTS[@]}" "${ENTITLEMENT_OPTS[@]}" "$APP_PATH"
 /usr/bin/codesign --verify --strict "$APP_PATH/Contents/MacOS/creatoros"
-/usr/bin/codesign --verify --strict "$APP_PATH"
+/usr/bin/codesign --verify --deep --strict "$APP_PATH"
 print "Signed with: $SIGN_ID"
 NOTARISED=0
 if [[ "$SIGN_ID" != "-" && "${CREATOROS_NOTARISE:-1}" == 1 ]]; then

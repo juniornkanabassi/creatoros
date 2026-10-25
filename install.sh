@@ -29,13 +29,13 @@ ACTUAL_ID=$(/usr/libexec/PlistBuddy -c 'Print CFBundleIdentifier' "$STAGE/Conten
 ACTUAL_VERSION=$(/usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' "$STAGE/Contents/Info.plist")
 [[ "$ACTUAL_ID" == "$EXPECTED_ID" ]] || { print -u2 "Bundle identifier mismatch: $ACTUAL_ID"; exit 1; }
 [[ "$ACTUAL_VERSION" == "$EXPECTED_VERSION" ]] || { print -u2 "Archive version $ACTUAL_VERSION does not match source version $EXPECTED_VERSION."; exit 1; }
-/usr/bin/codesign --verify --strict "$STAGE"
+/usr/bin/codesign --verify --deep --strict "$STAGE"
 if [[ -e "$DEST" ]]; then /bin/mv "$DEST" "$BACKUP"; fi
 if ! /bin/mv "$STAGE" "$DEST"; then
   if [[ -e "$BACKUP" ]] && /bin/mv "$BACKUP" "$DEST"; then print -u2 "Could not install $DEST; the previous app was restored."; else print -u2 "Could not install $DEST and could not restore the previous app. It remains at $BACKUP."; fi
   exit 1
 fi
-if ! /usr/bin/codesign --verify --strict "$DEST"; then
+if ! /usr/bin/codesign --verify --deep --strict "$DEST"; then
   /bin/rm -rf "$DEST"
   if [[ -e "$BACKUP" ]] && /bin/mv "$BACKUP" "$DEST"; then print -u2 "Installed signature verification failed; the previous app was restored."; else print -u2 "Installed signature verification failed and the previous app could not be restored. It remains at $BACKUP."; fi
   exit 1
