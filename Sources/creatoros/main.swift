@@ -137,7 +137,7 @@ do {
                 throw fail("no_app", "No ProjectTemplates executable sits beside this creatoros, so it cannot start a test instance. Build it (swift build) or run creatoros from inside CreatorOS.app.", 1)
             } else {
                 launch.executableURL = URL(fileURLWithPath: "/usr/bin/open")
-                launch.arguments = ["-g", "-n", "-b", "local.projecttemplates.mac", "--args", "--background"]
+                launch.arguments = ["-g", "-n", "-b", AppRuntime.releaseIdentifier, "--args", "--background"]
             }
         }
         try launch.run()

@@ -26,13 +26,15 @@ For LucidLink, which refuses folder icon files, New Project has a Plain folders 
 
 ## Install
 
-Once a release is out, download it from the [Releases page](https://github.com/juniornkanabassi/creatoros/releases), open it and drag CreatorOS into Applications.
+Once a release is out, download the disk image from the [Releases page](https://github.com/juniornkanabassi/creatoros/releases), open it and drag CreatorOS into Applications. Releases are signed with my Developer ID and notarised by Apple, so macOS only asks you to confirm the first time it opens.
 
-If you build it yourself, the app is signed ad hoc, so macOS treats it as unverified.
+## Updates
+
+CreatorOS checks for updates once a day and shows you the release notes before anything changes. It installs an update only when you say yes, and CreatorOS › Check for Updates… checks straight away.
 
 ## Privacy
 
-CreatorOS works offline. It has no accounts, no analytics and no uploads. Your library is stored in `~/Library/Application Support/Project Templates/` (the app's earlier name), and every schema upgrade keeps a backup of the old file. Removing a project from the list never touches its folder, and templates, ideas and workspaces that CreatorOS deletes go to the Bin.
+CreatorOS works offline. It has no accounts, no analytics and no uploads; the only thing it fetches is the update check from juniornkanabassi.com. Your library is stored in `~/Library/Application Support/Project Templates/` (the app's earlier name), and every schema upgrade keeps a backup of the old file. Removing a project from the list never touches its folder, and templates, ideas and workspaces that CreatorOS deletes go to the Bin.
 
 ## Command line and AI assistants
 
@@ -73,7 +75,7 @@ swift run --scratch-path /private/tmp/content-template-build CoreChecks
 zsh build.sh
 ```
 
-`CoreChecks` is the test suite and prints `RESULT n checks passed`. `build.sh` writes an ad hoc signed `CreatorOS.app`, zipped into `../Outputs` outside the clone (set `CONTENT_TEMPLATE_OUTPUT_ROOT` to change it). To try the app without touching a real library, launch it with `--data-directory` pointing at an empty temporary folder. The source layout, the checks and the install script are covered in [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md).
+`CoreChecks` is the test suite and prints `RESULT n checks passed`. `build.sh` writes `CreatorOS.app`, zipped into `../Outputs` outside the clone (set `CONTENT_TEMPLATE_OUTPUT_ROOT` to change it). It signs and notarises with my Developer ID when that certificate is in the keychain; on any other Mac it signs ad hoc, which is fine for running it yourself but which macOS treats as unverified. To try the app without touching a real library, launch it with `--data-directory` pointing at an empty temporary folder. The source layout, the checks and the install script are covered in [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md).
 
 ## Limits worth knowing
 
@@ -84,3 +86,5 @@ Folder icons are macOS metadata, so they do not travel to Windows or phones. Who
 Copyright (C) 2026 Junior Nkanabassi. Licensed under the GNU General Public License v3.0 or later (GPL-3.0-or-later); see [LICENSE](LICENSE). The CreatorOS name and icon are not covered by the licence.
 
 In plain terms, you can use, change and share this code, but anything you distribute that is built on it has to stay open source under the same licence.
+
+Sparkle, which handles updates, is under the MIT licence.

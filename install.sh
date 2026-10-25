@@ -9,7 +9,7 @@ DEST="$INSTALL_ROOT/$APP_NAME.app"
 ARCHIVE="${1:-}"
 EXPECTED_VERSION=$(/usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' "$SOURCE_ROOT/Resources/Info.plist")
 EXPECTED_ID=$(/usr/libexec/PlistBuddy -c 'Print CFBundleIdentifier' "$SOURCE_ROOT/Resources/Info.plist")
-[[ "$EXPECTED_ID" == "local.projecttemplates.mac" && "$APP_NAME" == "CreatorOS" ]] || { print -u2 "This installer only installs the reviewed CreatorOS release identity."; exit 1; }
+[[ "$EXPECTED_ID" == "com.juniornkanabassi.CreatorOS" && "$APP_NAME" == "CreatorOS" ]] || { print -u2 "This installer only installs the reviewed CreatorOS release identity."; exit 1; }
 if (( $# > 1 )); then print -u2 "Usage: zsh install.sh [CreatorOS <version>.zip]"; exit 2; fi
 CHANNEL_SUFFIX="${APP_CHANNEL:+ $APP_CHANNEL}"
 if [[ -z "$ARCHIVE" ]]; then ARCHIVE="$OUTPUT_ROOT/$APP_NAME $EXPECTED_VERSION$CHANNEL_SUFFIX.zip"; fi
@@ -29,13 +29,13 @@ ACTUAL_ID=$(/usr/libexec/PlistBuddy -c 'Print CFBundleIdentifier' "$STAGE/Conten
 ACTUAL_VERSION=$(/usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' "$STAGE/Contents/Info.plist")
 [[ "$ACTUAL_ID" == "$EXPECTED_ID" ]] || { print -u2 "Bundle identifier mismatch: $ACTUAL_ID"; exit 1; }
 [[ "$ACTUAL_VERSION" == "$EXPECTED_VERSION" ]] || { print -u2 "Archive version $ACTUAL_VERSION does not match source version $EXPECTED_VERSION."; exit 1; }
-/usr/bin/codesign --verify --strict "$STAGE"
+/usr/bin/codesign --verify --deep --strict "$STAGE"
 if [[ -e "$DEST" ]]; then /bin/mv "$DEST" "$BACKUP"; fi
 if ! /bin/mv "$STAGE" "$DEST"; then
   if [[ -e "$BACKUP" ]] && /bin/mv "$BACKUP" "$DEST"; then print -u2 "Could not install $DEST; the previous app was restored."; else print -u2 "Could not install $DEST and could not restore the previous app. It remains at $BACKUP."; fi
   exit 1
 fi
-if ! /usr/bin/codesign --verify --strict "$DEST"; then
+if ! /usr/bin/codesign --verify --deep --strict "$DEST"; then
   /bin/rm -rf "$DEST"
   if [[ -e "$BACKUP" ]] && /bin/mv "$BACKUP" "$DEST"; then print -u2 "Installed signature verification failed; the previous app was restored."; else print -u2 "Installed signature verification failed and the previous app could not be restored. It remains at $BACKUP."; fi
   exit 1

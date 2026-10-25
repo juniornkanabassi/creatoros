@@ -8,12 +8,15 @@ public struct AppRuntime: Sendable {
     public let root: URL
     public let scope: Scope
     public static let alphaIdentifier = "local.creatoros.alpha"
+    public static let releaseIdentifier = "com.juniornkanabassi.CreatorOS"
+    /// The identifier CreatorOS used before its public release. Its preferences are copied over once.
+    public static let legacyIdentifier = "local.projecttemplates.mac"
     public static var stableRoot: URL { FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("Project Templates") }
     public static var alphaRoot: URL { FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("CreatorOS Alpha") }
     public var defaultsSuite: String { Self.alphaIdentifier + "." + Data(root.path.utf8).base64EncodedString() }
     public var isIsolated: Bool { scope == .isolated }
     /// An isolated launch of the stable bundle still shares its defaults domain, which AppKit writes to directly.
-    public func sharesProductionPreferences(bundleIdentifier: String?) -> Bool { isIsolated && bundleIdentifier == "local.projecttemplates.mac" }
+    public func sharesProductionPreferences(bundleIdentifier: String?) -> Bool { isIsolated && bundleIdentifier == Self.releaseIdentifier }
     public var projects: URL { root.appendingPathComponent("Projects") }
     public var ideas: URL { root.appendingPathComponent("Ideas") }
 
@@ -28,7 +31,7 @@ public struct AppRuntime: Sendable {
     public static func forLaunch(bundleIdentifier: String?, channel: String, dataRoot: URL? = nil) throws -> AppRuntime {
         if let dataRoot { return try isolated(root: dataRoot) }
         if bundleIdentifier == alphaIdentifier || channel == "α" { return try isolated() }
-        guard bundleIdentifier == nil || bundleIdentifier == "local.projecttemplates.mac" else {
+        guard bundleIdentifier == nil || bundleIdentifier == releaseIdentifier else {
             throw AppFailure("This CreatorOS bundle identity is not allowed to open the production library.")
         }
         return try production()

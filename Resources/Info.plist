@@ -9,7 +9,7 @@
 	<key>CFBundleIconFile</key>
 	<string>AppIcon</string>
 	<key>CFBundleIdentifier</key>
-	<string>local.projecttemplates.mac</string>
+	<string>com.juniornkanabassi.CreatorOS</string>
 	<key>CFBundleName</key>
 	<string>CreatorOS</string>
 	<key>CFBundlePackageType</key>
@@ -30,5 +30,13 @@
 	<string>© 2026 Junior Nkana Bassi. All rights reserved.</string>
 	<key>NSPrincipalClass</key>
 	<string>NSApplication</string>
+	<key>SUEnableAutomaticChecks</key>
+	<true/>
+	<key>SUFeedURL</key>
+	<string>https://juniornkanabassi.com/apps/creatoros/appcast.xml</string>
+	<key>SUPublicEDKey</key>
+	<string>EID2azmyJ92wBTcxD3shVTjBCiOUswfzBJW4DJLZwIQ=</string>
+	<key>SUScheduledCheckInterval</key>
+	<integer>86400</integer>
 </dict>
 </plist>
