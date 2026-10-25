@@ -62,8 +62,12 @@ extension NSSplitView { @objc func refuseAutosaveName(_ name: String?) {} }
         // writer over the same library. Test bundles use a separate identifier.
         // A copy that is still finishing its quit (saving the library) must not swallow the new launch: Junior's
         // relaunch from Spotlight used to activate that departing copy and exit, so nothing opened. Wait for it first.
+        // A production launch also defers to a running pre-rename CreatorOS, which writes the same library.
+        let isolated = dataRootArgument(ProcessInfo.processInfo.arguments) != nil
+            || Bundle.main.bundleIdentifier == AppRuntime.alphaIdentifier || AppInfo.channel == "α"
         if let identifier = Bundle.main.bundleIdentifier,
-           let existing = NSRunningApplication.runningApplications(withBundleIdentifier: identifier)
+           let existing = ([identifier] + (isolated ? [] : [AppRuntime.legacyIdentifier]))
+            .flatMap(NSRunningApplication.runningApplications(withBundleIdentifier:))
             .first(where: { app in
                 guard app.processIdentifier != ProcessInfo.processInfo.processIdentifier,
                       let args = launchArguments(for: app.processIdentifier) else { return false }
@@ -79,6 +83,7 @@ extension NSSplitView { @objc func refuseAutosaveName(_ name: String?) {} }
                 exit(0)
             }
         }
+        Updates.shared.start()
     }
     /// An isolated run: no Dock tile, no activation, unless the launch asked for --show.
     static var quietLaunch: Bool {
@@ -133,6 +138,7 @@ extension NSSplitView { @objc func refuseAutosaveName(_ name: String?) {} }
                     Button(page.rawValue) { model.page = page }.keyboardShortcut(KeyEquivalent(Character("\(index + 1)")), modifiers: [.command, .shift])
                 }
             }
+            UpdateCommands()
         }
         // Settings is a standard window at standard size. It is not zoomed: the AppKit tab view inside a scaled
         // subtree drew in one place and took clicks in another, which is why nothing in Settings responded when zoomed.

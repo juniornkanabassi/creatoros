@@ -26,6 +26,10 @@ cp "$BIN_PATH/creatoros" "$APP_PATH/Contents/MacOS/creatoros"
 mkdir -p "$APP_PATH/Contents/Resources/mcp"
 cp mcp/creatoros-mcp.mjs "$APP_PATH/Contents/Resources/mcp/"
 cp Resources/Info.plist "$APP_PATH/Contents/Info.plist"
+# Sparkle, found through the app's rpath @executable_path/../Frameworks; ditto keeps its symlinks.
+[[ -d "$BIN_PATH/Sparkle.framework" ]] || { print -u2 "No Sparkle.framework in $BIN_PATH"; exit 1; }
+mkdir -p "$APP_PATH/Contents/Frameworks"
+/usr/bin/ditto "$BIN_PATH/Sparkle.framework" "$APP_PATH/Contents/Frameworks/Sparkle.framework"
 cp "$ICON_SOURCE" "$APP_PATH/Contents/Resources/AppIcon.icns"
 # Finder/File Provider can attach FinderInfo to this newly made bundle directory.
 # Remove it only from our generated app root, never from imported template data.
@@ -38,14 +42,38 @@ fi
 DEV_ID_SHA="C297CD17464A0EF6C93704A59BC2E1D4D1759400"
 NOTARY_PROFILE="${CREATOROS_NOTARY_PROFILE:-JuniorOS}"
 SIGN_ID="-"
-if [[ "$APP_CHANNEL" != "α" ]] && /usr/bin/security find-identity -v -p codesigning 2>/dev/null | grep -q "$DEV_ID_SHA"; then SIGN_ID="$DEV_ID_SHA"; fi
+# CREATOROS_LOCAL_SIGNING=1 signs ad hoc even with the certificate present, as a Mac without it would.
+if [[ "$APP_CHANNEL" != "α" && -z "${CREATOROS_LOCAL_SIGNING:-}" ]] && /usr/bin/security find-identity -v -p codesigning 2>/dev/null | grep -q "$DEV_ID_SHA"; then SIGN_ID="$DEV_ID_SHA"; fi
 SIGN_OPTS=(--force --options runtime --sign "$SIGN_ID")
 [[ "$SIGN_ID" == "-" ]] || SIGN_OPTS+=(--timestamp)   # notarisation needs Apple's secure timestamp
 # Inside-out with no --deep: the bundled CLI first, under its own identifier, then the app.
 /usr/bin/codesign "${SIGN_OPTS[@]}" --identifier com.juniornkanabassi.CreatorOS.cli "$APP_PATH/Contents/MacOS/creatoros"
-/usr/bin/codesign "${SIGN_OPTS[@]}" "$APP_PATH"
+# Updates only in a Developer ID build with a real public key. Any other build has no feed, so the app starts no
+# updater and shows no Check for Updates item (Updates.swift), and can never replace itself with a release.
+PUBLIC_KEY=$(/usr/libexec/PlistBuddy -c 'Print SUPublicEDKey' "$APP_PATH/Contents/Info.plist" 2>/dev/null || true)
+if [[ "$SIGN_ID" != "$DEV_ID_SHA" || -z "$PUBLIC_KEY" || "$PUBLIC_KEY" == REPLACE_WITH_* ]]; then
+  /usr/libexec/PlistBuddy -c "Delete :SUFeedURL" -c "Delete :SUPublicEDKey" "$APP_PATH/Contents/Info.plist"
+  print "Updates off in this build (no Developer ID identity, or SUPublicEDKey is not set)"
+fi
+# Sparkle's nested code inside-out, as its documentation gives for apps outside the App Store, then the framework.
+# The XPC services keep their own entitlements. No --deep on the app: it would re-sign all of this.
+SPARKLE="$APP_PATH/Contents/Frameworks/Sparkle.framework"
+/usr/bin/codesign "${SIGN_OPTS[@]}" "$SPARKLE/Versions/B/Autoupdate"
+/usr/bin/codesign "${SIGN_OPTS[@]}" "$SPARKLE/Versions/B/Updater.app"
+for xpc in "$SPARKLE"/Versions/B/XPCServices/*.xpc(N); do
+  /usr/bin/codesign "${SIGN_OPTS[@]}" --preserve-metadata=entitlements "$xpc"
+done
+/usr/bin/codesign "${SIGN_OPTS[@]}" "$SPARKLE"
+# Hardened runtime only loads Sparkle when it shares the app's Team ID. A local identity (self-signed or ad hoc) has
+# none, so only those builds turn library validation off; Developer ID builds keep it.
+ENTITLEMENT_OPTS=()
+if [[ "$SIGN_ID" != "$DEV_ID_SHA" ]]; then
+  /usr/libexec/PlistBuddy -c "Add :com.apple.security.cs.disable-library-validation bool true" "$BUILD_STAGE/local.entitlements" >/dev/null
+  ENTITLEMENT_OPTS=(--entitlements "$BUILD_STAGE/local.entitlements")
+fi
+/usr/bin/codesign "${SIGN_OPTS[@]}" "${ENTITLEMENT_OPTS[@]}" "$APP_PATH"
 /usr/bin/codesign --verify --strict "$APP_PATH/Contents/MacOS/creatoros"
-/usr/bin/codesign --verify --strict "$APP_PATH"
+/usr/bin/codesign --verify --deep --strict "$APP_PATH"
 print "Signed with: $SIGN_ID"
 NOTARISED=0
 if [[ "$SIGN_ID" != "-" && "${CREATOROS_NOTARISE:-1}" == 1 ]]; then
