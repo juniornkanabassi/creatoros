@@ -81,4 +81,6 @@ Folder icons are macOS metadata, so they do not travel to Windows or phones. Who
 
 ## Licence
 
-The licence for CreatorOS's own code is in [LICENSE](LICENSE). The name and icon are not covered by it.
+Copyright (C) 2026 Junior Nkanabassi. Licensed under the GNU General Public License v3.0 or later (GPL-3.0-or-later); see [LICENSE](LICENSE). The CreatorOS name and icon are not covered by the licence.
+
+In plain terms, you can use, change and share this code, but anything you distribute that is built on it has to stay open source under the same licence.
