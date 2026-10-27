@@ -58,6 +58,8 @@ extension NSSplitView { @objc func refuseAutosaveName(_ name: String?) {} }
         if dataRootArgument(ProcessInfo.processInfo.arguments) != nil { FrameAutosave.refuse() }
         // A test run (--data-directory) stays out of the Dock and never takes focus unless --show is given.
         if Self.quietLaunch { NSApplication.shared.setActivationPolicy(.accessory) }
+        // A launch by the command line or MCP (--headless) is a background service with no window or Dock tile.
+        Headless.shared.start()
         // A second launch should activate the running app, not open a second
         // writer over the same library. Test bundles use a separate identifier.
         // A copy that is still finishing its quit (saving the library) must not swallow the new launch: Junior's
@@ -93,10 +95,13 @@ extension NSSplitView { @objc func refuseAutosaveName(_ name: String?) {} }
     var body: some Scene {
         WindowGroup(AppInfo.label) {
             MainView().environmentObject(model).frame(minWidth: 1000, minHeight: 680)
+                .background(HeadlessWindowHider())
                 .onAppear {
                     delegate.model = model
-                    NSApp.setActivationPolicy(Self.quietLaunch ? .accessory : .regular)
-                    if !ProcessInfo.processInfo.arguments.contains("--background"), !Self.quietLaunch { NSApp.activate(ignoringOtherApps: true) }
+                    let hidden = Self.quietLaunch || Headless.shared.active
+                    NSApp.setActivationPolicy(hidden ? .accessory : .regular)
+                    if !ProcessInfo.processInfo.arguments.contains("--background"), !hidden { NSApp.activate(ignoringOtherApps: true) }
+                    Headless.shared.canQuit = { [weak model] in model.map { !$0.busy && $0.writer == nil } ?? true }
                     model.startControl(); model.refresh()
                     WindowSetup.apply(zoom: { model.zoom($0) }, reset: { model.zoomLevel = 0 })
                 }
@@ -153,6 +158,12 @@ extension NSSplitView { @objc func refuseAutosaveName(_ name: String?) {} }
     /// One window is the app, so closing it quits, like System Settings. A windowless copy left running was what a
     /// Spotlight or Dock relaunch activated, with nothing to show.
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
+    /// A Dock click, Spotlight or Finder launch while a headless copy runs: show its window instead of nothing.
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        guard Headless.shared.active else { return true }
+        Headless.shared.reveal()
+        return false
+    }
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         guard let model else { return .terminateNow }
         guard !model.busy else { model.error = "Wait for the current operation to finish or cancel it before quitting."; return .terminateCancel }

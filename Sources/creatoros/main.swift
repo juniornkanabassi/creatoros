@@ -17,7 +17,8 @@ func help() {
     Every true/false flag also accepts --no-<flag> to send false (for example --no-enabled, --no-plain-folders).
     Arrays take a JSON array text (--stages '["A","B"]'); objects take JSON (--extra '{"Sponsor":"X"}').
     Data root: explicit flag, CREATOROS_DATA_DIRECTORY, then the stable app library.
-    status never launches the app. Other commands launch in the background and wait up to 10 seconds.
+    status never launches the app. If CreatorOS is closed, other commands start it headless (no window, no Dock icon, no focus)
+    and wait up to 10 seconds; that copy quits after 10 idle minutes, and --show or opening CreatorOS brings its window up.
     Project reference: UUID, exact folder name or number; --format disambiguates. Ideas use their name.
     One writer at a time: a command that changes anything waits for a busy app or an open form (busy, form_in_use), and while it runs the app's own
     clicks and background tasks are told to retry instead of interleaving with it. Reads are checked again after they wait.
@@ -122,9 +123,11 @@ do {
         let launch = Process()
         launch.standardInput = FileHandle.nullDevice; launch.standardOutput = FileHandle.nullDevice; launch.standardError = FileHandle.nullDevice
         var viaOpen = true
+        // --headless: no window, Dock tile or update prompt. --background keeps an app older than this CLI out of the way too.
+        let headlessArguments = ["--background", "--headless"] + (dataDirectory != nil ? ["--data-directory", root.path] : [])
         if bundle.pathExtension == "app" {
             launch.executableURL = URL(fileURLWithPath: "/usr/bin/open")
-            launch.arguments = ["-g", "-n", "-a", bundle.path, "--args", "--background"] + (dataDirectory != nil ? ["--data-directory", root.path] : [])
+            launch.arguments = ["-g", "-n", "-a", bundle.path, "--args"] + headlessArguments
         } else {
             // Not inside an app: this CLI came from a build folder. Start the ProjectTemplates beside it, never the installed app,
             // which may be an older release that does not know these commands.
@@ -132,18 +135,19 @@ do {
             if FileManager.default.isExecutableFile(atPath: sibling.path) {
                 viaOpen = false
                 launch.executableURL = sibling
-                launch.arguments = ["--background"] + (dataDirectory != nil ? ["--data-directory", root.path] : [])
+                launch.arguments = headlessArguments
             } else if dataDirectory != nil {
                 throw fail("no_app", "No ProjectTemplates executable sits beside this creatoros, so it cannot start a test instance. Build it (swift build) or run creatoros from inside CreatorOS.app.", 1)
             } else {
                 launch.executableURL = URL(fileURLWithPath: "/usr/bin/open")
-                launch.arguments = ["-g", "-n", "-b", AppRuntime.releaseIdentifier, "--args", "--background"]
+                launch.arguments = ["-g", "-n", "-b", AppRuntime.releaseIdentifier, "--args"] + headlessArguments
             }
         }
         try launch.run()
         if viaOpen { launch.waitUntilExit() }
+        // The socket appears a few hundred milliseconds into the launch; checking often answers as soon as it does.
         let deadline = Date().addingTimeInterval(10)
-        while connection == nil && Date() < deadline { Thread.sleep(forTimeInterval: 0.1); connection = connectSocket(path) }
+        while connection == nil && Date() < deadline { Thread.sleep(forTimeInterval: 0.02); connection = connectSocket(path) }
     }
     guard let fd = connection else { throw fail("timeout", "CreatorOS did not start its control socket within 10 s.", 1) }
     defer { close(fd) }
