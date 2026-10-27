@@ -132,12 +132,13 @@ do {
     if connection == nil && action == "status" { print(wantsJSON ? json(["running": false]) : "CreatorOS is not running."); exit(0) }
     // CLIs that find CreatorOS closed at the same moment (two MCP calls) decide one at a time. Two launches would each
     // see the other as the running copy and both give way, so the first starts it and holds the lock until this process
-    // exits, after its socket answered; the next one then finds the socket.
+    // answers; the next one then finds the socket. It is let go before the request, so a long command never holds up others.
+    var launchLock: Int32 = -1
     if connection == nil {
         // A first launch on a new data folder has no folder yet; make it (as the app would) so the lock always exists.
         try? FileManager.default.createDirectory(at: root, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
-        let lock = open(root.appendingPathComponent("cli-launch.lock").path, O_CREAT | O_RDWR, 0o600)
-        guard lock >= 0, flock(lock, LOCK_EX) == 0 else { throw fail("internal", "Could not take the launch lock in \(root.path).", 1) }
+        launchLock = open(root.appendingPathComponent("cli-launch.lock").path, O_CREAT | O_RDWR, 0o600)
+        guard launchLock >= 0, flock(launchLock, LOCK_EX) == 0 else { throw fail("internal", "Could not take the launch lock in \(root.path).", 1) }
         connection = connectSocket(path)
     }
     if connection == nil {
@@ -172,6 +173,7 @@ do {
         let deadline = Date().addingTimeInterval(10)
         while connection == nil && Date() < deadline { Thread.sleep(forTimeInterval: 0.02); connection = connectSocket(path) }
     }
+    if launchLock >= 0 { close(launchLock) }
     guard let fd = connection else { throw fail("timeout", "CreatorOS did not start its control socket within 10 s.", 1) }
     defer { close(fd) }
     let seconds = command.seconds
