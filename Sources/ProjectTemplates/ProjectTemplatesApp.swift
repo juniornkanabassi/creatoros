@@ -60,6 +60,9 @@ extension NSSplitView { @objc func refuseAutosaveName(_ name: String?) {} }
         if Self.quietLaunch { NSApplication.shared.setActivationPolicy(.accessory) }
         // A launch by the command line or MCP (--headless) is a background service with no window or Dock tile.
         Headless.shared.start()
+        // The bundle starts as an agent (LSUIElement), so a quiet or headless launch never shows a Dock tile, not even
+        // for the moment before this init runs. Every other launch becomes the ordinary app here, before it finishes launching.
+        if !Self.quietLaunch && !Headless.shared.active { NSApplication.shared.setActivationPolicy(.regular) }
         // A second launch should activate the running app, not open a second
         // writer over the same library. Test bundles use a separate identifier.
         // A copy that is still finishing its quit (saving the library) must not swallow the new launch: Junior's
