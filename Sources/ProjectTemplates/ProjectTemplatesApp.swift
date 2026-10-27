@@ -157,7 +157,8 @@ extension NSSplitView { @objc func refuseAutosaveName(_ name: String?) {} }
     weak var model: AppModel?
     /// One window is the app, so closing it quits, like System Settings. A windowless copy left running was what a
     /// Spotlight or Dock relaunch activated, with nothing to show.
-    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
+    /// A headless copy's ordered-out window counts as closed to AppKit; that copy quits on its idle timer instead.
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { !Headless.shared.active }
     /// A Dock click, Spotlight or Finder launch while a headless copy runs: show its window instead of nothing.
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
         guard Headless.shared.active || Headless.shared.windowHidden else { return true }
