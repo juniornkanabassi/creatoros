@@ -20,6 +20,8 @@ import SwiftUI
     weak var mainWindow: NSWindow?
     /// Whether quitting now would interrupt nothing; the model answers it.
     var canQuit: @MainActor () -> Bool = { true }
+    /// Tells the window's views that the app is visible now, so an error kept back while headless shows.
+    var onPromote: @MainActor () -> Void = {}
     private var lastUse = Date()
     /// Commands still running; the copy never quits under one.
     private var inFlight = 0
@@ -52,6 +54,7 @@ import SwiftUI
         activeObserver = nil
         NSApp.setActivationPolicy(.regular)
         Updates.shared.resume()
+        onPromote()
         guard let window = mainWindow else { return }
         window.alphaValue = 1; window.ignoresMouseEvents = false
         if !NSApp.windows.contains(where: \.isVisible) { window.makeKeyAndOrderFront(nil); windowHidden = false }

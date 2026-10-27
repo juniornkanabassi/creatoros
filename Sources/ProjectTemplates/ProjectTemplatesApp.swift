@@ -101,7 +101,9 @@ extension NSSplitView { @objc func refuseAutosaveName(_ name: String?) {} }
                     let hidden = Self.quietLaunch || Headless.shared.active
                     NSApp.setActivationPolicy(hidden ? .accessory : .regular)
                     if !ProcessInfo.processInfo.arguments.contains("--background"), !hidden { NSApp.activate(ignoringOtherApps: true) }
-                    Headless.shared.canQuit = { [weak model] in model.map { !$0.busy && $0.writer == nil } ?? true }
+                    // A library error waits, invisible, for someone to open CreatorOS and see it; quitting would mean an alert.
+                    Headless.shared.canQuit = { model.storeUsable && !model.busy && model.writer == nil }
+                    Headless.shared.onPromote = { model.objectWillChange.send() }
                     model.startControl(); model.refresh()
                     WindowSetup.apply(zoom: { model.zoom($0) }, reset: { model.zoomLevel = 0 })
                 }
@@ -167,8 +169,6 @@ extension NSSplitView { @objc func refuseAutosaveName(_ name: String?) {} }
     }
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         guard let model else { return .terminateNow }
-        // A headless copy whose library never loaded has nothing to save; quitting it must not put an alert on screen.
-        if Headless.shared.active, !model.storeUsable, !model.busy { return .terminateNow }
         guard !model.busy else { model.error = "Wait for the current operation to finish or cancel it before quitting."; return .terminateCancel }
         Task {
             // Let the existing writer finish all queued snapshots; never race it with a second synchronous writer.
@@ -325,7 +325,8 @@ struct MainView: View {
         }
         .navigationTitle(m.page.rawValue)
         .disabled(!m.storeUsable)
-        .alert(AppInfo.name, isPresented: Binding(get: { m.error != nil }, set: { if !$0 { m.error = nil } })) {
+        // A headless copy keeps the error (commands report it) and shows it once its window comes up.
+        .alert(AppInfo.name, isPresented: Binding(get: { m.error != nil && !Headless.shared.active }, set: { if !$0 { m.error = nil } })) {
             Button("OK") { m.error = nil }
         } message: { Text(m.error ?? "") }
         .sheet(isPresented: $m.newProjectPresented) { NewProjectSheet() }
