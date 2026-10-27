@@ -89,7 +89,7 @@ extension AppModel {
     }
     func control(_ request: [String: Any]) async -> [String: Any] {
         let id = request["id"] ?? NSNull()
-        Headless.shared.touch()
+        Headless.shared.begin(); defer { Headless.shared.end() }
         do {
             guard let stringID = id as? String, !stringID.isEmpty, stringID.utf8.count <= 4096,
                   Set(request.keys).isSubset(of: ["id", "action", "params"]), let action = request["action"] as? String,

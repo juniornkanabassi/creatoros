@@ -46,6 +46,18 @@ func connectSocket(_ path: String) -> Int32? {
     guard connected, getpeereid(fd, &uid, &gid) == 0, uid == getuid() else { close(fd); return nil }
     return fd
 }
+/// Whether a copy of the app is running already, from any install: a process whose executable is
+/// `…/Contents/MacOS/<name>`. Reading the process table costs well under a millisecond.
+func appRunning(executable name: String) -> Bool {
+    var pids = [pid_t](repeating: 0, count: 4096)
+    let count = Int(proc_listallpids(&pids, Int32(pids.count * MemoryLayout<pid_t>.size)))
+    var path = [CChar](repeating: 0, count: 4096)  // PROC_PIDPATHINFO_MAXSIZE
+    for pid in pids.prefix(max(0, count)) where pid > 0 && pid != getpid() {
+        guard proc_pidpath(pid, &path, UInt32(path.count)) > 0 else { continue }
+        if String(cString: path).hasSuffix("/Contents/MacOS/" + name) { return true }
+    }
+    return false
+}
 let args = Array(CommandLine.arguments.dropFirst())
 let wantsJSON = args.contains("--json")
 do {
@@ -112,7 +124,8 @@ do {
     var connection = connectSocket(path)
     // A busy app can refuse a connection for a moment (its queue of waiting callers is full). A socket file that exists
     // means an app owns it, so wait a few seconds before concluding that nothing is running and launching another copy.
-    if connection == nil, FileManager.default.fileExists(atPath: path) {
+    // A socket left by a copy that has quit (a headless copy's idle quit, say) needs no wait.
+    if connection == nil, FileManager.default.fileExists(atPath: path), appRunning(executable: "ProjectTemplates") {
         let patience = Date().addingTimeInterval(4)
         while connection == nil && Date() < patience { Thread.sleep(forTimeInterval: 0.1); connection = connectSocket(path) }
     }

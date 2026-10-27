@@ -160,12 +160,14 @@ extension NSSplitView { @objc func refuseAutosaveName(_ name: String?) {} }
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
     /// A Dock click, Spotlight or Finder launch while a headless copy runs: show its window instead of nothing.
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
-        guard Headless.shared.active else { return true }
+        guard Headless.shared.active || Headless.shared.windowHidden else { return true }
         Headless.shared.reveal()
         return false
     }
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         guard let model else { return .terminateNow }
+        // A headless copy whose library never loaded has nothing to save; quitting it must not put an alert on screen.
+        if Headless.shared.active, !model.storeUsable, !model.busy { return .terminateNow }
         guard !model.busy else { model.error = "Wait for the current operation to finish or cancel it before quitting."; return .terminateCancel }
         Task {
             // Let the existing writer finish all queued snapshots; never race it with a second synchronous writer.
@@ -178,6 +180,8 @@ extension NSSplitView { @objc func refuseAutosaveName(_ name: String?) {} }
             }
             if finished && model.storeUsable { sender.reply(toApplicationShouldTerminate: true) }
             else {
+                // A headless copy shows its window first, so the question has its app around it.
+                Headless.shared.reveal()
                 let alert = NSAlert()
                 alert.messageText = finished ? "The latest library changes could not be saved." : "The library is still saving."
                 alert.informativeText = "Quitting may discard unsaved changes. Your existing library remains on disk."
