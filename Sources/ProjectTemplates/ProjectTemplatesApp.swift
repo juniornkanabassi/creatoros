@@ -58,6 +58,8 @@ extension NSSplitView { @objc func refuseAutosaveName(_ name: String?) {} }
         if dataRootArgument(ProcessInfo.processInfo.arguments) != nil { FrameAutosave.refuse() }
         // A test run (--data-directory) stays out of the Dock and never takes focus unless --show is given.
         if Self.quietLaunch { NSApplication.shared.setActivationPolicy(.accessory) }
+        // A launch by the command line or MCP (--headless) is a background service with no window or Dock tile.
+        Headless.shared.start()
         // A second launch should activate the running app, not open a second
         // writer over the same library. Test bundles use a separate identifier.
         // A copy that is still finishing its quit (saving the library) must not swallow the new launch: Junior's
@@ -93,10 +95,15 @@ extension NSSplitView { @objc func refuseAutosaveName(_ name: String?) {} }
     var body: some Scene {
         WindowGroup(AppInfo.label) {
             MainView().environmentObject(model).frame(minWidth: 1000, minHeight: 680)
+                .background(HeadlessWindowHider())
                 .onAppear {
                     delegate.model = model
-                    NSApp.setActivationPolicy(Self.quietLaunch ? .accessory : .regular)
-                    if !ProcessInfo.processInfo.arguments.contains("--background"), !Self.quietLaunch { NSApp.activate(ignoringOtherApps: true) }
+                    let hidden = Self.quietLaunch || Headless.shared.active
+                    NSApp.setActivationPolicy(hidden ? .accessory : .regular)
+                    if !ProcessInfo.processInfo.arguments.contains("--background"), !hidden { NSApp.activate(ignoringOtherApps: true) }
+                    // A library error waits, invisible, for someone to open CreatorOS and see it; quitting would mean an alert.
+                    Headless.shared.canQuit = { model.storeUsable && !model.busy && model.writer == nil }
+                    Headless.shared.onPromote = { model.objectWillChange.send() }
                     model.startControl(); model.refresh()
                     WindowSetup.apply(zoom: { model.zoom($0) }, reset: { model.zoomLevel = 0 })
                 }
@@ -152,7 +159,14 @@ extension NSSplitView { @objc func refuseAutosaveName(_ name: String?) {} }
     weak var model: AppModel?
     /// One window is the app, so closing it quits, like System Settings. A windowless copy left running was what a
     /// Spotlight or Dock relaunch activated, with nothing to show.
-    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
+    /// A headless copy's ordered-out window counts as closed to AppKit; that copy quits on its idle timer instead.
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { !Headless.shared.active }
+    /// A Dock click, Spotlight or Finder launch while a headless copy runs: show its window instead of nothing.
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        guard Headless.shared.active || Headless.shared.windowHidden else { return true }
+        Headless.shared.reveal()
+        return false
+    }
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         guard let model else { return .terminateNow }
         guard !model.busy else { model.error = "Wait for the current operation to finish or cancel it before quitting."; return .terminateCancel }
@@ -167,6 +181,8 @@ extension NSSplitView { @objc func refuseAutosaveName(_ name: String?) {} }
             }
             if finished && model.storeUsable { sender.reply(toApplicationShouldTerminate: true) }
             else {
+                // A headless copy shows its window first, so the question has its app around it.
+                Headless.shared.reveal()
                 let alert = NSAlert()
                 alert.messageText = finished ? "The latest library changes could not be saved." : "The library is still saving."
                 alert.informativeText = "Quitting may discard unsaved changes. Your existing library remains on disk."
@@ -309,7 +325,8 @@ struct MainView: View {
         }
         .navigationTitle(m.page.rawValue)
         .disabled(!m.storeUsable)
-        .alert(AppInfo.name, isPresented: Binding(get: { m.error != nil }, set: { if !$0 { m.error = nil } })) {
+        // A headless copy keeps the error (commands report it) and shows it once its window comes up.
+        .alert(AppInfo.name, isPresented: Binding(get: { m.error != nil && !Headless.shared.active }, set: { if !$0 { m.error = nil } })) {
             Button("OK") { m.error = nil }
         } message: { Text(m.error ?? "") }
         .sheet(isPresented: $m.newProjectPresented) { NewProjectSheet() }

@@ -89,6 +89,7 @@ extension AppModel {
     }
     func control(_ request: [String: Any]) async -> [String: Any] {
         let id = request["id"] ?? NSNull()
+        Headless.shared.begin(); defer { Headless.shared.end() }
         do {
             guard let stringID = id as? String, !stringID.isEmpty, stringID.utf8.count <= 4096,
                   Set(request.keys).isSubset(of: ["id", "action", "params"]), let action = request["action"] as? String,
@@ -135,7 +136,8 @@ extension AppModel {
             }
             let result = try outcome.get()
             if let key { controlResults[key] = (parameters, result) }
-            if params["show"] as? Bool == true, action != "project.reveal" { NSApp.activate(ignoringOtherApps: true) }
+            // --show brings forward what the command shows: Finder and documents come forward on their own, the app's window here.
+            if params["show"] as? Bool == true, !["project.reveal", "project.open-file", "project.open-premiere"].contains(action) { Headless.shared.reveal() }
             return ["id": id, "ok": true, "result": result]
         } catch {
             let failure = error as? ControlFailure ?? ControlFailure(code: error is AppFailure ? "action_failed" : "internal", message: error.localizedDescription)
@@ -169,7 +171,7 @@ extension AppModel {
         return try await AppModel.$me.withValue(token) { try await controlActionHolding(action, params) }
     }
     func controlActionHolding(_ action: String, _ params: [String: Any]) async throws -> [String: Any] {
-        if action == "status" { return ["app": AppInfo.name, "version": AppInfo.version, "channel": AppInfo.channel, "pid": getpid(), "dataRoot": runtime.root.path, "isolated": runtime.isIsolated, "storeUsable": storeUsable, "busy": busy || writer != nil, "statusText": status, "page": page.rawValue, "selectedProject": selectedRecord.map { ["id": $0.id.uuidString, "name": $0.name] } as Any? ?? NSNull(), "newProjectSheetOpen": newProjectPresented, "renameSheetOpen": renamePrompt != nil, "socket": runtime.root.appendingPathComponent("control.sock").path] }
+        if action == "status" { return ["app": AppInfo.name, "version": AppInfo.version, "channel": AppInfo.channel, "pid": getpid(), "headless": Headless.shared.active, "dataRoot": runtime.root.path, "isolated": runtime.isIsolated, "storeUsable": storeUsable, "busy": busy || writer != nil, "statusText": status, "page": page.rawValue, "selectedProject": selectedRecord.map { ["id": $0.id.uuidString, "name": $0.name] } as Any? ?? NSNull(), "newProjectSheetOpen": newProjectPresented, "renameSheetOpen": renamePrompt != nil, "socket": runtime.root.appendingPathComponent("control.sock").path] }
         guard storeUsable else { throw ControlFailure(code: "store_unavailable", message: "Resolve the library error in the GUI first.") }
         let visible = library.projects.filter { !controlHidden($0) }
         if action == "library.stats" { return ["schema": Library.currentSchema, "projects": visible.filter { !$0.isPlanned }.count, "ideas": visible.filter(\.isPlanned).count, "byFormat": Dictionary(grouping: visible, by: \.format).mapValues(\.count), "byStage": Dictionary(grouping: visible, by: { effectiveStage($0) }).mapValues(\.count), "templates": library.templates.count, "sets": library.sets.count, "locations": distinctLocations.count, "hiddenLocations": hiddenLocations.sorted()] }
