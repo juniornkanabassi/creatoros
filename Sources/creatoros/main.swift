@@ -134,8 +134,10 @@ do {
     // see the other as the running copy and both give way, so the first starts it and holds the lock until this process
     // exits, after its socket answered; the next one then finds the socket.
     if connection == nil {
+        // A first launch on a new data folder has no folder yet; make it (as the app would) so the lock always exists.
+        try? FileManager.default.createDirectory(at: root, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
         let lock = open(root.appendingPathComponent("cli-launch.lock").path, O_CREAT | O_RDWR, 0o600)
-        if lock >= 0 { flock(lock, LOCK_EX) }
+        guard lock >= 0, flock(lock, LOCK_EX) == 0 else { throw fail("internal", "Could not take the launch lock in \(root.path).", 1) }
         connection = connectSocket(path)
     }
     if connection == nil {
