@@ -130,6 +130,14 @@ do {
         while connection == nil && Date() < patience { Thread.sleep(forTimeInterval: 0.1); connection = connectSocket(path) }
     }
     if connection == nil && action == "status" { print(wantsJSON ? json(["running": false]) : "CreatorOS is not running."); exit(0) }
+    // CLIs that find CreatorOS closed at the same moment (two MCP calls) decide one at a time. Two launches would each
+    // see the other as the running copy and both give way, so the first starts it and holds the lock until this process
+    // exits, after its socket answered; the next one then finds the socket.
+    if connection == nil {
+        let lock = open(root.appendingPathComponent("cli-launch.lock").path, O_CREAT | O_RDWR, 0o600)
+        if lock >= 0 { flock(lock, LOCK_EX) }
+        connection = connectSocket(path)
+    }
     if connection == nil {
         let executable = Bundle.main.executableURL!.resolvingSymlinksInPath()
         let bundle = executable.deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
