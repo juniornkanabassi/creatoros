@@ -2,7 +2,7 @@
 
 This is the technical reference for CreatorOS: building and checking it, how the source is laid out, what each feature does in detail, and the full command line and MCP reference. The public overview is in the [README](../README.md).
 
-Native SwiftUI/AppKit Mac app that creates correctly named project folders from reusable content templates and tracks them through the content pipeline. The source is CreatorOS 1.5.1. Since 1.5.0 there is a `creatoros` command and MCP tool for every GUI action (see AI control). Examples below use my own install folder, `/Applications/JuniorOS Apps/`. Builds do not install, tag or push.
+Native SwiftUI/AppKit Mac app that creates correctly named project folders from reusable content templates and tracks them through the content pipeline. The source is CreatorOS 1.5.2. Since 1.5.0 there is a `creatoros` command and MCP tool for every GUI action (see AI control). Examples below use my own install folder, `/Applications/JuniorOS Apps/`. Builds do not install, tag or push.
 
 CreatorOS's bundle identifier is `com.juniornkanabassi.CreatorOS`, chosen before its first public release. Builds before then used `local.projecttemplates.mac`; on its first production launch the renamed app copies that domain's preferences across once and leaves the old domain untouched. It keeps the `~/Library/Application Support/Project Templates/` data root, so templates, bookmarks and catalogue data continue without a copy or merge. The internal executable remains `ProjectTemplates`; that is not a user-facing product name. Explicit `--data-directory` launches and ContentTool remain isolated from the everyday library. A build carrying the old alpha identifier or α channel also selects isolation, never production data.
 
