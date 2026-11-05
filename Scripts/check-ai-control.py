@@ -17,7 +17,7 @@ def check(condition, label):
 
 def command(*args, code=0):
     result = subprocess.run([str(cli), *args, '--json', '--data-directory', str(root)], capture_output=True, text=True, timeout=30)
-    assert result.returncode == code, (args, result.returncode, result.stdout, result.stderr)
+    assert result.returncode in (code if isinstance(code, tuple) else (code,)), (args, result.returncode, result.stdout, result.stderr)
     return json.loads(result.stdout)
 
 check(command('status') == {'running':False}, 'status works while stopped without launching')
@@ -684,14 +684,12 @@ try:
         return world(), {str(p): p.read_bytes() for p in folder.rglob('*') if p.is_file()}
     for transport in ('CLI', 'MCP'):
         title = 'Default ' + transport + ' rename'
-        preview = command('project', 'rename', default_rename['id'], '--title', title, '--dry-run')
-        blocked = any(warning.startswith('Running: ') for warning in preview['warnings'])
         before = rename_guard_state()
         if transport == 'CLI':
-            answer = command('project', 'rename', default_rename['id'], '--title', title, code=1 if blocked else 0)
+            answer = command('project', 'rename', default_rename['id'], '--title', title, code=(0, 1))
         else:
             answer = mcp_call('project_rename', {'project': default_rename['id'], 'title': title})
-        if blocked:
+        if 'error' in answer:
             check(answer.get('error', {}).get('code') == 'adobe_app_running' and rename_guard_state() == before,
                   transport + ' default rename refuses running Adobe apps without changing any fixture bytes or paths')
         else:

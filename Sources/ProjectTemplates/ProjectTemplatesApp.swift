@@ -168,8 +168,8 @@ extension NSSplitView { @objc func refuseAutosaveName(_ name: String?) {} }
 
 @MainActor final class CreatorOSDelegate: NSObject, NSApplicationDelegate {
     weak var model: AppModel?
-    /// One window is the app, so closing it quits, like System Settings. A windowless copy left running was what a
-    /// Spotlight or Dock relaunch activated, with nothing to show.
+    /// Closing the main window quits, like System Settings; MainView also covers an About window still being open.
+    /// A windowless copy left running was what a Spotlight or Dock relaunch activated, with nothing to show.
     /// A headless copy's ordered-out window counts as closed to AppKit; that copy quits on its idle timer instead.
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { !Headless.shared.active }
     /// A Dock click, Spotlight or Finder launch while a headless copy runs: show its window instead of nothing.
@@ -282,6 +282,7 @@ struct MainView: View {
                     // Size the row itself: scaling the AppKit-backed List would misplace its hit targets.
                     HStack(spacing: Space.sm * m.uiScale) {
                         Image(systemName: page.systemImage)
+                            .accessibilityHidden(true)
                             .font(.system(size: (NSFont.preferredFont(forTextStyle: .body).pointSize + 2) * m.uiScale))
                             .frame(width: Space.xxl * m.uiScale)
                         Text(page.rawValue)
@@ -328,6 +329,11 @@ struct MainView: View {
             .navigationSplitViewColumnWidth(min: 420, ideal: 640 * m.uiScale)
         }
         .navigationTitle(m.page.rawValue)
+        .onReceive(NotificationCenter.default.publisher(for: NSWindow.willCloseNotification)) { notice in
+            guard !Headless.shared.active, let window = notice.object as? NSWindow,
+                  window === Headless.shared.mainWindow else { return }
+            NSApp.terminate(nil)
+        }
         .disabled(!m.storeUsable)
         .errorNotice()
         .overlay { if GridOverlay.enabled { GridOverlay() } }
