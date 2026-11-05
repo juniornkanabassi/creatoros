@@ -32,6 +32,17 @@ When the Developer ID certificate (SHA-1 `C297CD17…9400`) is in the keychain, 
 
 For interface testing launch with `--data-directory <dedicated disposable temporary folder>`. Keep it in the background with `open -g -n -a "/path/to/CreatorOS.app" --args --background --data-directory /private/tmp/creatoros-ui-data`. The app explicitly activates without `--background`; `open -g` alone is insufficient. Do not add `--headless` for interface tests: it hides the window, which is what the command line wants and computer use does not. Check the exact process and its data-directory argument before computer-use inspection, which can relaunch a closed app. The app rejects production references and starts empty; create synthetic fixtures inside its isolated root. Do not use the real library as a disposable UI fixture: its destinations and bookmarks reference production data. The optional test-only `--display-name 'Prompter XL'` positions the test window when a disposable data directory is supplied.
 
+## Headless interface checks
+
+```sh
+zsh tools/grid-lint.sh
+zsh tools/snap.sh /private/tmp/bama/build-creatoros
+swift tools/check-layout.swift /private/tmp/bama/build-creatoros/snapshots/*-layout.json
+zsh Scripts/check-isolated-defaults.sh "/path/to/CreatorOS.app" --headless
+```
+
+The snapshot harness compiles against the current app sources using the existing disposable check harness. It captures light and dark content for every main page, Settings tab, About, New Project and file-browser mode without ordering a window or activating the app. It also captures an actionable error. Fixtures are created through the model, never by editing a library file. The PNGs use AppKit off-screen rendering, so window compositing, active-window focus, native pointer gestures and physical-drive behaviour still need a live check. The default isolation check retains its foreground placement test; `--headless` checks storage isolation and invisibility without that placement claim.
+
 ## Source layout
 
 ```
@@ -53,7 +64,10 @@ Sources/TemplateCore/     engine, no UI
   Configuration.swift     validation of custom field names and stage lists
   ProjectBrowser.swift    safe read-only folder listing and opening rules
 Sources/ProjectTemplates/ the app
-  AppModel.swift          state, selection, structure cache, numbering, mounts, relinking, pipeline
+  AppModel.swift          state, selection, structure cache, numbering, mounts, relinking
+  AppModel+Pipeline.swift pipeline and Finder-tag actions using the same writer slot
+  BackgroundFileOperations.swift detached template recovery and relink-root checks
+  Grid.swift, DesignTokens.swift shared spacing, corners, native type and adaptive surfaces
   CreationView.swift      New Project form and live preview
   PipelineView.swift      board, cards, status editor, filters, location badge, new idea sheet
   CatalogueViews.swift    Projects list with pinned and date groups, inspector, discovery sheet
@@ -93,7 +107,7 @@ The repository is public at https://github.com/juniornkanabassi/creatoros (on my
 - **Premiere shortcut**: a project's inspector opens its only `.prproj` directly or asks which one to open when several are present; the same bounded, symlink-safe document scan powers the existing browser.
 - **ContentTool** (`swift run ContentTool audit|probe|create …`): the engine from the command line; `create --no-icons` makes a plain copy for LucidLink, which refuses `Icon\r` files; `restore-icons` puts a template's icons back onto a project afterwards and `strip-icons` takes them off first, as do Restore Folder Icons and Remove Folder Icons in the app; New Project has a Plain folders switch.
 - **Pipeline**: Recordings and Live boards with their own stages and colours (Settings → Pipeline); a stage change also writes a Finder tag of the same name and colour on the folder, switchable off there. `Scripts/verify-notion-backup.py` re-checks the Notion backups read-only.
-- **Settings** window on Cmd-comma: Formats, Naming (extra fields), Pipeline (stages), Locations (badge colours), About.
+- **Settings** window on Cmd-comma: Formats, Naming (extra fields), Pipeline (stages) and Locations (badge colours). About is in the app menu and retains the version, interface size and data-folder controls.
 
 ## Data
 
