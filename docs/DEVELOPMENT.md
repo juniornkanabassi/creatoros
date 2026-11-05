@@ -47,6 +47,7 @@ zsh tools/grid-lint.sh
 zsh tools/snap.sh /private/tmp/bama/build-creatoros
 swift tools/check-layout.swift /private/tmp/bama/build-creatoros/snapshots/*-layout.json
 zsh Scripts/check-isolated-defaults.sh "/path/to/CreatorOS.app" --headless
+python3 Scripts/test-isolation-cleanup.py
 ```
 
 The snapshot harness compiles against the current app sources using the existing disposable check harness. It captures light and dark content for every main page, Settings tab, About, New Project and file-browser mode without ordering a window or activating the app. It also captures an actionable error. Fixtures are created through the model, never by editing a library file. The PNGs use AppKit off-screen rendering, so window compositing, active-window focus, native pointer gestures and physical-drive behaviour still need a live check. The default isolation check retains its foreground placement test; `--headless` checks storage isolation and invisibility without that placement claim.

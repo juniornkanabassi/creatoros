@@ -15,10 +15,17 @@ root=$(mktemp -d /private/tmp/cos-defaults-root.XXXXXX)
 suite=local.creatoros.alpha.$(print -rn -- "$root" | /usr/bin/base64)
 pid=""
 cleanup() {
-  [[ -n "$pid" ]] && kill "$pid" 2>/dev/null || true
-  # Sweep anything still running on this run's own throwaway data directory (never an instance without one).
-  for stray in $(/usr/bin/pgrep -f -- "ProjectTemplates --data-directory $root" || true); do kill "$stray" 2>/dev/null || true; done
-  for _ in {1..50}; do /usr/bin/pgrep -f -- "ProjectTemplates --data-directory $root" >/dev/null || break; sleep 0.1; done
+  if [[ -n "$pid" ]]; then
+    kill "$pid" 2>/dev/null || true
+    for _ in {1..50}; do kill -0 "$pid" 2>/dev/null || break; sleep 0.1; done
+    if kill -0 "$pid" 2>/dev/null; then kill -KILL "$pid" 2>/dev/null || true; fi
+    for _ in {1..50}; do kill -0 "$pid" 2>/dev/null || break; sleep 0.1; done
+    if kill -0 "$pid" 2>/dev/null; then
+      print -u2 "FAIL child $pid is still alive; retaining preferences and fixtures at $root and $stage"
+      return 1
+    fi
+    wait "$pid" 2>/dev/null || true
+  fi
   defaults delete "$id" >/dev/null 2>&1 || true
   rm -f ~/Library/Preferences/"$id".plist
   /usr/bin/defaults delete "$suite" >/dev/null 2>&1 || true
@@ -86,7 +93,6 @@ fi
 for _ in {1..100}; do kill -0 "$pid" 2>/dev/null || break; sleep 0.1; done
 kill -0 "$pid" 2>/dev/null && { print -u2 "FAIL isolated app did not quit"; exit 1; }
 pid=""
-/usr/bin/pgrep -f -- "ProjectTemplates --data-directory $root" >/dev/null && { print -u2 "FAIL a test instance is still running on $root"; exit 1; }
 after=$(defaults export "$id" - | plutil -convert json -o - -)
 if [[ "$after" != "$seeded" ]]; then
   print -u2 "FAIL isolated launch changed its app defaults domain:"; print -u2 -- "$after" | cut -c1-400; exit 1
