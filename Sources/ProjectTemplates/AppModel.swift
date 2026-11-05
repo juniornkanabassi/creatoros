@@ -199,6 +199,7 @@ enum BadgeColour: String, CaseIterable, Identifiable {
     /// The result of the last Find Moved Folders pass, shown as a sheet.
     @Published var relinkReport: RelinkReport?
     @Published var duplicatesPresented = false
+    @Published var aboutPresented = false
     /// Drives unticked in the Locations filter: their projects stay registered but are kept out of every list, and the drive is never read.
     @Published var hiddenLocations: Set<String> { didSet { defaults.set(Array(hiddenLocations).sorted(), forKey: "hiddenLocations") } }
     var mountTimer: Timer?
@@ -636,16 +637,15 @@ enum BadgeColour: String, CaseIterable, Identifiable {
     private func deleteTemplateHoldingSlot(_ record: TemplateRecord) async throws -> URL? {
         let payload = store.payload(record)
         try runtime.requireWritable(payload)
-        var trashed: NSURL?
-        if FileManager.default.fileExists(atPath: payload.path) { try FileManager.default.trashItem(at: payload, resultingItemURL: &trashed) }
+        let trashed = try await BackgroundFileOperations.trashIfPresent(payload, runtime: runtime)
         do {
             try await commitDurably { lib in
                 lib.templates.removeAll { $0.id == record.id }
                 lib.templateSets = lib.sets.map { set in var s = set; s.variants.removeAll { $0.templateID == record.id }; return s }
             }
         } catch {
-            if let bin = trashed as URL? {
-                do { try FileManager.default.moveItem(at: bin, to: payload) }
+            if let bin = trashed {
+                do { try await BackgroundFileOperations.restore(bin, to: payload, runtime: runtime) }
                 catch { throw AppFailure("The library could not be saved and the template files could not be put back. They are in the Bin at \(bin.path). \(error.localizedDescription)") }
             }
             throw error
@@ -654,7 +654,7 @@ enum BadgeColour: String, CaseIterable, Identifiable {
         if templatesSelection == .legacy(record.id) { templatesSelection = nil }
         if !selectionIsValid { selection = defaultSelection }
         refresh()
-        return trashed as URL?
+        return trashed
     }
     func useForNewProject(_ choice: TemplateSelection) { selection = choice; changeSelection(); newProjectPresented = true }
     func browseTemplate(_ record: TemplateRecord) { templateToBrowse = record }
@@ -906,32 +906,9 @@ enum BadgeColour: String, CaseIterable, Identifiable {
     /// Roots worth searching when a folder has moved: every saved location (by bookmark, or by path when the bookmark
     /// cannot be resolved, as happens on a network filespace), each format's destination, and every folder that already
     /// holds a registered project or once did. Those are the places Junior keeps things; unticked drives are left out.
-    func relinkRoots(locationKey: String? = nil) -> [URL] {
-        let fm = FileManager.default
-        func allowed(_ path: String) -> Bool {
-            Relinker.allowsRoot(path: path, hiddenLocations: hiddenLocations, locationKey: locationKey)
-        }
-        var roots: [URL] = []
-        for location in library.locations ?? [] where allowed(location.path) {
-            if let url = try? location.resolve(), allowed(url.path), fm.fileExists(atPath: url.path) { roots.append(url) }
-            else if fm.fileExists(atPath: location.path) { roots.append(URL(fileURLWithPath: location.path)) }
-        }
-        for preset in library.presets where allowed(preset.destination) {
-            let url = URL(fileURLWithPath: preset.destination)
-            if fm.fileExists(atPath: url.path) { roots.append(url) }
-        }
-        var parents = Set<String>()
-        for record in library.projects where !record.isPlanned {
-            for path in [record.path] + (record.previousPaths ?? []) {
-                let parent = (path as NSString).deletingLastPathComponent
-                let location = ProjectLocation(path: parent)
-                guard allowed(parent), mountedLocations.contains(location.key) else { continue }
-                parents.insert(parent)
-            }
-        }
-        for parent in parents.sorted() where fm.fileExists(atPath: parent) { roots.append(URL(fileURLWithPath: parent)) }
-        var seen = Set<String>()
-        return roots.filter { seen.insert($0.path).inserted }
+    func relinkRoots(locationKey: String? = nil) async -> [URL] {
+        await BackgroundFileOperations.relinkRoots(library: library, hiddenLocations: hiddenLocations,
+                                                  mountedLocations: mountedLocations, locationKey: locationKey)
     }
     /// Registered projects that share a name, usually a copy made for an editor or a move that was really a copy.
     /// The likely live one sits under a configured destination; failing that, the newest folder.
@@ -991,7 +968,11 @@ enum BadgeColour: String, CaseIterable, Identifiable {
         defer { relinking.remove(record.id) }
         // A quiet search, the one that runs when a project is merely selected, stays on the project's own drive.
         // Searching every root would wake the archive drive on each click.
-        let roots = relinkRoots(locationKey: quietly && !searchAllLocations ? record.location.key : nil)
+        let hiddenBefore = hiddenLocations
+        let roots = await relinkRoots(locationKey: quietly && !searchAllLocations ? record.location.key : nil)
+        // Root probing now suspends. Do not begin a scan with a changed visibility policy or a replaced record.
+        guard hiddenLocations == hiddenBefore,
+              library.projects.contains(where: { $0.id == record.id && $0.path == record.path }) else { return .stillThere }
         let candidates = await Task.detached(priority: .userInitiated) { Relinker.candidates(for: record, roots: roots) }.value
         guard let current = library.projects.first(where: { $0.id == record.id }), current.path == record.path,
               !hiddenLocations.contains(current.location.key) else { return .stillThere }

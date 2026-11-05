@@ -450,5 +450,50 @@ import TemplateCore
         let shown = try await model.folderToShow(withWorkspace)
         precondition(shown.lastPathComponent == URL(fileURLWithPath: withWorkspace.ideaWorkspace!.path).lastPathComponent)
         print("PASS 1 idea workspace check: reveal and browsing resolve an idea's owned workspace")
+        // Root probing stays bounded after leaving the main actor, including stale bookmarks and hidden drives.
+        let probeRoot = model.runtime.root.appendingPathComponent("BackgroundRoot")
+        let probeParent = probeRoot.appendingPathComponent("Registered")
+        let probeProject = probeParent.appendingPathComponent("001 — Short — Probe")
+        try FileManager.default.createDirectory(at: probeProject, withIntermediateDirectories: true)
+        var probeLibrary = Library()
+        for i in probeLibrary.presets.indices { probeLibrary.presets[i].destination = probeRoot.path }
+        var staleLocation = try CatalogueLocation(url: probeRoot)
+        staleLocation.bookmark = Data()
+        probeLibrary.locations = [staleLocation]
+        probeLibrary.projects = [try ProjectRecord(url: probeProject, format: "Short")]
+        let roots = await BackgroundFileOperations.relinkRoots(library: probeLibrary, hiddenLocations: [], mountedLocations: ["local"], locationKey: nil)
+        precondition(roots.map(\.path) == [probeRoot.path, probeParent.path], "roots lost bookmark fallback, order or deduplication")
+        let hiddenRoots = await BackgroundFileOperations.relinkRoots(library: probeLibrary, hiddenLocations: ["local"], mountedLocations: ["local"], locationKey: nil)
+        precondition(hiddenRoots.isEmpty)
+        let otherDriveRoots = await BackgroundFileOperations.relinkRoots(library: probeLibrary, hiddenLocations: [], mountedLocations: ["local"], locationKey: "volume:Other")
+        precondition(otherDriveRoots.isEmpty)
+        let noParentRoots = await BackgroundFileOperations.relinkRoots(library: probeLibrary, hiddenLocations: [], mountedLocations: [], locationKey: nil)
+        precondition(noParentRoots.map(\.path) == [probeRoot.path])
+        print("PASS 4 background root checks: bookmark fallback and deduplication; hidden locations; drive scope; mounted parent gate")
+        // Restoration never overwrites. These are disposable stand-ins, with no use of the user's Bin.
+        let recovery = probeRoot.appendingPathComponent("Recovery.txt")
+        let occupied = probeRoot.appendingPathComponent("Occupied.txt")
+        let sentinel = Data("recoverable template".utf8)
+        let occupant = Data("keep existing bytes".utf8)
+        try sentinel.write(to: recovery)
+        try occupant.write(to: occupied)
+        do {
+            try await BackgroundFileOperations.restore(recovery, to: occupied, runtime: model.runtime)
+            preconditionFailure("restoration overwrote an occupied destination")
+        } catch {}
+        let retainedRecovery = try Data(contentsOf: recovery), retainedOccupant = try Data(contentsOf: occupied)
+        precondition(retainedRecovery == sentinel && retainedOccupant == occupant)
+        let restored = probeRoot.appendingPathComponent("Restored.txt")
+        try await BackgroundFileOperations.restore(recovery, to: restored, runtime: model.runtime)
+        let restoredBytes = try Data(contentsOf: restored)
+        precondition(restoredBytes == sentinel)
+        precondition(!FileManager.default.fileExists(atPath: recovery.path))
+        let absent = try await BackgroundFileOperations.trashIfPresent(probeRoot.appendingPathComponent("Absent"), runtime: model.runtime)
+        precondition(absent == nil)
+        do {
+            _ = try await BackgroundFileOperations.trashIfPresent(URL(fileURLWithPath: "/private/tmp/outside-background-fixture"), runtime: model.runtime)
+            preconditionFailure("background operation accepted a path outside the disposable root")
+        } catch {}
+        print("PASS 4 background recovery checks: occupied destination retained; restored bytes; missing payload; isolation refusal")
     }
 }
