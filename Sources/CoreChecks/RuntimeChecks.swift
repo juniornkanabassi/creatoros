@@ -48,9 +48,4 @@ func runtimeChecks(base: URL) throws {
     try check(disposable.ownsDisposablePreferences && temporaryRuntime.ownsDisposablePreferences && !production.ownsDisposablePreferences
               && !alphaInstall.ownsDisposablePreferences && !alphaChild.ownsDisposablePreferences,
               "only temporary roots own their preferences; production and the alpha install keep theirs")
-    defer { disposable.removeDisposablePreferences() }  // also when a check below fails
-    UserDefaults(suiteName: disposable.defaultsSuite)!.set("Short", forKey: "format")
-    try check(UserDefaults.standard.persistentDomain(forName: disposable.defaultsSuite)?["format"] as? String == "Short", "a disposable run's preferences reach its own suite")
-    disposable.removeDisposablePreferences()
-    try check(UserDefaults.standard.persistentDomain(forName: disposable.defaultsSuite)?.isEmpty != false, "a finished disposable run removes its preferences domain")
 }

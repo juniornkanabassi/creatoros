@@ -2,7 +2,7 @@
 
 Only a process whose arguments carry one of the caller's own disposable data directories (under /private/tmp) is ever
 looked at, so the everyday app (no --data-directory) can never be matched or stopped by these helpers."""
-import base64, os, pathlib, signal, subprocess, time
+import base64, os, pathlib, signal, subprocess, tempfile, time
 
 def _roots(roots):
     clean = [str(r) for r in roots]
@@ -58,7 +58,17 @@ if __name__ == '__main__':
         try: forget_preferences(refused)
         except AssertionError: continue
         raise SystemExit('forget_preferences accepted a non-disposable root: ' + refused)
-    print('PASS instances.py preferences helpers')
+    with tempfile.TemporaryDirectory(prefix='cos-preferences-', dir='/private/tmp') as root:
+        domain = preferences_domain(root)
+        try:
+            subprocess.run(['/usr/bin/defaults', 'write', domain, 'fixture', '-string', 'owned'], check=True)
+            assert subprocess.check_output(['/usr/bin/defaults', 'read', domain, 'fixture'], text=True).strip() == 'owned'
+            forget_preferences(root)
+            assert subprocess.run(['/usr/bin/defaults', 'read', domain], capture_output=True).returncode != 0
+            assert not (pathlib.Path.home() / 'Library/Preferences' / (domain + '.plist')).exists()
+        finally:
+            forget_preferences(root)
+    print('PASS instances.py preferences helpers and persisted-domain cleanup')
 
 def assert_none_alive(*roots):
     left = pids(*roots)

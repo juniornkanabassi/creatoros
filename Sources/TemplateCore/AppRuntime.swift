@@ -19,11 +19,7 @@ public struct AppRuntime: Sendable {
     public var ownsDisposablePreferences: Bool { isIsolated && !Self.contains(Self.alphaRoot.standardizedFileURL.resolvingSymlinksInPath(), root) }
     /// Tests and checks call this when they finish. Harness launchers also remove the exact plist after the process ends.
     public func removeDisposablePreferences() {
-        guard ownsDisposablePreferences, let defaults = UserDefaults(suiteName: defaultsSuite) else { return }
-        defaults.removePersistentDomain(forName: defaultsSuite)
-        defaults.synchronize()
-        let plist = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Preferences").appendingPathComponent(defaultsSuite + ".plist")
-        try? FileManager.default.removeItem(at: plist)
+        if ownsDisposablePreferences { UserDefaults.standard.removePersistentDomain(forName: defaultsSuite) }
     }
     /// An isolated launch of the stable bundle still shares its defaults domain, which AppKit writes to directly.
     public func sharesProductionPreferences(bundleIdentifier: String?) -> Bool { isIsolated && bundleIdentifier == Self.releaseIdentifier }
