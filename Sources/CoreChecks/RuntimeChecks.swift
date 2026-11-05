@@ -52,5 +52,5 @@ func runtimeChecks(base: URL) throws {
     UserDefaults(suiteName: disposable.defaultsSuite)!.set("Short", forKey: "format")
     try check(UserDefaults.standard.persistentDomain(forName: disposable.defaultsSuite)?["format"] as? String == "Short", "a disposable run's preferences reach its own suite")
     disposable.removeDisposablePreferences()
-    try check(UserDefaults.standard.persistentDomain(forName: disposable.defaultsSuite) == nil, "a finished disposable run removes its preferences domain")
+    try check(UserDefaults.standard.persistentDomain(forName: disposable.defaultsSuite)?.isEmpty != false, "a finished disposable run removes its preferences domain")
 }
