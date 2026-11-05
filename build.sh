@@ -23,7 +23,7 @@ fi
 swift build --scratch-path "$BUILD_ROOT" -c release --product ProjectTemplates
 swift build --scratch-path "$BUILD_ROOT" -c release --product creatoros
 BIN_PATH=$(swift build --scratch-path "$BUILD_ROOT" -c release --show-bin-path)
-BUILD_STAGE=$(mktemp -d /private/tmp/content-template-package.XXXXXX)
+BUILD_STAGE=$(mktemp -d "${CONTENT_TEMPLATE_STAGE_ROOT:-/private/tmp}/content-template-package.XXXXXX")
 APP_PATH="$BUILD_STAGE/$APP_NAME.app"
 mkdir -p "$APP_PATH/Contents/MacOS" "$APP_PATH/Contents/Resources"
 cp "$BIN_PATH/ProjectTemplates" "$APP_PATH/Contents/MacOS/ProjectTemplates"
