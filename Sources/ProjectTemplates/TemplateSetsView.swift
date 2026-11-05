@@ -8,20 +8,20 @@ struct TemplateSetList: View {
         List(selection: $m.templatesSelection) {
             Section("Template sets") {
                 ForEach(m.library.sets) { set in
-                    VStack(alignment: .leading, spacing: 3) {
-                        Text(set.name).font(.headline)
-                        Text(readiness(set)).font(.caption).foregroundStyle(.secondary)
-                    }.padding(.vertical, 3).tag(TemplateSelection.set(set.id))
+                    VStack(alignment: .leading, spacing: Space.xs) {
+                        Text(set.name).font(TypeStyle.headline)
+                        Text(readiness(set)).font(TypeStyle.caption).foregroundStyle(.secondary)
+                    }.padding(.vertical, Space.xs).tag(TemplateSelection.set(set.id))
                 }
-                if m.library.sets.isEmpty { Text("None yet. Create one, or turn a standalone template into one.").font(.callout).foregroundStyle(.secondary) }
+                if m.library.sets.isEmpty { Text("None yet. Create one, or turn a standalone template into one.").font(TypeStyle.callout).foregroundStyle(.secondary) }
             }
             if !m.library.unassignedTemplates.isEmpty {
                 Section("Standalone templates") {
                     ForEach(m.library.unassignedTemplates) { record in
-                        VStack(alignment: .leading, spacing: 3) {
-                            Text(record.name).font(.headline)
-                            Text("\(record.mode.title) · imported \(record.imported.formatted(date: .abbreviated, time: .omitted))").font(.caption).foregroundStyle(.secondary)
-                        }.padding(.vertical, 3).tag(TemplateSelection.legacy(record.id))
+                        VStack(alignment: .leading, spacing: Space.xs) {
+                            Text(record.name).font(TypeStyle.headline)
+                            Text("\(record.mode.title) · imported \(record.imported.formatted(date: .abbreviated, time: .omitted))").font(TypeStyle.caption).foregroundStyle(.secondary)
+                        }.padding(.vertical, Space.xs).tag(TemplateSelection.legacy(record.id))
                     }
                 }
             }
@@ -84,7 +84,7 @@ struct SetDetail: View {
             }
             Section {
                 DisclosureGroup("Advanced", isExpanded: $showAdvanced) {
-                    Text("Rename or delete this set. Deleting removes only the grouping; the template files stay.").font(.caption).foregroundStyle(.secondary)
+                    Text("Rename or delete this set. Deleting removes only the grouping; the template files stay.").font(TypeStyle.caption).foregroundStyle(.secondary)
                     TextField("Name", text: $name).onSubmit { if name != set.name { m.renameSet(set.id, to: name) } }
                         .accessibilityLabel("Template set name")
                         .help("Type a new name and press Return to rename this set")
@@ -109,17 +109,17 @@ struct VariantRow: View {
     let preset: Preset
     var record: TemplateRecord? { m.library.resolve(setID: set.id, format: preset.format) }
     var body: some View {
-        HStack(alignment: .center, spacing: 12) {
+        HStack(alignment: .center, spacing: Space.md) {
             FormatIcon(data: preset.icon, size: 30)
-            VStack(alignment: .leading, spacing: 3) {
-                Text(preset.label).font(.headline)
+            VStack(alignment: .leading, spacing: Space.xs) {
+                Text(preset.label).font(TypeStyle.headline)
                 if let record {
                     let shared = set.formatsSharing(record.id, excluding: preset.format).map(m.label(for:))
-                    Text(record.name + (shared.isEmpty ? "" : " · shared with " + shared.joined(separator: ", "))).font(.caption).foregroundStyle(.secondary)
+                    Text(record.name + (shared.isEmpty ? "" : " · shared with " + shared.joined(separator: ", "))).font(TypeStyle.caption).foregroundStyle(.secondary)
                 } else if set.variant(for: preset.format) != nil {
-                    Label("Template files missing", systemImage: "exclamationmark.triangle.fill").font(.caption).foregroundStyle(.orange)
+                    Label("Template files missing", systemImage: "exclamationmark.triangle.fill").font(TypeStyle.caption).foregroundStyle(.orange)
                 } else {
-                    Text("Not set up").font(.caption).foregroundStyle(.secondary)
+                    Text("Not set up").font(TypeStyle.caption).foregroundStyle(.secondary)
                 }
             }
             Spacer()
@@ -136,7 +136,7 @@ struct VariantRow: View {
                 }.controlSize(.small).fixedSize().help("Choose different template files for \(preset.label), or stop using these. Files stay in CreatorOS.")
                     .accessibilityLabel("Change \(preset.label) template files")
             }
-        }.padding(.vertical, 4)
+        }.padding(.vertical, Space.xs)
     }
 }
 
@@ -156,7 +156,7 @@ struct LegacyTemplateDetail: View {
                 Text("A standalone template is used for every format. Turn it into a template set to give each format its own files later.")
             }
             Section {
-                FlowLayout(spacing: 8) {
+                FlowLayout(spacing: Space.sm) {
                     Button("Use for New Project") { m.useForNewProject(.legacy(record.id)) }.help("Open New Project with this template chosen")
                     Button("Browse Files") { m.browseTemplate(record) }.help("See the folders and starter files new projects copy")
                     Button("Create Template Set from It…") { m.promptNewSet(mapping: record.id) }
@@ -165,7 +165,7 @@ struct LegacyTemplateDetail: View {
             }
             Section {
                 DisclosureGroup("Advanced", isExpanded: $showAdvanced) {
-                    Text("Where this template came from and where CreatorOS keeps its copy. Deleting moves the copy to the Trash; your original stays.").font(.caption).foregroundStyle(.secondary)
+                    Text("Where this template came from and where CreatorOS keeps its copy. Deleting moves the copy to the Trash; your original stays.").font(TypeStyle.caption).foregroundStyle(.secondary)
                     LabeledContent("Original source") { Text(record.source).lineLimit(2).truncationMode(.middle).textSelection(.enabled) }
                     LabeledContent("CreatorOS copy") { Text(m.store.payload(record).path).lineLimit(2).truncationMode(.middle).textSelection(.enabled) }
                     Button("Delete…", role: .destructive) { confirmDelete = true }.help("Move CreatorOS's copy of this template to the Trash")
@@ -187,8 +187,8 @@ struct LegacyTemplateDetail: View {
 struct NewSetSheet: View {
     @EnvironmentObject var m: AppModel
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            Text(m.newSetPrompt?.mappingTemplateID == nil ? "New template set" : "Create a template set from this template").font(.title2.weight(.semibold))
+        VStack(alignment: .leading, spacing: Space.lg) {
+            Text(m.newSetPrompt?.mappingTemplateID == nil ? "New template set" : "Create a template set from this template").font(TypeStyle.title2.weight(.semibold))
             Text(m.newSetPrompt?.mappingTemplateID == nil
                  ? "A template set collects the templates for one channel, client or campaign. Name it, then give each format its template files."
                  : "All four formats will start with this template's files, shown as shared. Replace any format later with its own files.")
@@ -202,6 +202,6 @@ struct NewSetSheet: View {
                 Button("Create") { m.confirmNewSet() }.buttonStyle(.borderedProminent).keyboardShortcut(.defaultAction).help("Create the template set")
                     .disabled((m.newSetPrompt?.name ?? "").trimmingCharacters(in: .whitespaces).isEmpty)
             }
-        }.padding(24).frame(width: 460)
+        }.padding(Space.xxl).frame(width: 460)
     }
 }
