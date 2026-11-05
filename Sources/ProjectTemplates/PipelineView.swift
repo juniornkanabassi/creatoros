@@ -383,6 +383,7 @@ struct ProjectCard: View {
     @EnvironmentObject var m: AppModel
     let record: ProjectRecord
     var selected: Bool { m.pipelineSelection == record.id }
+    private var gridID: String { "pipeline-card-" + record.id.uuidString }
     var body: some View {
         VStack(alignment: .leading, spacing: Space.sm) {
             HStack(spacing: Space.sm) {
@@ -391,8 +392,9 @@ struct ProjectCard: View {
                 Spacer()
                 if record.isPlanned { Image(systemName: "lightbulb").font(TypeStyle.caption).foregroundStyle(.secondary).help("Idea without a folder yet") }
                 else { LocationBadge(location: record.location, compact: true) }
-            }
+            }.gridProbe(gridID + "-metadata", area: gridID)
             Text(record.isPlanned ? record.name : record.title).font(TypeStyle.callout.weight(.medium)).lineLimit(3).multilineTextAlignment(.leading)
+                .gridProbe(gridID + "-title", area: gridID)
             if record.campaign != nil || record.editor != nil {
                 HStack(spacing: Space.sm) {
                     if let campaign = record.campaign { StageChip(stage: campaign) }
@@ -401,6 +403,7 @@ struct ProjectCard: View {
             }
         }
         .padding(Space.md).padding(.leading, Space.xs)
+        .gridArea(gridID, inset: Space.md)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(RoundedRectangle(cornerRadius: Radius.md).fill(Surface.control))
         .overlay(alignment: .leading) {

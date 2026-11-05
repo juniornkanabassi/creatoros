@@ -108,14 +108,17 @@ struct VariantRow: View {
     let set: TemplateSet
     let preset: Preset
     var record: TemplateRecord? { m.library.resolve(setID: set.id, format: preset.format) }
+    private var gridID: String { "template-variant-" + set.id.uuidString + "-" + preset.format }
     var body: some View {
         HStack(alignment: .center, spacing: Space.md) {
-            FormatIcon(data: preset.icon, size: 30)
+            FormatIcon(data: preset.icon, size: 32)
             VStack(alignment: .leading, spacing: Space.xs) {
                 Text(preset.label).font(TypeStyle.headline)
+                    .gridProbe(gridID + "-format", area: gridID)
                 if let record {
                     let shared = set.formatsSharing(record.id, excluding: preset.format).map(m.label(for:))
                     Text(record.name + (shared.isEmpty ? "" : " · shared with " + shared.joined(separator: ", "))).font(TypeStyle.caption).foregroundStyle(.secondary)
+                        .gridProbe(gridID + "-source", area: gridID)
                 } else if set.variant(for: preset.format) != nil {
                     Label("Template files missing", systemImage: "exclamationmark.triangle.fill").font(TypeStyle.caption).foregroundStyle(.orange)
                 } else {
@@ -137,6 +140,7 @@ struct VariantRow: View {
                     .accessibilityLabel("Change \(preset.label) template files")
             }
         }.padding(.vertical, Space.xs)
+            .gridArea(gridID, inset: 0)
     }
 }
 

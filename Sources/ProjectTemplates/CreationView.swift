@@ -94,19 +94,23 @@ struct NewProjectSheet: View {
             HStack(alignment: .top) {
                 VStack(alignment: .leading, spacing: Space.sm) {
                     Text("New Project").font(TypeStyle.title2.weight(.semibold))
+                        .gridProbe("new-project-title", area: "new-project-heading")
                     Text("Makes a correctly named project folder from one of your templates. Nothing is copied until you press Create Project.")
                         .font(TypeStyle.callout).foregroundStyle(.secondary)
+                        .gridProbe("new-project-purpose", area: "new-project-heading")
                     HStack(spacing: Space.lg) {
                         Label("Choose a template and format", systemImage: "1.circle")
                         Label("Name the project", systemImage: "2.circle")
                         Label("Create it", systemImage: "3.circle")
                     }.font(TypeStyle.callout).foregroundStyle(Color.accentColor)
+                        .gridProbe("new-project-steps", area: "new-project-heading")
                 }
                 Spacer()
                 // While copying, Escape belongs to the progress row's Cancel.
                 Button("Close") { m.newProjectPresented = false }.keyboardShortcut(m.busy ? nil : .cancelAction).disabled(m.busy)
                     .help(m.created == nil ? "Close without creating anything. What you typed stays for next time." : "Close and show the created project in Projects. The next project starts with a clear form.")
             }.padding(.horizontal, Space.xl).padding(.vertical, Space.lg)
+                .gridArea("new-project-heading", inset: Space.lg)
             Divider()
             if m.busy {
                 HStack(spacing: Space.md) {
