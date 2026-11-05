@@ -3,7 +3,7 @@
 # save window and split-view frames there, which for the stable app is Junior's production preferences.
 # The check runs a copy of the packaged app under a throwaway bundle identifier, so the domain it inspects is
 # disposable and the real com.juniornkanabassi.CreatorOS preferences are never read or written.
-# Usage: zsh Scripts/check-isolated-defaults.sh <packaged CreatorOS.app>
+# Usage: zsh Scripts/check-isolated-defaults.sh <packaged CreatorOS.app> [--headless]
 set -euo pipefail
 app="${1:?usage: check-isolated-defaults.sh <CreatorOS.app> [--headless]}"
 headless=${2:-}
@@ -69,7 +69,14 @@ let placed = bounds.contains { b in
 }
 if !placed { print("FAIL the test window was not positioned on the target display"); exit(1) }' "$pid" "$target"
 else
-  print "Headless isolation check: window-placement acceptance is not exercised"
+  /usr/bin/swift -e '
+import CoreGraphics
+let pid = Int(CommandLine.arguments[1])!
+let windows = CGWindowListCopyWindowInfo(.optionOnScreenOnly, kCGNullWindowID) as? [[String: Any]] ?? []
+if windows.contains(where: { ($0[kCGWindowOwnerPID as String] as? Int) == pid && ($0[kCGWindowAlpha as String] as? Double ?? 1) > 0 }) {
+    print("FAIL headless isolation check showed a window"); exit(1)
+}' "$pid"
+  print "PASS headless isolation showed no window; display placement not exercised"
 fi
 /usr/bin/swift -e 'import AppKit; _ = NSRunningApplication(processIdentifier: pid_t(CommandLine.arguments[1])!)?.terminate()' "$pid"
 for _ in {1..100}; do kill -0 "$pid" 2>/dev/null || break; sleep 0.1; done
