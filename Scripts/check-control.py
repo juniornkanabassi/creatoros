@@ -27,7 +27,7 @@ roots.append(root)
 # A stale socket owned by this fixture must be replaced, never a regular file.
 stale = socket.socket(socket.AF_UNIX)
 stale.bind(str(root / 'control.sock')); stale.close()
-proc = subprocess.Popen([str(exe), '--background', '--data-directory', str(root)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+proc = subprocess.Popen([str(exe), '--headless', '--background', '--data-directory', str(root)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 try:
     for _ in range(100):
         try:
@@ -69,7 +69,7 @@ blocked_root = pathlib.Path(tempfile.mkdtemp(prefix='cos-socket-file-', dir='/pr
 roots.append(blocked_root)
 assert not instances.pids(*roots), 'the first test instance must be gone before the second starts'
 (blocked_root / 'control.sock').write_bytes(b'keep this regular file')
-blocked = subprocess.Popen([str(exe), '--background', '--data-directory', str(blocked_root)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+blocked = subprocess.Popen([str(exe), '--headless', '--background', '--data-directory', str(blocked_root)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 try:
     time.sleep(.5)
     assert (blocked_root / 'control.sock').read_bytes() == b'keep this regular file'

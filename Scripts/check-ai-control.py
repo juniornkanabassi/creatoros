@@ -42,7 +42,7 @@ if app.suffix == '.app':
     check(command('library','stats')['templates'] == 1, 'stopped built app launches through CLI symlink')
     pid = command('status')['pid']
 else:
-    proc = subprocess.Popen([str(exe), '--background','--data-directory',str(root)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    proc = subprocess.Popen([str(exe), '--headless', '--background','--data-directory',str(root)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     pid = proc.pid
 try:
     for _ in range(100):

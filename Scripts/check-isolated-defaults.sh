@@ -5,7 +5,9 @@
 # disposable and the real com.juniornkanabassi.CreatorOS preferences are never read or written.
 # Usage: zsh Scripts/check-isolated-defaults.sh <packaged CreatorOS.app>
 set -euo pipefail
-app="${1:?usage: check-isolated-defaults.sh <CreatorOS.app>}"
+app="${1:?usage: check-isolated-defaults.sh <CreatorOS.app> [--headless]}"
+headless=${2:-}
+[[ -z "$headless" || "$headless" == --headless ]] || { print -u2 "Unknown option: $headless"; exit 1; }
 id="local.projecttemplates.isolation-check-$$"
 stage=$(mktemp -d /private/tmp/cos-defaults-check.XXXXXX)
 root=$(mktemp -d /private/tmp/cos-defaults-root.XXXXXX)
@@ -40,13 +42,16 @@ print("\(Int(f.minX)) \(Int(h - f.maxY)) \(Int(f.maxX)) \(Int(h - f.minY)) \(s.l
 display=${target#* * * * }
 [[ -n "$display" ]] || { print -u2 "FAIL could not read a display name"; exit 1; }
 # A foreground launch and a normal quit, as in real use: SwiftUI saves the frame itself on the way out.
-"$stage/CreatorOS.app/Contents/MacOS/ProjectTemplates" --data-directory "$root" --display-name "$display" >/dev/null 2>&1 &
+launch_flags=()
+[[ "$headless" != --headless ]] || launch_flags=(--headless --background)
+"$stage/CreatorOS.app/Contents/MacOS/ProjectTemplates" "${launch_flags[@]}" --data-directory "$root" --display-name "$display" >/dev/null 2>&1 &
 pid=$!
 for _ in {1..100}; do [[ -S "$root/control.sock" ]] && break; sleep 0.1; done
 [[ -S "$root/control.sock" ]] || { print -u2 "FAIL isolated app did not start"; exit 1; }
 type=$(/usr/bin/lsappinfo info -app "$pid" 2>/dev/null | sed -n 's/.*type="\([A-Za-z]*\)".*/\1/p' | head -1)
 [[ "$type" == "UIElement" || "$type" == "BackgroundOnly" ]] || { print -u2 "FAIL the isolated app has a Dock tile (ApplicationType=$type)"; exit 1; }
 sleep 3   # let the window open, position itself and autosave if it is going to
+if [[ "$headless" != --headless ]]; then
 # The window must have moved onto the target display, or the positioning path was skipped and a PASS proves nothing.
 /usr/bin/swift -e '
 import CoreGraphics
@@ -63,6 +68,9 @@ let placed = bounds.contains { b in
   return x >= r[0] && x <= r[2] && y >= r[1] && y <= r[3]
 }
 if !placed { print("FAIL the test window was not positioned on the target display"); exit(1) }' "$pid" "$target"
+else
+  print "Headless isolation check: window-placement acceptance is not exercised"
+fi
 /usr/bin/swift -e 'import AppKit; _ = NSRunningApplication(processIdentifier: pid_t(CommandLine.arguments[1])!)?.terminate()' "$pid"
 for _ in {1..100}; do kill -0 "$pid" 2>/dev/null || break; sleep 0.1; done
 kill -0 "$pid" 2>/dev/null && { print -u2 "FAIL isolated app did not quit"; exit 1; }

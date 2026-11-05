@@ -61,7 +61,7 @@ print "TemplateCore objects: ${objects[1]:h}"
 print "TemplateCore module: $module_file"
 # The app sources import Sparkle (Updates.swift), so the harness links the framework SwiftPM built beside them.
 [[ -d "$framework_dir/Sparkle.framework" ]] || { print -u2 "No Sparkle.framework in $framework_dir; rebuild first"; exit 1; }
-check_dir=$(mktemp -d /private/tmp/creatoros-durable-check.XXXXXX)
+check_dir=$(mktemp -d "${CONTENT_TEMPLATE_CHECK_ROOT:-/private/tmp}/creatoros-durable-check.XXXXXX")
 cp Sources/ProjectTemplates/ProjectTemplatesApp.swift "$check_dir/ProjectTemplatesApp.swift"
 # Keep all real UI declarations, replacing only the executable entrypoint.
 sed -i '' 's/^@main struct ContentTemplateApp/struct ContentTemplateApp/' "$check_dir/ProjectTemplatesApp.swift"
