@@ -76,7 +76,7 @@ struct FileArtwork: View {
         Group {
             if let artwork { Image(nsImage: artwork).resizable().scaledToFit() }
             else if fallback == "folder.fill" { Image(nsImage: NSWorkspace.shared.icon(for: .folder)).resizable().scaledToFit() }
-            else { Image(systemName: fallback).resizable().scaledToFit().foregroundStyle(.secondary).padding(size * 0.12) }
+            else { Image(systemName: fallback).resizable().scaledToFit().foregroundStyle(.secondary).padding(Space.xs) }
         }.frame(width: size, height: size).accessibilityHidden(true)
             .task(id: url) { if let url { artwork = NSWorkspace.shared.icon(forFile: url.path) } }
     }
@@ -121,7 +121,7 @@ struct FileBrowserView: View {
     @FocusState private var focusedColumn: Int?
     /// Column view widths by folder path; a divider drag sets one, a double-click fits it to the longest name and back.
     @State private var columnWidths: [String: CGFloat] = [:]
-    static let defaultColumnWidth: CGFloat = 230
+    static let defaultColumnWidth: CGFloat = 232
 
     var columnPaths: [String] {
         guard !folder.isEmpty else { return [""] }
@@ -208,16 +208,16 @@ struct FileBrowserView: View {
     func iconView(path: String) -> some View {
         let items = nodes(in: path)
         return ScrollView {
-            LazyVGrid(columns: [GridItem(.adaptive(minimum: Self.iconMinimum, maximum: 128), spacing: Self.iconSpacing)], spacing: 10) {
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: Self.iconMinimum, maximum: 128), spacing: Self.iconSpacing)], spacing: Space.md) {
                 ForEach(items) { node in
-                    VStack(spacing: 6) {
+                    VStack(spacing: Space.sm) {
                         FileArtwork(url: node.artworkURL, size: 52, fallback: node.directory ? "folder.fill" : "doc")
-                        Text(node.name).font(.caption).multilineTextAlignment(.center).lineLimit(3)
+                        Text(node.name).font(TypeStyle.caption).multilineTextAlignment(.center).lineLimit(3)
                             .foregroundStyle(node.badge == .placeholder ? .secondary : .primary)
                         if node.badge != nil { BadgeMark(badge: node.badge!) }
                     }
-                    .padding(8).frame(maxWidth: .infinity)
-                    .background(RoundedRectangle(cornerRadius: 8).fill(selection == node.id ? Color.accentColor.opacity(0.22) : .clear))
+                    .padding(Space.sm).frame(maxWidth: .infinity)
+                    .background(RoundedRectangle(cornerRadius: Radius.md).fill(selection == node.id ? Color.accentColor.opacity(0.22) : .clear))
                     .contentShape(Rectangle())
                     .gesture(TapGesture(count: 2).onEnded { activate(node) })
                     .simultaneousGesture(TapGesture().onEnded { selection = node.id })
@@ -243,7 +243,7 @@ struct FileBrowserView: View {
         .onKeyPress(.upArrow) { step(items, .up) }
         .overlay { if loading.contains(path) { ProgressView() } else if items.isEmpty { emptyLabel } }
     }
-    static let iconMinimum = 96.0, iconSpacing = 6.0, iconPadding = 10.0
+    static let iconMinimum = 96.0, iconSpacing = Space.sm, iconPadding = Space.md
     func step(_ items: [FileBrowserNode], _ direction: BrowserGrid.Direction) -> KeyPress.Result {
         let columns = BrowserGrid.columns(width: iconWidth - 2 * Self.iconPadding, minimum: Self.iconMinimum, spacing: Self.iconSpacing)
         guard let next = BrowserGrid.next(from: items.firstIndex { $0.id == selection }, count: items.count, columns: columns, direction) else { return .ignored }
@@ -280,9 +280,9 @@ struct FileBrowserView: View {
             })
         return List(selection: highlighted) {
             ForEach(items) { node in
-                HStack(spacing: 8) {
+                HStack(spacing: Space.sm) {
                     BrowserRow(node: node, artworkSize: 20, compact: true)
-                    if node.browsable { Image(systemName: "chevron.right").font(.caption2).foregroundStyle(.tertiary) }
+                    if node.browsable { Image(systemName: "chevron.right").font(TypeStyle.caption2).foregroundStyle(.tertiary) }
                 }.tag(node.id)
                     .modifier(BrowserFileDrag(enabled: dragURL != nil && !node.directory, url: { dragURL?(node) }))
                     .modifier(BrowserFolderDrop(fileDrop: fileDrop, target: node.browsable ? node.id : nil))
@@ -319,7 +319,7 @@ struct FileBrowserView: View {
     }
     var emptyLabel: some View {
         Text(!filter.isEmpty ? "No matches" : fileDrop.receive == nil ? "Empty folder" : "Empty folder. Drag files here to add them.")
-            .font(.callout).foregroundStyle(.secondary)
+            .font(TypeStyle.callout).foregroundStyle(.secondary)
     }
 }
 
@@ -409,7 +409,7 @@ struct ColumnDivider: View {
     @State private var isFitted = false
     var body: some View {
         Rectangle().fill(Color(nsColor: .separatorColor)).frame(width: 1)
-            .padding(.horizontal, 3).contentShape(Rectangle())
+            .padding(.horizontal, Space.xs).contentShape(Rectangle())
             .onHover { inside in if inside { NSCursor.resizeLeftRight.push() } else { NSCursor.pop() } }
             // Global coordinates: the divider itself moves as the column grows, so a local translation would feed back into the drag.
             .gesture(DragGesture(minimumDistance: 1, coordinateSpace: .global).onChanged { value in
@@ -431,17 +431,17 @@ struct BrowserRow: View {
     var artworkSize: CGFloat = 26
     var compact = false
     var body: some View {
-        HStack(spacing: 10) {
+        HStack(spacing: Space.md) {
             FileArtwork(url: node.artworkURL, size: artworkSize, fallback: node.directory ? "folder.fill" : "doc")
-            VStack(alignment: .leading, spacing: 2) {
-                HStack(spacing: 6) {
+            VStack(alignment: .leading, spacing: Space.xxs) {
+                HStack(spacing: Space.sm) {
                     Text(node.name).lineLimit(compact ? 1 : 2).foregroundStyle(node.badge == .placeholder ? .secondary : .primary)
                     if let badge = node.badge, !compact { BadgeMark(badge: badge) }
                 }
-                if !compact { Text(node.subtitle).font(.caption).foregroundStyle(.secondary).lineLimit(1) }
+                if !compact { Text(node.subtitle).font(TypeStyle.caption).foregroundStyle(.secondary).lineLimit(1) }
             }
             Spacer(minLength: 0)
-        }.padding(.vertical, compact ? 1 : 3).help(node.subtitle)
+        }.padding(.vertical, compact ? 1 : Space.xs).help(node.subtitle)
     }
 }
 
@@ -449,9 +449,9 @@ struct BadgeMark: View {
     let badge: BrowserBadge
     var body: some View {
         switch badge {
-        case .renamed: Image(systemName: "arrow.turn.down.right").font(.caption2).foregroundStyle(Color.accentColor).accessibilityLabel("Renamed")
-        case .placeholder: Image(systemName: "square.dashed").font(.caption2).foregroundStyle(.secondary).accessibilityLabel("Waits for missing fields")
-        case .issue: Image(systemName: "exclamationmark.triangle.fill").font(.caption2).foregroundStyle(.orange).accessibilityLabel("Problem")
+        case .renamed: Image(systemName: "arrow.turn.down.right").font(TypeStyle.caption2).foregroundStyle(Color.accentColor).accessibilityLabel("Renamed")
+        case .placeholder: Image(systemName: "square.dashed").font(TypeStyle.caption2).foregroundStyle(.secondary).accessibilityLabel("Waits for missing fields")
+        case .issue: Image(systemName: "exclamationmark.triangle.fill").font(TypeStyle.caption2).foregroundStyle(.orange).accessibilityLabel("Problem")
         }
     }
 }

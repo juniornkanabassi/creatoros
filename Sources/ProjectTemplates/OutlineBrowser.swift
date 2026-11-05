@@ -76,9 +76,9 @@ struct OutlineBrowser: NSViewRepresentable {
         let identifier: NSUserInterfaceItemIdentifier, title: String, width: CGFloat, minWidth: CGFloat
         static let all = [
             ColumnSpec(identifier: .init("name"), title: "Name", width: 320, minWidth: 140),
-            ColumnSpec(identifier: .init("modified"), title: "Date Modified", width: 150, minWidth: 90),
+            ColumnSpec(identifier: .init("modified"), title: "Date Modified", width: 152, minWidth: 92),
             ColumnSpec(identifier: .init("size"), title: "Size", width: 80, minWidth: 60),
-            ColumnSpec(identifier: .init("kind"), title: "Kind", width: 150, minWidth: 80),
+            ColumnSpec(identifier: .init("kind"), title: "Kind", width: 152, minWidth: 80),
         ]
         static func spec(for column: NSTableColumn) -> ColumnSpec? { all.first { $0.identifier == column.identifier } }
     }

@@ -28,12 +28,12 @@ struct FolderBrowserHost: View {
     var shownDocuments: [BrowserItem] { projectFiles.filter { query.isEmpty || $0.relativePath.localizedCaseInsensitiveContains(query) } }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: Space.md) {
             if managedTemplate {
                 Label("Reusable template files. Saving an opened document changes future projects.", systemImage: "info.circle")
-                    .font(.caption).foregroundStyle(.secondary)
+                    .font(TypeStyle.caption).foregroundStyle(.secondary)
             }
-            FlowLayout(spacing: 8) {
+            FlowLayout(spacing: Space.sm) {
                 Picker("Show", selection: $projectFilesOnly) { Text("All files").tag(false); Text("Project documents").tag(true) }
                     .pickerStyle(.segmented).labelsHidden().fixedSize().onChange(of: projectFilesOnly) { if projectFilesOnly { loadDocuments() } }
                     .accessibilityLabel("Files to show").help("Browse every file, or show only editing documents such as Premiere and Photoshop projects.")
@@ -41,7 +41,7 @@ struct FolderBrowserHost: View {
                 Button { refreshCount += 1; if projectFilesOnly { loadDocuments() } } label: { Image(systemName: "arrow.clockwise") }
                     .help("Read this folder again, keeping your place in the browser.").accessibilityLabel("Refresh files")
             }
-            HStack(spacing: 8) {
+            HStack(spacing: Space.sm) {
                 Button { goUp() } label: { Image(systemName: "chevron.up") }.disabled(folder.isEmpty || projectFilesOnly).help("Enclosing folder").accessibilityLabel("Enclosing folder")
                 Button("Root") { folder = ""; selection = nil; projectFilesOnly = false }.disabled(folder.isEmpty && !projectFilesOnly)
                     .help("Return to the top of this project's folder.")
@@ -49,14 +49,14 @@ struct FolderBrowserHost: View {
                     .disabled(root == nil).help("Reveal in Finder: the selected item, or this folder when nothing is selected, ready to drag into YouTube or anywhere else")
                     .accessibilityLabel("Reveal in Finder")
                 Text(projectFilesOnly ? "Premiere, After Effects, Photoshop and audio projects" : (folder.isEmpty ? title : folder))
-                    .font(.caption).lineLimit(1).truncationMode(.middle).textSelection(.enabled)
+                    .font(TypeStyle.caption).lineLimit(1).truncationMode(.middle).textSelection(.enabled)
                 Spacer()
                 TextField(projectFilesOnly ? "Search documents" : "Search this folder", text: $query).textFieldStyle(.roundedBorder).frame(maxWidth: 220)
                     .accessibilityLabel(projectFilesOnly ? "Search documents" : "Search this folder").help("Filter the names shown in this browser.")
             }
             if !managedTemplate && !projectFilesOnly, root != nil {
                 Label("Drop files anywhere below into \(folder.isEmpty ? title : folder). Hold Option to copy.", systemImage: "square.and.arrow.down")
-                    .font(.caption).foregroundStyle(.secondary)
+                    .font(TypeStyle.caption).foregroundStyle(.secondary)
                     .help("Moves files on the same volume; copies between volumes. Option always copies. Existing names are never replaced. Up to 100 files or folders. Folders move on the same volume; Option-copy of folders is refused.")
             }
             Group {
@@ -74,11 +74,11 @@ struct FolderBrowserHost: View {
                 } else { ProgressView("Checking folder…").frame(maxWidth: .infinity, maxHeight: .infinity) }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(.background, in: RoundedRectangle(cornerRadius: 8))
+            .background(.background, in: RoundedRectangle(cornerRadius: Radius.md))
             .contentShape(Rectangle())
             .onDrop(of: [UTType.fileURL.identifier], delegate: fileDrop)
             HStack {
-                Text(selection.map { ($0 as NSString).lastPathComponent } ?? "Nothing selected").font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                Text(selection.map { ($0 as NSString).lastPathComponent } ?? "Nothing selected").font(TypeStyle.caption).foregroundStyle(.secondary).lineLimit(1)
                 Spacer()
                 Button("Open in Default App") { if let selection { requestOpen(path: selection) } }.disabled(selection == nil || selection == folder)
                     .buttonStyle(.bordered).help("Open the selected document in its usual app. Template files ask for confirmation.")
@@ -99,15 +99,15 @@ struct FolderBrowserHost: View {
     func documentList(root: URL) -> some View {
         List(selection: $selection) {
             ForEach(shownDocuments) { item in
-                HStack(spacing: 10) {
+                HStack(spacing: Space.md) {
                     FileArtwork(url: root.appendingPathComponent(item.relativePath))
-                    VStack(alignment: .leading, spacing: 2) { Text(item.name).lineLimit(1); Text(item.relativePath).font(.caption).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle) }
+                    VStack(alignment: .leading, spacing: Space.xxs) { Text(item.name).lineLimit(1); Text(item.relativePath).font(TypeStyle.caption).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle) }
                 }.tag(item.relativePath)
                     .modifier(BrowserFileDrag(enabled: !managedTemplate, url: { outgoing(root: root, path: item.relativePath) }))
             }
         }
         .contextMenu(forSelectionType: String.self) { ids in if let id = ids.first { Button("Open") { requestOpen(path: id) } } } primaryAction: { ids in if let id = ids.first { requestOpen(path: id) } }
-        .overlay { if loading { ProgressView() } else if shownDocuments.isEmpty { Text("No project documents found. Browse All files for a different layout.").font(.callout).foregroundStyle(.secondary).padding() } }
+        .overlay { if loading { ProgressView() } else if shownDocuments.isEmpty { Text("No project documents found. Browse All files for a different layout.").font(TypeStyle.callout).foregroundStyle(.secondary).padding(Space.lg) } }
     }
 
     func outgoing(root: URL, path: String) -> URL? {
