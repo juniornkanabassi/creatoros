@@ -16,6 +16,11 @@ import TemplateCore
         try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
         let fixture = try await seed(model)
         var captures = 0
+        let probeOwner = UUID()
+        GridProbes.shared.update(.init(kind: .probe, name: "previous-capture", area: "previous", edge: nil,
+                                      inset: 0, x: 0, y: 0, width: 4, height: 4), owner: probeOwner)
+        GridProbes.shared.reset()
+        precondition(GridProbes.shared.probes.isEmpty, "Grid probes must reset between captures")
 
         func checkNoWindows() {
             precondition(!app.windows.contains(where: \.isVisible), "A snapshot window became visible")
@@ -25,6 +30,7 @@ import TemplateCore
 
         func capture<V: View>(_ name: String, _ view: V, size: CGSize, scheme: ColorScheme, fitHeight: Bool = false) async throws {
             checkNoWindows()
+            GridProbes.shared.reset()
             let content = view.environmentObject(model).environment(\.colorScheme, scheme)
                 .frame(width: size.width, height: fitHeight ? nil : size.height)
                 .background(Surface.window)

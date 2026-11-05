@@ -68,6 +68,7 @@ struct SettingsView: View {
             pipelineTab.tag("Pipeline").tabItem { Label("Pipeline", systemImage: "rectangle.3.group") }
             locationsTab.tag("Locations").tabItem { Label("Locations", systemImage: "externaldrive") }
         }.frame(width: 520)
+            .overlay { if GridOverlay.enabled { GridOverlay() } }
             .background(SettingsInitialFocus())
             .onAppear {
                 showNamingAdvanced = m.defaults.bool(forKey: "disclosure.settingsNaming")
@@ -149,7 +150,6 @@ struct SettingsView: View {
                          footer: "Live streams. A new stream starts in the first stage.")
             Section {
                 Toggle("Show stages as Finder tags", isOn: Binding(get: { m.library.finderTagsEnabled }, set: { m.setFinderTags($0) }))
-                    .controlSize(.mini)
                     .help("When a project changes stage, tag its folder with the stage's name and colour")
             } header: { Text("Finder") } footer: {
                 Text("The folder gets a tag in the stage's colour. Folders are never moved, renamed or deleted.")
@@ -159,9 +159,13 @@ struct SettingsView: View {
                     Text("Renaming a stage moves its cards, its colour and the Finder tags on their folders with it. Abandoned is for projects that never saw the light of day. Resetting puts back the original stages.")
                         .font(TypeStyle.callout).foregroundStyle(.secondary)
                     Button("Reset Recording Stages") { m.setStages(Library.defaultStages, for: .recordings) }
-                        .help("Replace the recording stages with the original list")
+                        .help("Replace the recording stages with: " + Library.defaultStages.joined(separator: ", "))
+                    Text(Library.defaultStages.joined(separator: " → "))
+                        .font(TypeStyle.caption).foregroundStyle(.secondary)
                     Button("Reset Live Stages") { m.setStages(Library.defaultLiveStages, for: .live) }
-                        .help("Replace the live stream stages with the original list")
+                        .help("Replace the live stream stages with: " + Library.defaultLiveStages.joined(separator: ", "))
+                    Text(Library.defaultLiveStages.joined(separator: " → "))
+                        .font(TypeStyle.caption).foregroundStyle(.secondary)
                     Text("A stage tag replaces the folder's previous stage tag and keeps any other tags. Tags are only written while the drive is connected; Tag All Folders Now catches up the rest.")
                         .font(TypeStyle.callout).foregroundStyle(.secondary)
                     HStack {
@@ -228,6 +232,7 @@ struct SettingsView: View {
 
 struct AboutSettingsView: View {
     @EnvironmentObject var m: AppModel
+    @Environment(\.dismissWindow) private var dismissWindow
     @State private var showAboutAdvanced = false
     var body: some View {
         Form {
@@ -237,7 +242,7 @@ struct AboutSettingsView: View {
                         .frame(width: 64, height: 64).accessibilityHidden(true)
                     Text(AppInfo.name).font(TypeStyle.title2)
                     Spacer()
-                    Button("Done") { m.aboutPresented = false }.keyboardShortcut(.cancelAction)
+                    Button("Done") { dismissWindow(id: "about") }.keyboardShortcut(.cancelAction)
                         .help("Close About CreatorOS")
                 }
             }
@@ -269,6 +274,7 @@ struct AboutSettingsView: View {
             }
         }.formStyle(.grouped).modifier(SettingsFormSize())
             .frame(width: 520)
+            .overlay { if GridOverlay.enabled { GridOverlay() } }
             .background(SettingsInitialFocus())
             .onAppear { showAboutAdvanced = m.defaults.bool(forKey: "disclosure.settingsAbout") }
             .onChange(of: showAboutAdvanced) { m.defaults.set(showAboutAdvanced, forKey: "disclosure.settingsAbout") }

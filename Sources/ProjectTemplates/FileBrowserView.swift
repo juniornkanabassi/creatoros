@@ -76,7 +76,7 @@ struct FileArtwork: View {
         Group {
             if let artwork { Image(nsImage: artwork).resizable().scaledToFit() }
             else if fallback == "folder.fill" { Image(nsImage: NSWorkspace.shared.icon(for: .folder)).resizable().scaledToFit() }
-            else { Image(systemName: fallback).resizable().scaledToFit().foregroundStyle(.secondary).padding(Space.xs) }
+            else { Image(systemName: fallback).resizable().scaledToFit().foregroundStyle(.secondary).padding(size * 0.12) }
         }.frame(width: size, height: size).accessibilityHidden(true)
             .task(id: url) { if let url { artwork = NSWorkspace.shared.icon(forFile: url.path) } }
     }

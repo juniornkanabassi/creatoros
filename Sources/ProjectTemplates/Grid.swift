@@ -1,7 +1,7 @@
 import SwiftUI
 
 /// The spacing scale. Every padding, spacing, and size sits on a 4 pt grid.
-///   APP_GRID=1 __APP_NAME__     draw the grid, margins, and probes over the window
+///   APP_GRID=1 CreatorOS       draw the grid, margins, and probes over the window
 /// Snapshot mode also writes <page>-<mode>-layout.json, which tools/check-layout.swift checks.
 enum Space {
     static let xxs: CGFloat = 2
@@ -12,15 +12,12 @@ enum Space {
     static let xl: CGFloat = 20
     static let xxl: CGFloat = 24
     static let section: CGFloat = 32
-    static let xxxl: CGFloat = section
-    /// Window and page margins.
-    static let margin: CGFloat = 20
 }
 
 extension View {
     /// Marks an area (a page, a card, a sheet). Probes inside it must sit on
     /// the 4 pt grid and at least `inset` from its edges.
-    func gridArea(_ name: String, inset: CGFloat = Space.margin) -> some View {
+    func gridArea(_ name: String, inset: CGFloat = Space.xl) -> some View {
         modifier(GridProbeModifier(kind: .area, name: name, area: name, edge: nil, inset: inset))
     }
 
@@ -56,6 +53,11 @@ final class GridProbes {
     /// Which view instance owns each key, so a view that leaves after its
     /// replacement arrived does not remove the replacement's frame.
     private var owners: [String: UUID] = [:]
+
+    func reset() {
+        probes.removeAll()
+        owners.removeAll()
+    }
 
     func update(_ probe: Probe, owner: UUID) {
         let key = "\(probe.kind.rawValue):\(probe.name)"
