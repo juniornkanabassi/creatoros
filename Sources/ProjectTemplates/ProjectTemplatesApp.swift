@@ -113,12 +113,15 @@ extension NSSplitView { @objc func refuseAutosaveName(_ name: String?) {} }
         }
         .defaultSize(width: 1280, height: 820)
         .commands {
+            CommandGroup(replacing: .appInfo) {
+                Button("About \(AppInfo.name)") { model.aboutPresented = true }
+            }
             CommandGroup(replacing: .newItem) {
                 Button("New Project…") { model.newProjectPresented = true }.keyboardShortcut("n")
                 Divider()
                 Button("Refresh Project") { model.refreshProject() }.keyboardShortcut("r")
                 Button("Find Missing Projects") { model.relinkAll() }.keyboardShortcut("r", modifiers: [.command, .shift]).disabled(model.relinkBatchRunning)
-                Button("Duplicates…") { model.duplicatesPresented = true }.disabled(model.duplicateGroups.isEmpty)
+                Button("Show Duplicates…") { model.duplicatesPresented = true }.disabled(model.duplicateGroups.isEmpty)
                 Button("Check LucidLink Compatibility…") { model.checkCompatibility() }.disabled(model.busy)
             }
             CommandGroup(after: .textEditing) {
@@ -134,7 +137,6 @@ extension NSSplitView { @objc func refuseAutosaveName(_ name: String?) {} }
                 Button("Bigger Text") { model.zoom(1) }.keyboardShortcut("=", modifiers: .command)
                 Button("Smaller Text") { model.zoom(-1) }.keyboardShortcut("-", modifiers: .command)
                 Button("Actual Size") { model.zoomLevel = 0 }.keyboardShortcut("0", modifiers: .command)
-                Button("Toggle Full Screen") { NSApp.keyWindow?.toggleFullScreen(nil) }.keyboardShortcut("f", modifiers: [.control, .command])
                 Divider()
             }
             // The same actions as a project's right-click menu, for the selected project, so their shortcuts work anywhere.
@@ -153,8 +155,9 @@ extension NSSplitView { @objc func refuseAutosaveName(_ name: String?) {} }
         // Settings is a standard window at standard size. It is not zoomed: the AppKit tab view inside a scaled
         // subtree drew in one place and took clicks in another, which is why nothing in Settings responded when zoomed.
         Settings {
-            SettingsView().environmentObject(model).frame(width: 640, height: 560)
+            SettingsView().errorNotice().environmentObject(model)
         }
+        .windowResizability(.contentSize)
     }
 }
 
@@ -269,29 +272,14 @@ struct MainView: View {
     @EnvironmentObject var m: AppModel
     var body: some View {
         NavigationSplitView {
-            // Icon, gap and row height scale together with the text, so a zoomed sidebar keeps Finder's proportions.
             List(selection: $m.page) {
                 ForEach(Page.allCases) { page in
-                    HStack(spacing: 10 * m.uiScale) {
-                        Image(systemName: page.systemImage).font(.system(size: 17 * m.uiScale)).frame(width: 26 * m.uiScale, alignment: .center)
-                            .foregroundStyle(Color.accentColor)
-                        Text(page.rawValue).font(.system(size: 15 * m.uiScale, weight: .medium))
-                    }
-                    .padding(.vertical, 6 * m.uiScale).tag(page).help(page.hint)
+                    Label(page.rawValue, systemImage: page.systemImage)
+                        .tag(page).help(page.hint)
                 }
             }
             .listStyle(.sidebar)
-            // Keep the window minimum stable; enlarged pane content scrolls in ZoomedInterface.
-            .navigationSplitViewColumnWidth(min: 190, ideal: max(190, 215 * m.uiScale), max: 280 * m.uiScale)
-            .safeAreaInset(edge: .bottom) {
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(AppInfo.name).font(.caption.weight(.medium))
-                    HStack(spacing: 3) {
-                        ReleaseVersionLabel(size: 11)
-                        Text("· local and offline")
-                    }.font(.caption2).foregroundStyle(.secondary)
-                }.frame(maxWidth: .infinity, alignment: .leading).padding(14)
-            }
+            .navigationSplitViewColumnWidth(min: 192, ideal: max(192, 216 * m.uiScale), max: 280 * m.uiScale)
         } content: {
             ZoomedInterface(scale: m.uiScale, minimumWidth: 300) {
             Group {
@@ -306,6 +294,14 @@ struct MainView: View {
         } detail: {
             ZoomedInterface(scale: m.uiScale, minimumWidth: 360) {
             VStack(spacing: 0) {
+                if m.busy || (!m.status.isEmpty && m.status.hasPrefix("Looking")) {
+                    HStack(spacing: Space.md) {
+                        if m.busy { ProgressView(value: m.fraction).frame(width: 160) }
+                        Text(m.status.isEmpty ? "Working…" : m.status).lineLimit(2).font(.caption).foregroundStyle(.secondary)
+                        Spacer()
+                        if m.busy { Button("Cancel") { m.cancellation.cancel() }.keyboardShortcut(.cancelAction).help("Stop the current operation") }
+                    }.padding(.horizontal, Space.xl).padding(.vertical, Space.md).background(.bar)
+                }
                 Group {
                     switch m.page {
                     case .pipeline: PipelineBoard()
@@ -313,42 +309,36 @@ struct MainView: View {
                     case .templates: TemplateSetDetail()
                     }
                 }.frame(maxWidth: .infinity, maxHeight: .infinity)
-                if m.busy || (!m.status.isEmpty && m.status.hasPrefix("Looking")) {
-                    Divider()
-                    HStack(spacing: 12) {
-                        if m.busy { ProgressView(value: m.fraction).frame(width: 160) }
-                        Text(m.status).lineLimit(1).font(.caption).foregroundStyle(.secondary)
-                        Spacer()
-                        if m.busy { Button("Cancel") { m.cancellation.cancel() }.keyboardShortcut(.cancelAction).help("Stop the current operation") }
-                    }.padding(.horizontal, 20).padding(.vertical, 10).background(.bar)
-                }
+
             }
             }
             .navigationSplitViewColumnWidth(min: 420, ideal: 640 * m.uiScale)
         }
         .navigationTitle(m.page.rawValue)
         .disabled(!m.storeUsable)
-        // A headless copy keeps the error (commands report it) and shows it once its window comes up.
-        .alert(AppInfo.name, isPresented: Binding(get: { m.error != nil && !Headless.shared.active }, set: { if !$0 { m.error = nil } })) {
-            Button("OK") { m.error = nil }
-        } message: { Text(m.error ?? "") }
-        .sheet(isPresented: $m.newProjectPresented) { NewProjectSheet() }
-        .sheet(isPresented: $m.importPresented) { ImportSheet() }
-        .sheet(isPresented: Binding(get: { m.compatibilityPresented && !m.newProjectPresented }, set: { m.compatibilityPresented = $0 })) { CompatibilitySheet() }
-        .sheet(item: $m.workspacePrompt) { WorkspaceSheet(record: $0) }
-        .sheet(item: $m.renamePrompt) { record in RenameProjectSheet(record: record) }
-        .sheet(item: $m.restoreIconsPrompt) { record in RestoreIconsSheet(record: record) }
+        .errorNotice()
+        // Only a failed library load/save blocks the whole app. Recoverable errors stay by the active work.
+        .alert("Library changes are paused", isPresented: Binding(get: { !m.storeUsable && m.error != nil && !Headless.shared.active }, set: { if !$0 { m.error = nil } })) {
+            Button("Keep Open", role: .cancel) { m.error = nil }
+        } message: { Text((m.error ?? "") + "\nCheck that the library folder is available and writable, then reopen CreatorOS. Existing files have been retained.") }
+        .sheet(isPresented: $m.aboutPresented) { AboutSettingsView().environmentObject(m) }
+        .sheet(isPresented: $m.newProjectPresented) { NewProjectSheet().errorNotice() }
+        .sheet(isPresented: $m.importPresented) { ImportSheet().errorNotice() }
+        .sheet(isPresented: Binding(get: { m.compatibilityPresented && !m.newProjectPresented }, set: { m.compatibilityPresented = $0 })) { CompatibilitySheet().errorNotice() }
+        .sheet(item: $m.workspacePrompt) { WorkspaceSheet(record: $0).errorNotice() }
+        .sheet(item: $m.renamePrompt) { record in RenameProjectSheet(record: record).errorNotice() }
+        .sheet(item: $m.restoreIconsPrompt) { record in RestoreIconsSheet(record: record).errorNotice() }
         .sheet(item: $m.workspaceToBrowse) { record in
-            VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: Space.md) {
                 HStack { Text(record.name).font(.title2); Spacer(); Button("Done") { m.workspaceToBrowse = nil }.help("Close this window") }
                 Text("This is the idea's draft folder. Add notes and attachments by opening it in Finder. Start Project will copy this folder without merging another template.").font(.caption)
                 Button("Open Workspace in Finder") { m.attempt { let root = try IdeaWorkspaceEngine.resolve(for: record); try m.runtime.requireWritable(root); NSWorkspace.shared.open(root) } }
                     .help("Open the idea's draft folder in Finder")
                 FolderBrowserHost(title: record.name, resolveRoot: { [runtime = m.runtime] in let url = try IdeaWorkspaceEngine.resolve(for: record); try runtime.requireWritable(url); return url })
-            }.padding(20).frame(width: 820, height: 640)
+            }.padding(Space.xl).frame(width: 820, height: 640).errorNotice()
         }
         .sheet(item: $m.workspaceCleanup) { record in
-            VStack(alignment: .leading, spacing: 16) {
+            VStack(alignment: .leading, spacing: Space.lg) {
                 Text("Keep the old idea workspace?").font(.title2)
                 Text("The project has been saved. Its original workspace remains at \(record.ideaWorkspace?.path ?? "").").textSelection(.enabled)
                 Text("Keep Folder and Detach leaves both folders intact and removes the old workspace link from this project. You can then remove the project from the list independently.").font(.caption)
@@ -358,7 +348,7 @@ struct MainView: View {
                     Spacer()
                     Button("Review Bin Action…") { m.requestWorkspaceCleanup(record) }.help("Review moving only the old workspace to the recoverable Bin")
                 }.disabled(m.busy)
-            }.padding(24).frame(width: 620)
+            }.padding(Space.xxl).frame(width: 620).errorNotice()
         }
         .confirmationDialog(m.binIdea?.isPlanned == false ? "Put the old workspace in the Bin?" : "Bin this idea?", isPresented: Binding(get: { m.binIdea != nil }, set: { if !$0 { m.binIdea = nil } }), titleVisibility: .visible) {
             Button(m.confirmedWorkspaceURL == nil ? "Remove Idea" : "Move Owned Workspace to Bin", role: .destructive) { m.confirmBinIdea() }
@@ -366,11 +356,11 @@ struct MainView: View {
         } message: {
             Text(m.confirmedWorkspaceURL.map { "Only this owned workspace will be moved to Finder's recoverable Bin: \($0.path)" } ?? "This idea has no workspace. Only its library record will be removed.")
         }
-        .sheet(item: $m.newSetPrompt) { _ in NewSetSheet() }
+        .sheet(item: $m.newSetPrompt) { _ in NewSetSheet().errorNotice() }
         .sheet(item: $m.templateToBrowse) { record in
-            VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: Space.md) {
                 HStack {
-                    VStack(alignment: .leading, spacing: 2) {
+                    VStack(alignment: .leading, spacing: Space.xxs) {
                         Text(record.name).font(.title2.weight(.semibold))
                         Text("Template files · \(record.mode.title)").font(.caption).foregroundStyle(.secondary)
                     }
@@ -382,7 +372,7 @@ struct MainView: View {
                     guard (try? url.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true else { throw AppFailure("The managed copy is missing from the template library.") }
                     return url
                 }, managedTemplate: true, surface: .managedTemplate)
-            }.padding(20).frame(width: 820, height: 640)
+            }.padding(Space.xl).frame(width: 820, height: 640).errorNotice()
         }
     }
 }
@@ -400,7 +390,7 @@ struct RestoreIconsSheet: View {
     }
     var selectedCandidate: IconRestoreCandidate? { candidates.first { $0.id == selectedSet } }
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
+        VStack(alignment: .leading, spacing: Space.lg) {
             Text("Restore Folder Icons").font(.title2.weight(.semibold))
             Text("Choose a set for this operation. New Project's saved set stays unchanged.").font(.callout)
             Text(record.name).font(.caption).foregroundStyle(.secondary)
@@ -440,7 +430,7 @@ struct RestoreIconsSheet: View {
                     .help("Put the chosen set's folder icons back on this project")
             }
         }
-        .padding(22).frame(width: 520, height: 300)
+        .padding(Space.xxl).frame(width: 520, height: 300)
         .onAppear { refreshCandidates() }
     }
     private func refreshCandidates() {
@@ -455,7 +445,7 @@ struct ImportSheet: View {
     @State private var folder = ""
     @State private var selection: String?
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
+        VStack(alignment: .leading, spacing: Space.lg) {
             Text(m.pendingAssignment == nil ? "Import a template" : "Import template files for \(m.label(for: m.pendingAssignment!.format)) in \(m.library.set(m.pendingAssignment!.setID)?.name ?? "")")
                 .font(.title2.weight(.semibold))
             Text(m.importSource?.path ?? "").font(.caption).foregroundStyle(.secondary).lineLimit(2).truncationMode(.middle).textSelection(.enabled)
@@ -468,10 +458,10 @@ struct ImportSheet: View {
                 Text("\(plan.visible.count) items · \(ByteCountFormatter.string(fromByteCount: plan.bytes, countStyle: .file)) of file data, plus Finder metadata").font(.caption).foregroundStyle(.secondary)
                 FileBrowserView(dataSource: PreviewDataSource(rendering: PreviewRenderer.render(structure: plan, fields: ProjectFields(number: "", format: "", title: ""))),
                                 mode: .column, folder: $folder, selection: $selection, reloadKey: plan.entries.count)
-                    .background(.background, in: RoundedRectangle(cornerRadius: 8)).overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(.quaternary))
+                    .background(.background, in: RoundedRectangle(cornerRadius: Radius.md)).overlay(RoundedRectangle(cornerRadius: Radius.md).strokeBorder(.quaternary))
                 if !plan.excluded.isEmpty {
                     DisclosureGroup("\(plan.excluded.count) excluded items") {
-                        ScrollView { Text(plan.excluded.joined(separator: "\n")).font(.caption).frame(maxWidth: .infinity, alignment: .leading) }.frame(maxHeight: 90)
+                        ScrollView { Text(plan.excluded.joined(separator: "\n")).font(.caption).frame(maxWidth: .infinity, alignment: .leading) }.frame(maxHeight: 92)
                     }.font(.callout)
                 }
             } else { Spacer(); ProgressView("Inspecting…").frame(maxWidth: .infinity); Spacer() }
@@ -484,7 +474,7 @@ struct ImportSheet: View {
                 Button("Import Copy") { m.commitImport() }.buttonStyle(.borderedProminent).keyboardShortcut(.defaultAction).disabled(m.busy || m.importPlan == nil || m.importName.isEmpty)
                     .help("Copy this template into CreatorOS. The original stays untouched.")
             }
-        }.padding(24).frame(width: 720, height: 620).interactiveDismissDisabled(m.busy)
+        }.padding(Space.xxl).frame(width: 720, height: 620).interactiveDismissDisabled(m.busy)
     }
 }
 
