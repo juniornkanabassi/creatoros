@@ -10,14 +10,14 @@ struct LocationBadge: View {
     var body: some View {
         let colour = m.badgeColour(location).colour
         let mounted = m.mountedLocations.contains(location.key)
-        HStack(spacing: 5) {
+        HStack(spacing: Space.xs) {
             Circle().fill(mounted ? colour : Color.clear)
-                .overlay(Circle().strokeBorder(colour, lineWidth: 1.5))
-                .frame(width: 7, height: 7)
+                .overlay(Circle().strokeBorder(colour, lineWidth: 2))
+                .frame(width: 8, height: 8)
             if !compact { Text(location.label).lineLimit(1) }
         }
-        .font(.caption.weight(.semibold))
-        .padding(.horizontal, compact ? 5 : 8).padding(.vertical, 3)
+        .font(TypeStyle.caption.weight(.semibold))
+        .padding(.horizontal, compact ? Space.xs : Space.sm).padding(.vertical, Space.xs)
         .background(colour.opacity(0.16), in: Capsule())
         .foregroundStyle(colour)
         .help(location.label + (location.account.map { " · " + $0 } ?? "") + (mounted ? " · connected" : " · not connected"))
@@ -28,7 +28,7 @@ struct LocationBadge: View {
 struct StageChip: View {
     let stage: String
     var body: some View {
-        Text(stage).font(.caption.weight(.medium)).padding(.horizontal, 7).padding(.vertical, 2)
+        Text(stage).font(TypeStyle.caption.weight(.medium)).padding(.horizontal, Space.sm).padding(.vertical, Space.xxs)
             .background(.quaternary, in: Capsule()).foregroundStyle(.secondary)
     }
 }
@@ -39,11 +39,11 @@ struct StageBadge: View {
     let stage: String
     var body: some View {
         let colour = m.stageColour(stage)
-        HStack(spacing: 5) {
-            Circle().fill(colour).frame(width: 7, height: 7)
+        HStack(spacing: Space.xs) {
+            Circle().fill(colour).frame(width: 8, height: 8)
             Text(stage).lineLimit(1)
         }
-        .font(.caption.weight(.medium)).padding(.horizontal, 7).padding(.vertical, 2)
+        .font(TypeStyle.caption.weight(.medium)).padding(.horizontal, Space.sm).padding(.vertical, Space.xxs)
         .background(colour.opacity(0.14), in: Capsule()).foregroundStyle(.primary)
         .accessibilityLabel("Stage \(stage)")
     }
@@ -58,17 +58,17 @@ struct StageMenu: View {
         // A Menu label on macOS keeps only its text and the button style ignores tint, so the pill is drawn around the
         // menu: the stage colour as the capsule and the dot, the menu itself borderless inside it.
         let colour = m.stageColour(current) == .secondary ? Color.gray : m.stageColour(current)
-        HStack(spacing: 6) {
+        HStack(spacing: Space.sm) {
             Circle().fill(colour).frame(width: 8, height: 8)
             Menu {
                 ForEach(m.moveTargets(for: record), id: \.self) { stage in
                     Button { m.setStage(stage, for: record.id) } label: { Label { Text(stage) } icon: { Image(nsImage: ColourDot.image(m.stageColour(stage))) } }
                         .disabled(stage == current)
                 }
-            } label: { Text(current).font(.caption.weight(.semibold)) }
+            } label: { Text(current).font(TypeStyle.caption.weight(.semibold)) }
             .menuStyle(.borderlessButton).fixedSize()
         }
-        .padding(.leading, 9).padding(.trailing, 4).padding(.vertical, 3)
+        .padding(.leading, Space.sm).padding(.trailing, Space.xs).padding(.vertical, Space.xs)
         .background(colour.opacity(0.2), in: Capsule())
         .overlay(Capsule().strokeBorder(colour.opacity(0.55), lineWidth: 1))
         .foregroundStyle(.primary)
@@ -120,9 +120,9 @@ struct ProjectFilters: View {
     /// On Pipeline the buttons follow the board; Projects shows every format.
     var kind: PipelineKind? = nil
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: Space.sm) {
         if kind != .live { FormatButtons(selection: $m.formatFilter, includeAll: true, kind: kind).help("Filter by the format the project was created as.") }
-        FlowLayout(spacing: 10) {
+        FlowLayout(spacing: Space.md) {
             let locations = m.distinctLocations
             let shownLocations = locations.filter { !m.hiddenLocations.contains($0.key) }.count
             Menu {
@@ -176,7 +176,7 @@ struct ProjectStatusEditor: View {
     struct Details: Equatable { var campaign = "", editor = "", notes = "", series = "" }
     var stored: Details { Details(campaign: record.campaign ?? "", editor: record.editor ?? "", notes: record.notes ?? "", series: (record.series ?? []).joined(separator: ", ")) }
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: Space.md) {
             TextField("Campaign", text: $campaign, prompt: Text("Campaign, if any")).onSubmit(save)
                 .accessibilityLabel("Campaign").help("The campaign this project belongs to. Saved as you type; the folder name is not changed.")
             TextField("With", text: $editor, prompt: Text("Editor or collaborator")).onSubmit(save)
@@ -186,12 +186,12 @@ struct ProjectStatusEditor: View {
             TextField("Notes", text: $notes, prompt: Text("Notes"), axis: .vertical).lineLimit(2...5).onSubmit(save)
                 .accessibilityLabel("Notes").help("Anything to remember about this project. Searchable from the toolbar.")
             if let link = record.notionURL, let url = URL(string: link) {
-                Link(destination: url) { Label("Open in Notion", systemImage: "arrow.up.right.square") }.font(.callout)
+                Link(destination: url) { Label("Open in Notion", systemImage: "arrow.up.right.square") }.font(TypeStyle.callout)
             }
             let siblings = Numbering.siblings(of: record, in: m.library.projects)
             if !siblings.isEmpty {
-                HStack(spacing: 6) {
-                    Text("Also on").font(.caption).foregroundStyle(.secondary)
+                HStack(spacing: Space.sm) {
+                    Text("Also on").font(TypeStyle.caption).foregroundStyle(.secondary)
                     ForEach(siblings) { twin in LocationBadge(location: twin.location) }
                 }
             }
@@ -240,20 +240,20 @@ struct PipelineSidebar: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             Picker("Board", selection: $m.pipelineKind) { ForEach(PipelineKind.allCases) { Text($0.title).tag($0) } }
-                .pickerStyle(.segmented).labelsHidden().padding(.horizontal, 16).padding(.top, 12)
+                .pickerStyle(.segmented).labelsHidden().padding(.horizontal, Space.lg).padding(.top, Space.md)
                 .help("Recordings move from idea to published. Live streams are scheduled, then streamed.").accessibilityLabel("Board")
-            ProjectFilters(includeStage: false, kind: m.pipelineKind).padding(.horizontal, 16).padding(.vertical, 10)
+            ProjectFilters(includeStage: false, kind: m.pipelineKind).padding(.horizontal, Space.lg).padding(.vertical, Space.md)
             Divider()
             if let record = selected {
                 Form {
                     Section {
-                        HStack(spacing: 10) {
+                        HStack(spacing: Space.md) {
                             FormatIcon(data: m.library.presets.first { $0.format == record.format }?.icon, size: 30)
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text(record.isPlanned ? record.name : record.title).font(.headline).fixedSize(horizontal: false, vertical: true)
-                                FlowLayout(spacing: 6) {
-                                    if let number = record.number { Text(number).font(.caption.monospacedDigit()).foregroundStyle(.secondary) }
-                                    Text(m.label(for: record.format)).font(.caption).foregroundStyle(.secondary)
+                            VStack(alignment: .leading, spacing: Space.xs) {
+                                Text(record.isPlanned ? record.name : record.title).font(TypeStyle.headline).fixedSize(horizontal: false, vertical: true)
+                                FlowLayout(spacing: Space.sm) {
+                                    if let number = record.number { Text(number).font(TypeStyle.caption.monospacedDigit()).foregroundStyle(.secondary) }
+                                    Text(m.label(for: record.format)).font(TypeStyle.caption).foregroundStyle(.secondary)
                                     if record.isPlanned { StageChip(stage: record.ideaWorkspace == nil ? "Idea only, no folder yet" : "Idea workspace") } else { LocationBadge(location: record.location) }
                                     StageMenu(record: record)
                                 }
@@ -262,7 +262,7 @@ struct PipelineSidebar: View {
                     }
                     Section("Details") { ProjectStatusEditor(record: record).id(record.id) }
                     Section {
-                        FlowLayout(spacing: 8) {
+                        FlowLayout(spacing: Space.sm) {
                             if record.isPlanned {
                                 Button("Start Project…") { m.startPlanned(record) }.help("Fill in New Project with this idea")
                                 if record.ideaWorkspace == nil {
@@ -280,7 +280,7 @@ struct PipelineSidebar: View {
                         DisclosureGroup("Advanced", isExpanded: $showAdvanced) {
                             Text(record.isPlanned ? "Remove this idea from the board. Its draft folder, if any, goes to the recoverable Bin after you confirm."
                                                   : "Forget this project. Only the record is removed; the folder is not touched.")
-                                .font(.caption).foregroundStyle(.secondary)
+                                .font(TypeStyle.caption).foregroundStyle(.secondary)
                             Button(record.isPlanned ? "Bin Idea…" : "Remove from List", role: .destructive) { if record.isPlanned { m.requestBinIdea(record) } else { m.removeProject(record.id) } }
                                 .help(record.isPlanned ? "Review this idea and its owned workspace before putting it in the Bin." : "Forget this project. Its folder is not touched.")
                         }.accessibilityAction { showAdvanced.toggle() }
@@ -323,15 +323,15 @@ struct PipelineBoard: View {
                       ? "No streams here yet. Press Create Project and choose Live; the stream appears in the first column. If you expected some, check the filters."
                       : "No projects here yet. Add an idea or press Create Project; drag cards between columns as the work moves on. If you expected some, check the filters.",
                       systemImage: "info.circle")
-                    .font(.callout).foregroundStyle(.secondary).padding(.horizontal, 16).padding(.top, 14)
+                    .font(TypeStyle.callout).foregroundStyle(.secondary).padding(.horizontal, Space.lg).padding(.top, Space.lg)
             }
             ScrollView(.horizontal) {
-                HStack(alignment: .top, spacing: 12) {
+                HStack(alignment: .top, spacing: Space.md) {
                     ForEach(m.boardStages, id: \.self) { stage in StageColumn(stage: stage) }
-                }.padding(16)
+                }.padding(Space.lg)
             }
         }
-        .background(Color(nsColor: .underPageBackgroundColor))
+        .background(Surface.secondary)
     }
 }
 
@@ -342,12 +342,12 @@ struct StageColumn: View {
     var body: some View {
         let items = m.projects(in: stage)
         let colour = m.stageColour(stage)
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 7) {
-                Circle().fill(colour).frame(width: 10, height: 10)
-                Text(stage).font(.headline)
-                Text("\(items.count)").font(.caption.monospacedDigit()).foregroundStyle(.secondary)
-                    .padding(.horizontal, 6).padding(.vertical, 1).background(.quaternary, in: Capsule())
+        VStack(alignment: .leading, spacing: Space.sm) {
+            HStack(spacing: Space.sm) {
+                Circle().fill(colour).frame(width: 12, height: 12)
+                Text(stage).font(TypeStyle.headline)
+                Text("\(items.count)").font(TypeStyle.caption.monospacedDigit()).foregroundStyle(.secondary)
+                    .padding(.horizontal, Space.sm).padding(.vertical, 1).background(.quaternary, in: Capsule())
                 Spacer()
                 Menu {
                     Menu("Move All \(items.count) to") {
@@ -357,21 +357,21 @@ struct StageColumn: View {
                     }.disabled(items.isEmpty)
                 } label: { Image(systemName: "ellipsis.circle") }.menuStyle(.borderlessButton).fixedSize().help("Move every card in this column")
                     .accessibilityLabel("\(stage) column actions")
-            }.padding(.horizontal, 4)
+            }.padding(.horizontal, Space.xs)
             ScrollView {
-                LazyVStack(spacing: 8) {
+                LazyVStack(spacing: Space.sm) {
                     ForEach(items) { record in ProjectCard(record: record) }
                     if items.isEmpty && m.boardStages.contains(where: { !m.projects(in: $0).isEmpty }) {
-                        Text("Drag cards here").font(.caption).foregroundStyle(.tertiary).padding(.top, 12)
+                        Text("Drag cards here").font(TypeStyle.caption).foregroundStyle(.tertiary).padding(.top, Space.md)
                     }
-                }.padding(2)
+                }.padding(Space.xxs)
             }
         }
-        .frame(width: 250)
-        .padding(10)
-        .background(RoundedRectangle(cornerRadius: 12).fill(targeted ? colour.opacity(0.18) : colour.opacity(0.06)))
-        .background(RoundedRectangle(cornerRadius: 12).fill(Color(nsColor: .controlBackgroundColor).opacity(0.6)))
-        .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(targeted ? colour : .clear, lineWidth: 2))
+        .frame(width: 252)
+        .padding(Space.md)
+        .background(RoundedRectangle(cornerRadius: Radius.lg).fill(targeted ? colour.opacity(0.18) : colour.opacity(0.06)))
+        .background(RoundedRectangle(cornerRadius: Radius.lg).fill(Surface.control.opacity(0.6)))
+        .overlay(RoundedRectangle(cornerRadius: Radius.lg).strokeBorder(targeted ? colour : .clear, lineWidth: 2))
         .dropDestination(for: String.self) { ids, _ in
             for id in ids.compactMap(UUID.init) { m.setStage(stage, for: id) }
             return true
@@ -384,29 +384,29 @@ struct ProjectCard: View {
     let record: ProjectRecord
     var selected: Bool { m.pipelineSelection == record.id }
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 6) {
+        VStack(alignment: .leading, spacing: Space.sm) {
+            HStack(spacing: Space.sm) {
                 FormatIcon(data: m.library.presets.first { $0.format == record.format }?.icon, size: 16)
-                Text(record.number ?? m.label(for: record.format)).font(.caption.weight(.semibold).monospacedDigit()).foregroundStyle(.secondary)
+                Text(record.number ?? m.label(for: record.format)).font(TypeStyle.caption.weight(.semibold).monospacedDigit()).foregroundStyle(.secondary)
                 Spacer()
-                if record.isPlanned { Image(systemName: "lightbulb").font(.caption).foregroundStyle(.secondary).help("Idea without a folder yet") }
+                if record.isPlanned { Image(systemName: "lightbulb").font(TypeStyle.caption).foregroundStyle(.secondary).help("Idea without a folder yet") }
                 else { LocationBadge(location: record.location, compact: true) }
             }
-            Text(record.isPlanned ? record.name : record.title).font(.callout.weight(.medium)).lineLimit(3).multilineTextAlignment(.leading)
+            Text(record.isPlanned ? record.name : record.title).font(TypeStyle.callout.weight(.medium)).lineLimit(3).multilineTextAlignment(.leading)
             if record.campaign != nil || record.editor != nil {
-                HStack(spacing: 6) {
+                HStack(spacing: Space.sm) {
                     if let campaign = record.campaign { StageChip(stage: campaign) }
-                    if let editor = record.editor { Label(editor, systemImage: "person").font(.caption).foregroundStyle(.secondary).lineLimit(1) }
+                    if let editor = record.editor { Label(editor, systemImage: "person").font(TypeStyle.caption).foregroundStyle(.secondary).lineLimit(1) }
                 }
             }
         }
-        .padding(10).padding(.leading, 4)
+        .padding(Space.md).padding(.leading, Space.xs)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(RoundedRectangle(cornerRadius: 9).fill(Color(nsColor: .controlBackgroundColor)))
+        .background(RoundedRectangle(cornerRadius: Radius.md).fill(Surface.control))
         .overlay(alignment: .leading) {
-            RoundedRectangle(cornerRadius: 2).fill(m.stageColour(m.effectiveStage(record))).frame(width: 4).padding(.vertical, 8).padding(.leading, 4)
+            Capsule().fill(m.stageColour(m.effectiveStage(record))).frame(width: 4).padding(.vertical, Space.sm).padding(.leading, Space.xs)
         }
-        .overlay(RoundedRectangle(cornerRadius: 9).strokeBorder(selected ? Color.accentColor : .clear, lineWidth: 2))
+        .overlay(RoundedRectangle(cornerRadius: Radius.md).strokeBorder(selected ? Color.accentColor : .clear, lineWidth: 2))
         .contentShape(Rectangle())
         // Double-click opens the project in Projects; a single click selects it. The double-tap is registered first so it wins.
         .onTapGesture(count: 2) { if !record.isPlanned { m.selectedProject = record.id; m.page = .projects; m.selectProject() } else { m.startPlanned(record) } }
@@ -442,8 +442,8 @@ struct NewIdeaSheet: View {
     @State private var campaign = ""
     @State private var notes = ""
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            Text("New idea").font(.title2.weight(.semibold))
+        VStack(alignment: .leading, spacing: Space.lg) {
+            Text("New idea").font(TypeStyle.title2.weight(.semibold))
             Text("An idea sits in the first column without a number or folder. Start it from Pipeline when you are ready to make it.").foregroundStyle(.secondary)
             Form {
                 TextField("Title", text: $title, prompt: Text("What the video is about")).help("A working title. You can change it when you start the project.")
@@ -459,7 +459,7 @@ struct NewIdeaSheet: View {
                     .buttonStyle(.borderedProminent).keyboardShortcut(.defaultAction).disabled(title.trimmingCharacters(in: .whitespaces).isEmpty)
                     .help("Put the idea in the first column of Recordings")
             }
-        }.padding(24).frame(width: 520)
+        }.padding(Space.xxl).frame(width: 520)
         .onAppear { format = PipelineKind.recordings.includes(format: m.format) ? m.format : "Long" }
     }
 }
