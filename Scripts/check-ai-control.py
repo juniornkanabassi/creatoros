@@ -87,12 +87,12 @@ try:
     if app.suffix == '.app':
         import plistlib
         check(manifest['version'] == plistlib.loads((app / 'Contents/Info.plist').read_bytes())['CFBundleShortVersionString'], 'the shim reports the bundle version, not a hard-coded one')
-    preview = command('project','rename',ref,'--title','Renamed test','--dry-run','--request-id','rename-1')
+    preview = command('project','rename',ref,'--ignore-open-apps','--title','Renamed test','--dry-run','--request-id','rename-1')
     check(preview['dryRun'] and pathlib.Path(created['path']).exists(), 'rename dry-run changes nothing')
-    renamed = command('project','rename',ref,'--title','Renamed test','--request-id','rename-1')
+    renamed = command('project','rename',ref,'--ignore-open-apps','--title','Renamed test','--request-id','rename-1')
     check(pathlib.Path(renamed['newPath']).is_dir() and not pathlib.Path(created['path']).exists(), 'rename updates disk and record')
-    check(command('project','rename',ref,'--title','Renamed test','--request-id','rename-1')['newPath'] == renamed['newPath'], 'rename session idempotency')
-    check(command('project','rename',ref,'--title','Different','--request-id','rename-1',code=1)['error']['code'] == 'invalid_params', 'reused rename id rejects changed parameters')
+    check(command('project','rename',ref,'--ignore-open-apps','--title','Renamed test','--request-id','rename-1')['newPath'] == renamed['newPath'], 'rename session idempotency')
+    check(command('project','rename',ref,'--ignore-open-apps','--title','Different','--request-id','rename-1',code=1)['error']['code'] == 'invalid_params', 'reused rename id rejects changed parameters')
     check(command('status')['selectedProject']['name'] == renamed['newName'], 'CLI rename updates GUI selection name')
     for tool in manifest['tools']:
         words = tool['_meta']['creatoros']['words']
@@ -107,7 +107,7 @@ try:
         {'jsonrpc':'2.0','id':4,'method':'tools/call','params':{'name':'status','arguments':{}}},
         {'jsonrpc':'2.0','id':5,'method':'unknown'},
         {'jsonrpc':'2.0','id':6,'method':'tools/call','params':{'name':'project_status','arguments':{'project':'missing'}}},
-        {'jsonrpc':'2.0','id':7,'method':'tools/call','params':{'name':'project_rename','arguments':{'project':ref,'campaign':''}}},
+        {'jsonrpc':'2.0','id':7,'method':'tools/call','params':{'name':'project_rename','arguments':{'project':ref,'campaign':'','ignoreOpenApps':True}}},
     ]
     mcp = subprocess.run(['node',str(shim)], input=''.join(json.dumps(r)+'\n' for r in requests), capture_output=True,text=True,env=env,timeout=30)
     check(mcp.returncode == 0, 'MCP starts with packaged manifest')
@@ -708,7 +708,7 @@ try:
     saved_library = (root / 'library.json').read_bytes()
     (root / 'library.json').unlink(); (root / 'library.json').mkdir()
     try:
-        failure = command('project','rename',ref,'--title','Save failure rollback',code=1)
+        failure = command('project','rename',ref,'--ignore-open-apps','--title','Save failure rollback',code=1)
         check('error' in failure and pathlib.Path(before['path']).is_dir(), 'rename library-save failure restores disk names')
         check(command('status')['selectedProject'] == selected_before, 'rename save failure retains GUI record')
     finally:

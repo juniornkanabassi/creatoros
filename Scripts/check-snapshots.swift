@@ -7,6 +7,7 @@ import TemplateCore
     @MainActor static func main() async throws {
         let app = NSApplication.shared
         app.setActivationPolicy(.prohibited)
+        if let icon = NSImage(contentsOfFile: "Resources/AppIcon.icns") { app.applicationIconImage = icon }
         FrameAutosave.refuse()
         let model = AppModel()
         precondition(model.runtime.isIsolated && model.storeUsable, "Snapshots require a disposable data root")
@@ -85,7 +86,7 @@ import TemplateCore
                 try await capture("settings-" + tab.lowercased(), SettingsView(), size: CGSize(width: 520, height: 640), scheme: scheme, fitHeight: true)
             }
             try await capture("about", AboutSettingsView(), size: CGSize(width: 520, height: 640), scheme: scheme, fitHeight: true)
-            try await capture("new-project", NewProjectSheet(), size: CGSize(width: 1080, height: 740), scheme: scheme)
+            try await capture("new-project", NewProjectSheet(), size: CGSize(width: min(1280, (NSScreen.main?.visibleFrame.width ?? 1280) - 40), height: min(800, (NSScreen.main?.visibleFrame.height ?? 800) - 40)), scheme: scheme)
             for mode in BrowserViewMode.allCases {
                 model.setViewMode(mode, for: .projectFiles)
                 try await capture("browser-" + mode.rawValue, FolderBrowserHost(title: "Disposable project files", resolveRoot: { fixture }),
