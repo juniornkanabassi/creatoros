@@ -70,5 +70,9 @@ swiftc -parse-as-library -module-name CreatorOSDurableCheck -I "$module_dir" \
     Sources/ProjectTemplates/^ProjectTemplatesApp.swift(.N) \
     "$check_dir/ProjectTemplatesApp.swift" "${CONTENT_TEMPLATE_CHECK_SOURCE:-Scripts/check-durable-save.swift}" \
     "${objects[@]}" -o "$check_dir/check"
+# The check's AppModel keeps interface state in this data directory's own suite (AppRuntime.defaultsSuite). Remove exactly
+# that domain and its plist once the check has ended, even if it crashed before its own cleanup.
+suite=local.creatoros.alpha.$(print -rn -- "${check_dir:A}/Data" | /usr/bin/base64)
+trap '/usr/bin/defaults delete "$suite" >/dev/null 2>&1 || true; rm -f ~/Library/Preferences/"$suite".plist' EXIT
 "$check_dir/check" --data-directory "$check_dir/Data"
 print "Disposable evidence retained: $check_dir"

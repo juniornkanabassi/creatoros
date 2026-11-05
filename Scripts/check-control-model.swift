@@ -4,6 +4,7 @@ import TemplateCore
 @main struct ControlModelCheck {
     @MainActor static func main() async throws {
         let model = AppModel()
+        defer { model.runtime.removeDisposablePreferences() }
         precondition(model.runtime.isIsolated && model.storeUsable)
         model.destination = "/Volumes/Fixture/Fixture/Projects"
         precondition(model.plainFolders)

@@ -2,7 +2,7 @@
 
 Only a process whose arguments carry one of the caller's own disposable data directories (under /private/tmp) is ever
 looked at, so the everyday app (no --data-directory) can never be matched or stopped by these helpers."""
-import os, signal, subprocess, time
+import base64, os, pathlib, signal, subprocess, time
 
 def _roots(roots):
     clean = [str(r) for r in roots]
@@ -36,7 +36,29 @@ def quit_all(*roots, grace=10):
         except ProcessLookupError: pass
     deadline = time.time() + 5
     while time.time() < deadline and pids(*roots): time.sleep(0.1)
+    forget_preferences(*roots)
     return len(live)
+
+def preferences_domain(root):
+    """The defaults suite an isolated run on this data directory uses (AppRuntime.defaultsSuite, pinned in CoreChecks)."""
+    return 'local.creatoros.alpha.' + base64.b64encode(str(root).encode()).decode()
+
+def forget_preferences(*roots):
+    """Remove each root's own defaults domain, then its exact plist, once no instance on that root is left to rewrite it."""
+    for root in _roots(roots):
+        if pids(root): continue
+        domain = preferences_domain(root)
+        subprocess.run(['/usr/bin/defaults', 'delete', domain], capture_output=True)
+        (pathlib.Path.home() / 'Library/Preferences' / (domain + '.plist')).unlink(missing_ok=True)
+
+if __name__ == '__main__':
+    # Self-check: same suite as the literal in Sources/CoreChecks/RuntimeChecks.swift, and only disposable roots are accepted.
+    assert preferences_domain('/private/tmp/cos-suite-pin') == 'local.creatoros.alpha.L3ByaXZhdGUvdG1wL2Nvcy1zdWl0ZS1waW4='
+    for refused in ('/Users', str(pathlib.Path.home() / 'Library/Application Support/CreatorOS Alpha'), '/private/tmp/'):
+        try: forget_preferences(refused)
+        except AssertionError: continue
+        raise SystemExit('forget_preferences accepted a non-disposable root: ' + refused)
+    print('PASS instances.py preferences helpers')
 
 def assert_none_alive(*roots):
     left = pids(*roots)

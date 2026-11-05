@@ -10,6 +10,7 @@ import TemplateCore
         if let icon = NSImage(contentsOfFile: "Resources/AppIcon.icns") { app.applicationIconImage = icon }
         FrameAutosave.refuse()
         let model = AppModel()
+        defer { model.runtime.removeDisposablePreferences() }
         precondition(model.runtime.isIsolated && model.storeUsable, "Snapshots require a disposable data root")
         let output = URL(fileURLWithPath: ProcessInfo.processInfo.environment["SNAPSHOT_OUTPUT"] ?? model.runtime.root.appendingPathComponent("Snapshots").path)
         try model.runtime.requireWritable(model.runtime.root)

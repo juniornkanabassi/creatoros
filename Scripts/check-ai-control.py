@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Run every control command on synthetic data in the supplied build, with no input events."""
 import instances
-import base64, concurrent.futures, json, os, pathlib, signal, socket, subprocess, sys, tempfile, time, uuid
+import atexit, concurrent.futures, json, os, pathlib, signal, socket, subprocess, sys, tempfile, time, uuid
 app = pathlib.Path(sys.argv[1]).resolve()
 cli = app / 'Contents/MacOS/creatoros' if app.suffix == '.app' else app.parent / 'creatoros'
 exe = app / 'Contents/MacOS/ProjectTemplates' if app.suffix == '.app' else app
@@ -9,6 +9,7 @@ shim = app / 'Contents/Resources/mcp/creatoros-mcp.mjs' if app.suffix == '.app' 
 root = pathlib.Path(tempfile.mkdtemp(prefix='cos-ai-', dir='/private/tmp'))
 checks = 0
 roots = [root]  # every data directory this run launches an app for; all are swept at the end
+atexit.register(lambda: instances.quit_all(*roots))  # also when a check before the main try fails; quits, then forgets preferences
 
 def check(condition, label):
     global checks
@@ -52,7 +53,7 @@ try:
     check(instances.pids(root) == [pid], 'exactly one test instance is alive')
     check(instances.activation_type(pid) in ('UIElement', 'BackgroundOnly'), 'the isolated test instance has no Dock tile (activation type %s)' % instances.activation_type(pid))
     if app.suffix == '.app':
-        other_root = pathlib.Path(tempfile.mkdtemp(prefix='cos-ai-second-', dir='/private/tmp'))
+        other_root = pathlib.Path(tempfile.mkdtemp(prefix='cos-ai-second-', dir='/private/tmp')); roots.append(other_root)
         def other_command(*args):
             result = subprocess.run([str(cli), *args, '--json', '--data-directory', str(other_root)], capture_output=True, text=True, timeout=30)
             assert result.returncode == 0, (args, result.stdout, result.stderr)
@@ -60,7 +61,6 @@ try:
         other_command('library','stats')
         other_state = other_command('status')
         check(other_state['isolated'] and other_state['dataRoot'] == str(other_root) and other_state['pid'] != pid, 'separate isolated launch starts beside existing instance')
-        roots.append(other_root)
         instances.quit_all(other_root)  # the deliberate second instance goes at once
         check(not instances.pids(other_root) and len(instances.pids(root)) == 1, 'the second isolated instance is gone and exactly one test instance is alive')
     check(command('library','stats')['templates'] == 1, 'library stats')
@@ -116,7 +116,7 @@ try:
     check(json.loads(replies[4]['result']['content'][0]['text'])['pid'] == pid, 'MCP forwards tools/call to built CLI')
     check(replies[5]['error']['code'] == -32601 and replies[6]['result']['isError'], 'MCP unknown methods and action failures')
     check(not replies[7]['result'].get('isError') and command('project','status',ref)['campaign'] is None, 'MCP rename clears an existing campaign')
-    suite = 'local.creatoros.alpha.' + base64.b64encode(str(root).encode()).decode()
+    suite = instances.preferences_domain(root)
     format_before = subprocess.check_output(['/usr/bin/defaults','read',suite,'format'],text=True).strip()
     command('project','create','--format','Long','--title','Form preservation','--campaign','')
     check(subprocess.check_output(['/usr/bin/defaults','read',suite,'format'],text=True).strip() == format_before, 'CLI create restores saved New Project format')

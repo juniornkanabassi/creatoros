@@ -11,6 +11,8 @@ headless=${2:-}
 id="local.projecttemplates.isolation-check-$$"
 stage=$(mktemp -d /private/tmp/cos-defaults-check.XXXXXX)
 root=$(mktemp -d /private/tmp/cos-defaults-root.XXXXXX)
+# The isolated launch keeps its interface state in this root's own suite (AppRuntime.defaultsSuite); removed in cleanup.
+suite=local.creatoros.alpha.$(print -rn -- "$root" | /usr/bin/base64)
 pid=""
 cleanup() {
   [[ -n "$pid" ]] && kill "$pid" 2>/dev/null || true
@@ -19,6 +21,8 @@ cleanup() {
   for _ in {1..50}; do /usr/bin/pgrep -f -- "ProjectTemplates --data-directory $root" >/dev/null || break; sleep 0.1; done
   defaults delete "$id" >/dev/null 2>&1 || true
   rm -f ~/Library/Preferences/"$id".plist
+  /usr/bin/defaults delete "$suite" >/dev/null 2>&1 || true
+  rm -f ~/Library/Preferences/"$suite".plist
   rm -rf "$stage" "$root"
 }
 trap cleanup EXIT

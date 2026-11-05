@@ -6,6 +6,7 @@ import UniformTypeIdentifiers
 @main struct DurableSaveCheck {
     @MainActor static func main() async throws {
         let model = AppModel()
+        defer { model.runtime.removeDisposablePreferences() }
         let dragFile = model.runtime.root.appendingPathComponent("Drop [été] 50%.txt")
         try Data("native provider".utf8).write(to: dragFile)
         let outgoing = BrowserFileDrag.provider(try BrowserTransfer.dragURL(root: model.runtime.root, relative: dragFile.lastPathComponent))

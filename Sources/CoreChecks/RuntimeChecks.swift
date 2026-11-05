@@ -40,4 +40,17 @@ func runtimeChecks(base: URL) throws {
     try rejects("alpha refuses imported external destination before background work") { try runtime.validate(imported) }
     try check(runtime.sharesProductionPreferences(bundleIdentifier: AppRuntime.releaseIdentifier) && !runtime.sharesProductionPreferences(bundleIdentifier: AppRuntime.alphaIdentifier) && !production.sharesProductionPreferences(bundleIdentifier: AppRuntime.releaseIdentifier), "only an isolated stable-bundle launch shares the production preferences domain")
     try check(runtime.defaultsSuite != (try AppRuntime(root: base.appendingPathComponent("Alpha2"), stableRoot: stable)).defaultsSuite, "disposable alpha roots use separate preferences")
+    // A fixed root whose base64 has no "/", so the suite is a plain domain name. The literal pins the formula Scripts/instances.py and the zsh harnesses repeat.
+    let suitePin = try AppRuntime(root: URL(fileURLWithPath: "/private/tmp/cos-suite-pin"))
+    try check(suitePin.defaultsSuite == "local.creatoros.alpha.L3ByaXZhdGUvdG1wL2Nvcy1zdWl0ZS1waW4=", "harness scripts can derive the disposable defaults suite from the data directory")
+    let disposable = try AppRuntime(root: base.appendingPathComponent("Preferences"))
+    let alphaInstall = try AppRuntime.isolated(), alphaChild = try AppRuntime.isolated(root: AppRuntime.alphaRoot.appendingPathComponent("Child"))
+    try check(disposable.ownsDisposablePreferences && temporaryRuntime.ownsDisposablePreferences && !production.ownsDisposablePreferences
+              && !alphaInstall.ownsDisposablePreferences && !alphaChild.ownsDisposablePreferences,
+              "only temporary roots own their preferences; production and the alpha install keep theirs")
+    defer { disposable.removeDisposablePreferences() }  // also when a check below fails
+    UserDefaults(suiteName: disposable.defaultsSuite)!.set("Short", forKey: "format")
+    try check(UserDefaults.standard.persistentDomain(forName: disposable.defaultsSuite)?["format"] as? String == "Short", "a disposable run's preferences reach its own suite")
+    disposable.removeDisposablePreferences()
+    try check(UserDefaults.standard.persistentDomain(forName: disposable.defaultsSuite) == nil, "a finished disposable run removes its preferences domain")
 }

@@ -15,6 +15,16 @@ public struct AppRuntime: Sendable {
     public static var alphaRoot: URL { FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("CreatorOS Alpha") }
     public var defaultsSuite: String { Self.alphaIdentifier + "." + Data(root.path.utf8).base64EncodedString() }
     public var isIsolated: Bool { scope == .isolated }
+    /// Only a run on a disposable temporary root owns its defaults suite; production and the alpha folder never do.
+    public var ownsDisposablePreferences: Bool { isIsolated && !Self.contains(Self.alphaRoot.standardizedFileURL.resolvingSymlinksInPath(), root) }
+    /// Tests and checks call this when they finish. Harness launchers also remove the exact plist after the process ends.
+    public func removeDisposablePreferences() {
+        guard ownsDisposablePreferences, let defaults = UserDefaults(suiteName: defaultsSuite) else { return }
+        defaults.removePersistentDomain(forName: defaultsSuite)
+        defaults.synchronize()
+        let plist = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Preferences").appendingPathComponent(defaultsSuite + ".plist")
+        try? FileManager.default.removeItem(at: plist)
+    }
     /// An isolated launch of the stable bundle still shares its defaults domain, which AppKit writes to directly.
     public func sharesProductionPreferences(bundleIdentifier: String?) -> Bool { isIsolated && bundleIdentifier == Self.releaseIdentifier }
     public var projects: URL { root.appendingPathComponent("Projects") }
