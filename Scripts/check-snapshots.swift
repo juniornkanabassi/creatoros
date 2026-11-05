@@ -80,11 +80,10 @@ import TemplateCore
                     try await capture("pipeline-live", MainView(), size: CGSize(width: 1280, height: 820), scheme: scheme)
                 }
             }
-            let settings = SettingsView()
-            try await capture("settings-formats", settings.formatTab, size: CGSize(width: 520, height: 640), scheme: scheme, fitHeight: true)
-            try await capture("settings-naming", settings.namingTab, size: CGSize(width: 520, height: 640), scheme: scheme, fitHeight: true)
-            try await capture("settings-pipeline", settings.pipelineTab, size: CGSize(width: 520, height: 640), scheme: scheme, fitHeight: true)
-            try await capture("settings-locations", settings.locationsTab, size: CGSize(width: 520, height: 640), scheme: scheme, fitHeight: true)
+            for tab in ["Formats", "Naming", "Pipeline", "Locations"] {
+                model.defaults.set(tab, forKey: "settings.tab")
+                try await capture("settings-" + tab.lowercased(), SettingsView(), size: CGSize(width: 520, height: 640), scheme: scheme, fitHeight: true)
+            }
             try await capture("about", AboutSettingsView(), size: CGSize(width: 520, height: 640), scheme: scheme, fitHeight: true)
             try await capture("new-project", NewProjectSheet(), size: CGSize(width: 1080, height: 740), scheme: scheme)
             for mode in BrowserViewMode.allCases {

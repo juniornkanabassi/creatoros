@@ -231,6 +231,16 @@ struct AboutSettingsView: View {
     @State private var showAboutAdvanced = false
     var body: some View {
         Form {
+            Section {
+                HStack(spacing: Space.md) {
+                    Image(nsImage: NSApp.applicationIconImage).resizable().scaledToFit()
+                        .frame(width: 64, height: 64).accessibilityHidden(true)
+                    Text(AppInfo.name).font(TypeStyle.title2)
+                    Spacer()
+                    Button("Done") { m.aboutPresented = false }.keyboardShortcut(.cancelAction)
+                        .help("Close About CreatorOS")
+                }
+            }
             Section("About") {
                 LabeledContent("Version") { ReleaseVersionLabel(includeName: true) }
                 LabeledContent("Interface size") {

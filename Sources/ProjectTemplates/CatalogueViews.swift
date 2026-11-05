@@ -75,9 +75,9 @@ struct ProjectList: View {
                 } label: { Label("Add Existing", systemImage: "plus") }.help("Register projects that already exist on a drive")
             }
         }
-        .sheet(isPresented: $m.discoveryPresented) { DiscoveryView() }
-        .sheet(item: $m.relinkReport) { _ in RelinkReportSheet() }
-        .sheet(isPresented: $m.duplicatesPresented) { DuplicatesSheet() }
+        .sheet(isPresented: $m.discoveryPresented) { DiscoveryView().errorNotice() }
+        .sheet(item: $m.relinkReport) { _ in RelinkReportSheet().errorNotice() }
+        .sheet(isPresented: $m.duplicatesPresented) { DuplicatesSheet().errorNotice() }
         .onAppear { m.refreshMounts() }
     }
 }
