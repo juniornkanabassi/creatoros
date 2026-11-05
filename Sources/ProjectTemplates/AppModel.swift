@@ -199,7 +199,6 @@ enum BadgeColour: String, CaseIterable, Identifiable {
     /// The result of the last Find Moved Folders pass, shown as a sheet.
     @Published var relinkReport: RelinkReport?
     @Published var duplicatesPresented = false
-    @Published var aboutPresented = false
     /// Drives unticked in the Locations filter: their projects stay registered but are kept out of every list, and the drive is never read.
     @Published var hiddenLocations: Set<String> { didSet { defaults.set(Array(hiddenLocations).sorted(), forKey: "hiddenLocations") } }
     var mountTimer: Timer?
@@ -960,7 +959,7 @@ enum BadgeColour: String, CaseIterable, Identifiable {
     /// One project's result from a relink pass. With `apply` false nothing is changed, in the library or in the GUI: a result
     /// of `.relinked` then means "this is the one folder it would be linked to". `alert` false keeps the "not found" dialog quiet.
     @discardableResult
-    func searchForMoved(_ record: ProjectRecord, quietly: Bool = false, searchAllLocations: Bool = false, apply: Bool = true, alert: Bool = true) async -> RelinkOutcome.Kind {
+    func searchForMoved(_ record: ProjectRecord, quietly: Bool = false, searchAllLocations: Bool = false, apply: Bool = true, alert: Bool = true, searchRoots: [URL]? = nil) async -> RelinkOutcome.Kind {
         guard !relinking.contains(record.id), !record.isPlanned, !hiddenLocations.contains(record.location.key) else { return .stillThere }
         // The quiet search that runs when a project is merely selected writes a relink; it waits while a command is writing.
         if quietly && apply && writeLocked { return .stillThere }
@@ -968,11 +967,14 @@ enum BadgeColour: String, CaseIterable, Identifiable {
         defer { relinking.remove(record.id) }
         // A quiet search, the one that runs when a project is merely selected, stays on the project's own drive.
         // Searching every root would wake the archive drive on each click.
-        let hiddenBefore = hiddenLocations
-        let roots = await relinkRoots(locationKey: quietly && !searchAllLocations ? record.location.key : nil)
-        // Root probing now suspends. Do not begin a scan with a changed visibility policy or a replaced record.
-        guard hiddenLocations == hiddenBefore,
+        let locationKey = quietly && !searchAllLocations ? record.location.key : nil
+        let probedRoots: [URL]
+        if let searchRoots { probedRoots = searchRoots }
+        else { probedRoots = await relinkRoots(locationKey: locationKey) }
+        // A visibility change must exclude newly hidden roots, not label an unrelated missing project as present.
+        guard !hiddenLocations.contains(record.location.key),
               library.projects.contains(where: { $0.id == record.id && $0.path == record.path }) else { return .stillThere }
+        let roots = probedRoots.filter { Relinker.allowsRoot(path: $0.path, hiddenLocations: hiddenLocations, locationKey: locationKey) }
         let candidates = await Task.detached(priority: .userInitiated) { Relinker.candidates(for: record, roots: roots) }.value
         guard let current = library.projects.first(where: { $0.id == record.id }), current.path == record.path,
               !hiddenLocations.contains(current.location.key) else { return .stillThere }
@@ -1016,10 +1018,11 @@ enum BadgeColour: String, CaseIterable, Identifiable {
         Task {
             defer { relinkBatchRunning = false }
             let missing = await Task.detached { records.filter { !FileManager.default.fileExists(atPath: $0.path) } }.value
+            let roots = missing.isEmpty ? [] : await relinkRoots()
             var outcomes: [RelinkOutcome] = []
             for (index, record) in missing.enumerated() {
                 if apply { status = "Looking for moved folders \(index + 1) of \(missing.count)…" }
-                let kind = await searchForMoved(record, quietly: true, searchAllLocations: true, apply: apply)
+                let kind = await searchForMoved(record, quietly: true, searchAllLocations: true, apply: apply, searchRoots: roots)
                 outcomes.append(RelinkOutcome(id: record.id, name: record.name, previousPath: record.path, kind: kind))
             }
             if apply {

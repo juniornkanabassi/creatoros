@@ -87,7 +87,7 @@ try:
     if app.suffix == '.app':
         import plistlib
         check(manifest['version'] == plistlib.loads((app / 'Contents/Info.plist').read_bytes())['CFBundleShortVersionString'], 'the shim reports the bundle version, not a hard-coded one')
-    preview = command('project','rename',ref,'--ignore-open-apps','--title','Renamed test','--dry-run','--request-id','rename-1')
+    preview = command('project','rename',ref,'--title','Renamed test','--dry-run')
     check(preview['dryRun'] and pathlib.Path(created['path']).exists(), 'rename dry-run changes nothing')
     renamed = command('project','rename',ref,'--ignore-open-apps','--title','Renamed test','--request-id','rename-1')
     check(pathlib.Path(renamed['newPath']).is_dir() and not pathlib.Path(created['path']).exists(), 'rename updates disk and record')
@@ -676,6 +676,27 @@ try:
     check(obj['dryRun'] and obj['plainFolders'] is False, 'MCP passes an object and a false boolean to create')
     check(mcp_call('project_update', {'project': alpha['id'], 'notes': '--starts with dashes'})['notes'] == '--starts with dashes', 'MCP passes a value that starts with dashes')
     check('error' in mcp_call('stage_set', {'board': 'live', 'stages': 'not-an-array'}), 'MCP refuses a string where an array is declared')
+
+    # Exercise the default rename route too, without closing or changing anybody's editor.
+    default_rename = command('project', 'create', '--format', 'Short', '--title', 'Default rename guard')
+    def rename_guard_state():
+        folder = pathlib.Path(record_on_disk(default_rename['id'])['path'])
+        return world(), {str(p): p.read_bytes() for p in folder.rglob('*') if p.is_file()}
+    for transport in ('CLI', 'MCP'):
+        title = 'Default ' + transport + ' rename'
+        preview = command('project', 'rename', default_rename['id'], '--title', title, '--dry-run')
+        blocked = any(warning.startswith('Running: ') for warning in preview['warnings'])
+        before = rename_guard_state()
+        if transport == 'CLI':
+            answer = command('project', 'rename', default_rename['id'], '--title', title, code=1 if blocked else 0)
+        else:
+            answer = mcp_call('project_rename', {'project': default_rename['id'], 'title': title})
+        if blocked:
+            check(answer.get('error', {}).get('code') == 'adobe_app_running' and rename_guard_state() == before,
+                  transport + ' default rename refuses running Adobe apps without changing any fixture bytes or paths')
+        else:
+            check('error' not in answer and pathlib.Path(answer['newPath']).is_dir() and answer['newName'].endswith(title),
+                  transport + ' default rename succeeds with no running Adobe apps')
 
     # -- two callers at once ------------------------------------------------------------------------------------------------
     def stage_call(stage):

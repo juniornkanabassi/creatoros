@@ -162,15 +162,15 @@ extension AppModel {
          "stage": effectiveStage(record), "path": record.path, "location": record.isPlanned ? NSNull() : record.location.key as Any,
          "mounted": !record.isPlanned && mountedLocations.contains(record.location.key), "pinned": record.isPinned, "idea": record.isPlanned]
     }
-    func controlAction(_ action: String, _ params: [String: Any]) async throws -> [String: Any] {
+    func controlAction(_ action: String, _ params: [String: Any], adobeApps: (() -> [String])? = nil) async throws -> [String: Any] {
         // control() already holds the slot for a mutation; a direct caller (the model checks) takes it here.
         guard let command = ControlCommand.all.first(where: { $0.action == action }),
-              command.mutates || (action == "compat.check" && params["copyTo"] != nil), writer == nil else { return try await controlActionHolding(action, params) }
+              command.mutates || (action == "compat.check" && params["copyTo"] != nil), writer == nil else { return try await controlActionHolding(action, params, adobeApps: adobeApps) }
         let token = try acquireWriter(as: .control(UUID().uuidString))
         defer { releaseWriter(token) }
-        return try await AppModel.$me.withValue(token) { try await controlActionHolding(action, params) }
+        return try await AppModel.$me.withValue(token) { try await controlActionHolding(action, params, adobeApps: adobeApps) }
     }
-    func controlActionHolding(_ action: String, _ params: [String: Any]) async throws -> [String: Any] {
+    func controlActionHolding(_ action: String, _ params: [String: Any], adobeApps: (() -> [String])? = nil) async throws -> [String: Any] {
         if action == "status" { return ["app": AppInfo.name, "version": AppInfo.version, "channel": AppInfo.channel, "pid": getpid(), "headless": Headless.shared.active, "dataRoot": runtime.root.path, "isolated": runtime.isIsolated, "storeUsable": storeUsable, "busy": busy || writer != nil, "statusText": status, "page": page.rawValue, "selectedProject": selectedRecord.map { ["id": $0.id.uuidString, "name": $0.name] } as Any? ?? NSNull(), "newProjectSheetOpen": newProjectPresented, "renameSheetOpen": renamePrompt != nil, "socket": runtime.root.appendingPathComponent("control.sock").path] }
         guard storeUsable else { throw ControlFailure(code: "store_unavailable", message: "Resolve the library error in the GUI first.") }
         let visible = library.projects.filter { !controlHidden($0) }
@@ -210,7 +210,8 @@ extension AppModel {
             do { busy = true; defer { busy = false }; plan = try await renamePlan(for: record.id, number: number, campaign: campaign, title: title, updateHeadings: headings) }
             catch let failure as ControlFailure { throw failure }
             catch { throw ControlFailure(code: "rename_failed", message: error.localizedDescription) }
-            let adobe = Self.runningAdobeApps()
+            // Model checks supply a detector; external requests always use the real running apps.
+            let adobe = adobeApps?() ?? Self.runningAdobeApps()
             if params["dryRun"] as? Bool == true {
                 return ["dryRun": true, "oldName": plan.oldName, "newName": plan.newName, "changes": plan.changes.count,
                         "items": plan.changes.prefix(50).map { ["path": $0.path, "from": $0.from, "to": $0.to] }, "warnings": plan.warnings + adobe.map { "Running: " + $0 }]

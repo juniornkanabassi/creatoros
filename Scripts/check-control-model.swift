@@ -470,6 +470,30 @@ import TemplateCore
         let noParentRoots = await BackgroundFileOperations.relinkRoots(library: probeLibrary, hiddenLocations: [], mountedLocations: [], locationKey: nil)
         precondition(noParentRoots.map(\.path) == [probeRoot.path])
         print("PASS 4 background root checks: bookmark fallback and deduplication; hidden locations; drive scope; mounted parent gate")
+        // An unrelated location toggle during root probing must not turn a missing folder into stillThere.
+        var missingProbe = try ProjectRecord(url: probeProject, format: "Short")
+        missingProbe.path = probeParent.appendingPathComponent("999 — Short — Missing probe").path
+        missingProbe.name = "999 — Short — Missing probe"
+        model.library.projects.append(missingProbe)
+        let unrelatedKey = "volume:Unrelated relink check"
+        for _ in 0..<8 {
+            model.hiddenLocations.remove(unrelatedKey)
+            let hide = Task { @MainActor in model.hiddenLocations.insert(unrelatedKey) }
+            let outcome = await model.searchForMoved(missingProbe, apply: false, alert: false)
+            _ = await hide.value
+            guard case .notFound = outcome else { preconditionFailure("an unrelated visibility change labelled a missing project as present") }
+        }
+        model.hiddenLocations.remove(unrelatedKey)
+        let beforeRelink = try Data(contentsOf: model.store.file)
+        let batch: (checked: Int, outcomes: [RelinkOutcome]) = try await withCheckedThrowingContinuation { done in
+            model.relinkAll(apply: false) { done.resume(with: $0) }
+        }
+        guard let missingOutcome = batch.outcomes.first(where: { $0.id == missingProbe.id }),
+              case .notFound = missingOutcome.kind else { preconditionFailure("batch relink lost the missing result") }
+        let afterRelink = try Data(contentsOf: model.store.file)
+        precondition(beforeRelink == afterRelink, "relink dry-run wrote the library")
+        model.library.projects.removeAll { $0.id == missingProbe.id }
+        print("PASS 2 relink checks: unrelated visibility changes preserve missing results; batch dry-run preserves library bytes")
         // Restoration never overwrites. These are disposable stand-ins, with no use of the user's Bin.
         let recovery = probeRoot.appendingPathComponent("Recovery.txt")
         let occupied = probeRoot.appendingPathComponent("Occupied.txt")
@@ -495,5 +519,35 @@ import TemplateCore
             preconditionFailure("background operation accepted a path outside the disposable root")
         } catch {}
         print("PASS 4 background recovery checks: occupied destination retained; restored bytes; missing payload; isolation refusal")
+        // Both sides of the default rename gate are deterministic even when a real editor is open.
+        let renameFolder = model.runtime.root.appendingPathComponent("901 — Short — Rename gate")
+        try FileManager.default.createDirectory(at: renameFolder, withIntermediateDirectories: true)
+        let renameBytes = Data("preserve rename fixture bytes".utf8)
+        try renameBytes.write(to: renameFolder.appendingPathComponent("Sentinel.txt"))
+        let renameRecord = try ProjectRecord(url: renameFolder, format: "Short")
+        try await model.commitDurably { $0.projects.append(renameRecord) }
+        let gateRenameParams: [String: Any] = ["project": renameRecord.id.uuidString, "title": "Default renamed"]
+        let renameLibrary = try Data(contentsOf: model.store.file)
+        do {
+            _ = try await model.controlAction("project.rename", gateRenameParams, adobeApps: { ["Fixture Audition"] })
+            preconditionFailure("default rename ignored the open-editor gate")
+        } catch let failure as ControlFailure {
+            precondition(failure.code == "adobe_app_running")
+        }
+        let refusedLibrary = try Data(contentsOf: model.store.file)
+        let refusedBytes = try Data(contentsOf: renameFolder.appendingPathComponent("Sentinel.txt"))
+        precondition(refusedLibrary == renameLibrary && refusedBytes == renameBytes)
+        precondition(!FileManager.default.fileExists(atPath: model.runtime.root.appendingPathComponent("901 — Short — Default renamed").path))
+        let renamePreview = try await model.controlAction("project.rename", gateRenameParams.merging(["dryRun": true]) { _, new in new }, adobeApps: { ["Fixture Audition"] })
+        precondition((renamePreview["warnings"] as? [String])?.contains("Running: Fixture Audition") == true)
+        let unblocked = try await model.controlAction("project.rename", gateRenameParams, adobeApps: { [] })
+        let unblockedPath = URL(fileURLWithPath: unblocked["newPath"] as! String)
+        let unblockedBytes = try Data(contentsOf: unblockedPath.appendingPathComponent("Sentinel.txt"))
+        precondition(unblockedBytes == renameBytes && !FileManager.default.fileExists(atPath: renameFolder.path))
+        let overrideParams: [String: Any] = ["project": renameRecord.id.uuidString, "title": "Override renamed", "ignoreOpenApps": true]
+        let overridden = try await model.controlAction("project.rename", overrideParams, adobeApps: { ["Fixture Audition"] })
+        let overrideBytes = try Data(contentsOf: URL(fileURLWithPath: overridden["newPath"] as! String).appendingPathComponent("Sentinel.txt"))
+        precondition(overrideBytes == renameBytes && !FileManager.default.fileExists(atPath: unblockedPath.path))
+        print("PASS 4 rename gate checks: default refusal preserves bytes and paths; dry-run warning; default success; explicit override")
     }
 }
