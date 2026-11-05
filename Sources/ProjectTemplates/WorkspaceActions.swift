@@ -161,16 +161,16 @@ struct CompatibilitySheet: View {
     @State private var destination: URL?
     @State private var confirm = false
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            Text("LucidLink compatibility").font(.title2.weight(.semibold))
+        VStack(alignment: .leading, spacing: Space.lg) {
+            Text("LucidLink compatibility").font(TypeStyle.title2.weight(.semibold))
             if let report = m.compatibilityReport {
-                Text(report.rootName).font(.headline).textSelection(.enabled)
+                Text(report.rootName).font(TypeStyle.headline).textSelection(.enabled)
                 Text(report.isComplete ? "\(report.entries) entries checked" : "Incomplete scan. Review the skipped items and errors below.")
                     .foregroundStyle(report.isComplete ? Color.secondary : .orange)
                 ScrollView {
-                    VStack(alignment: .leading, spacing: 10) {
+                    VStack(alignment: .leading, spacing: Space.md) {
                         ForEach(Array(report.findings.enumerated()), id: \.offset) { _, finding in
-                            VStack(alignment: .leading, spacing: 3) {
+                            VStack(alignment: .leading, spacing: Space.xs) {
                                 Text(finding.path).fontWeight(.medium)
                                 Text(finding.problem).foregroundStyle(.secondary)
                                 if let corrected = finding.corrected { Text("Proposed: \(corrected)") }
@@ -186,44 +186,44 @@ struct CompatibilitySheet: View {
                         if report.findings.isEmpty && report.iconFiles.isEmpty && report.longPaths.isEmpty && report.isComplete {
                             Text("No incompatible names or Finder icon files found.").foregroundStyle(.green)
                         }
-                    }.font(.callout).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading)
+                    }.font(TypeStyle.callout).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading)
                 }
-                Text("A corrected copy preserves the original and document contents. Renamed media may need relinking in Premiere Pro, OBS or Watchtower. A rename manifest is included.").font(.caption).foregroundStyle(.secondary)
+                Text("A corrected copy preserves the original and document contents. Renamed media may need relinking in Premiere Pro, OBS or Watchtower. A rename manifest is included.").font(TypeStyle.caption).foregroundStyle(.secondary)
                 if let output = m.compatibilityOutput {
                     Text("Created: \(output.path)").textSelection(.enabled)
                     Button("Show Copy in Finder") { NSWorkspace.shared.activateFileViewerSelecting([output]) }
                 } else if report.canCopy {
                     HStack {
-                        Text(destination?.path ?? "Choose an alpha output folder").font(.caption).textSelection(.enabled)
+                        Text(destination?.path ?? "Choose an alpha output folder").font(TypeStyle.caption).textSelection(.enabled)
                         Button("Choose Destination…") { destination = m.folderPanel(title: "Choose an output folder inside the alpha workspace") }
                     }
-                } else { Text("This report cannot make a corrected copy. Prospective previews are read-only; scan the actual folder for a repair proposal.").font(.caption).foregroundStyle(.secondary) }
+                } else { Text("This report cannot make a corrected copy. Prospective previews are read-only; scan the actual folder for a repair proposal.").font(TypeStyle.caption).foregroundStyle(.secondary) }
                 HStack {
                     Button(m.busy ? "Cancel Copy" : "Done") { if m.busy { m.cancellation.cancel() } else { m.compatibilityPresented = false } }.keyboardShortcut(.cancelAction)
-                    if m.busy { ProgressView(value: m.fraction); Text(m.status).font(.caption) }
+                    if m.busy { ProgressView(value: m.fraction); Text(m.status).font(TypeStyle.caption) }
                     Spacer()
                     Button("Preview Copy…") { confirm = true }.buttonStyle(.borderedProminent)
                         .disabled(m.busy || !report.canCopy || destination == nil || m.compatibilityOutput != nil)
                 }
             }
-        }.padding(24).frame(width: 740, height: 620).interactiveDismissDisabled(m.busy)
+        }.padding(Space.xxl).frame(width: 740, height: 620).interactiveDismissDisabled(m.busy)
         .sheet(isPresented: $confirm) {
-            VStack(alignment: .leading, spacing: 14) {
-                Text("Create corrected copy?").font(.title2)
+            VStack(alignment: .leading, spacing: Space.lg) {
+                Text("Create corrected copy?").font(TypeStyle.title2)
                 if let report = m.compatibilityReport {
                     Text("\(report.rootName) → \(report.suggestedRootName)")
                     Text("Destination: \(destination?.path ?? "")").textSelection(.enabled)
                     ScrollView {
                         if let proposal = try? Compatibility.proposal(report) {
-                            VStack(alignment: .leading, spacing: 8) {
+                            VStack(alignment: .leading, spacing: Space.sm) {
                                 ForEach(Array(proposal.renames.enumerated()), id: \.offset) { _, rename in Text("\(rename.from) → \(rename.to)") }
                             }.frame(maxWidth: .infinity, alignment: .leading)
                         }
                     }
                 }
-                Text("The original stays intact. Opaque project files are not rewritten; media references may need manual relinking.").font(.caption)
+                Text("The original stays intact. Opaque project files are not rewritten; media references may need manual relinking.").font(TypeStyle.caption)
                 HStack { Button("Cancel") { confirm = false }; Spacer(); Button("Create Copy") { confirm = false; if let destination { m.copyCorrected(to: destination) } }.buttonStyle(.borderedProminent) }
-            }.padding(24).frame(width: 640, height: 420)
+            }.padding(Space.xxl).frame(width: 640, height: 420)
         }
     }
 }
@@ -234,21 +234,21 @@ struct WorkspaceSheet: View {
     @State private var root: URL?
     @State private var templateID: UUID?
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Text("Create workspace for \(record.name)").font(.title2)
+        VStack(alignment: .leading, spacing: Space.lg) {
+            Text("Create workspace for \(record.name)").font(TypeStyle.title2)
             Text("An unnumbered local folder for this idea's documents and attachments. Start Project later copies and numbers it; it does not merge another template.")
             Text("Format: \(m.label(for: record.format))")
             Picker("Starter template", selection: $templateID) {
                 Text("Empty workspace").tag(Optional<UUID>.none)
                 ForEach(m.library.templates) { template in Text(template.name).tag(Optional(template.id)) }
             }
-            HStack { Text((root ?? m.runtime.ideas).path).font(.caption).textSelection(.enabled); Button("Choose Ideas Folder…") { root = m.folderPanel(title: "Choose a local Ideas folder inside the alpha workspace") } }
+            HStack { Text((root ?? m.runtime.ideas).path).font(TypeStyle.caption).textSelection(.enabled); Button("Choose Ideas Folder…") { root = m.folderPanel(title: "Choose a local Ideas folder inside the alpha workspace") } }
             HStack {
                 Button(m.busy ? "Cancel Creation" : "Cancel") { if m.busy { m.cancellation.cancel() } else { m.workspacePrompt = nil } }
                 if m.busy { ProgressView(value: m.fraction) }
                 Spacer()
                 Button("Create Workspace") { m.createWorkspace(for: record, root: root ?? m.runtime.ideas, templateID: templateID) }.buttonStyle(.borderedProminent).disabled(m.busy)
             }
-        }.padding(24).frame(width: 620).interactiveDismissDisabled(m.busy)
+        }.padding(Space.xxl).frame(width: 620).interactiveDismissDisabled(m.busy)
     }
 }

@@ -85,34 +85,34 @@ struct RenameProjectSheet: View {
     }
     var input: [String] { [number, campaign, title, String(updateHeadings)] }
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("Rename Project").font(.title2.weight(.semibold))
-            Text(record.name).font(.caption).foregroundStyle(.secondary)
+        VStack(alignment: .leading, spacing: Space.md) {
+            Text("Rename Project").font(TypeStyle.title2.weight(.semibold))
+            Text(record.name).font(TypeStyle.caption).foregroundStyle(.secondary)
             HStack {
-                TextField("Number", text: $number).frame(width: 110).accessibilityLabel("Number").help("The number at the start of the folder name")
+                TextField("Number", text: $number).frame(width: 112).accessibilityLabel("Number").help("The number at the start of the folder name")
                 TextField("Campaign", text: $campaign).accessibilityLabel("Campaign").help("Optional. Leave blank to leave the campaign out of the name.")
             }
             TextField("Project Name", text: $title).accessibilityLabel("Project Name").help("The title at the end of the folder name")
             DisclosureGroup("Advanced", isExpanded: $showAdvanced) {
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("Notes whose first line is a heading with the old name can have that heading renamed too. Off by default.").font(.caption).foregroundStyle(.secondary)
+                VStack(alignment: .leading, spacing: Space.sm) {
+                    Text("Notes whose first line is a heading with the old name can have that heading renamed too. Off by default.").font(TypeStyle.caption).foregroundStyle(.secondary)
                     Toggle("Also update Markdown headings", isOn: $updateHeadings)
                         .help("Rename the matching first-line heading in Markdown notes inside the project")
-                }.padding(.top, 4)
+                }.padding(.top, Space.xs)
             }
-            Text("Absolute media paths change. Relink Premiere media and update Watchtower paths separately.").font(.callout).foregroundStyle(.orange)
+            Text("Absolute media paths change. Relink Premiere media and update Watchtower paths separately.").font(TypeStyle.callout).foregroundStyle(.orange)
             if !adobe.isEmpty {
                 Label("Running: " + adobe.joined(separator: ", ") + ". Save and quit them before renaming, or tick Continue below.", systemImage: "exclamationmark.triangle.fill")
-                    .font(.callout).foregroundStyle(.orange)
+                    .font(TypeStyle.callout).foregroundStyle(.orange)
                 Toggle("Continue while these apps are running", isOn: $ignoreOpenApps)
                     .help("Rename even though Adobe apps are open. They may still have files from this project open.")
             }
-            if let issue { Text(issue).foregroundStyle(.red).font(.callout).textSelection(.enabled) }
+            if let issue { Text(issue).foregroundStyle(.red).font(TypeStyle.callout).textSelection(.enabled) }
             if let plan {
-                Text("\(plan.changes.count) changes → \(plan.newName)").font(.headline)
+                Text("\(plan.changes.count) changes → \(plan.newName)").font(TypeStyle.headline)
                 List(Array(plan.changes.enumerated()), id: \.offset) { _, change in
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(change.path.isEmpty ? "Project folder" : change.path).font(.caption).foregroundStyle(.secondary)
+                    VStack(alignment: .leading, spacing: Space.xxs) {
+                        Text(change.path.isEmpty ? "Project folder" : change.path).font(TypeStyle.caption).foregroundStyle(.secondary)
                         Text(change.from + " → " + change.to).textSelection(.enabled)
                     }
                 }
@@ -130,7 +130,7 @@ struct RenameProjectSheet: View {
                 }.buttonStyle(.borderedProminent).keyboardShortcut(.defaultAction).disabled(plan == nil || m.busy || (!adobe.isEmpty && !ignoreOpenApps))
                     .help("Rename the folder and every item listed above")
             }
-        }.textFieldStyle(.roundedBorder).padding(24).frame(width: 720, height: 580)
+        }.textFieldStyle(.roundedBorder).padding(Space.xxl).frame(width: 720, height: 580)
             .interactiveDismissDisabled(m.busy)
             .onAppear { showAdvanced = m.defaults.bool(forKey: "disclosure.renameAdvanced") }
             .onChange(of: showAdvanced) { m.defaults.set(showAdvanced, forKey: "disclosure.renameAdvanced") }
