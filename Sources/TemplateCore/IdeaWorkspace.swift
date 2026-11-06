@@ -128,12 +128,14 @@ public enum IdeaWorkspaceEngine {
 
     /// Call only after explicit confirmation of this exact path. Post-promotion cleanup additionally requires a durable library save.
     @discardableResult
-    public static func trash(for record: ProjectRecord, confirmedURL: URL) throws -> URL? {
+    public static func trash(for record: ProjectRecord, confirmedURL: URL,
+                             moveToTrash: ((URL) throws -> URL?)? = nil) throws -> URL? {
         let workspace = try resolve(for: record)
         guard confirmedURL.path == workspace.path else { throw AppFailure("The workspace path changed since confirmation. Nothing was put in the Bin.") }
         // Refuse unsupported descendants before handing the owned directory to Finder's recoverable Trash operation.
         _ = try TemplateReader.scan(workspace)
         guard try resolve(for: record) == workspace else { throw AppFailure("Workspace ownership changed. Nothing was put in the Bin.") }
+        if let moveToTrash { return try moveToTrash(workspace) }
         var trashed: NSURL?
         try FileManager.default.trashItem(at: workspace, resultingItemURL: &trashed)
         return trashed as URL?

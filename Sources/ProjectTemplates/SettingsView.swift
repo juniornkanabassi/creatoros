@@ -262,7 +262,7 @@ struct AboutSettingsView: View {
                     LabeledContent("Data") {
                         HStack {
                             Text(m.store.root.path).lineLimit(2).truncationMode(.middle).textSelection(.enabled)
-                            Button("Show") { NSWorkspace.shared.open(m.store.root) }.help("Open the folder where CreatorOS keeps its library and template copies")
+                            Button("Show") { NSWorkspace.shared.openOutsideChecks(m.store.root) }.help("Open the folder where CreatorOS keeps its library and template copies")
                         }
                     }
                     Text("Not signed with Developer ID or notarised.").font(TypeStyle.caption).foregroundStyle(.secondary)

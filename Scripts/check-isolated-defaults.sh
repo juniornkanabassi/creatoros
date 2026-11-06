@@ -3,6 +3,7 @@
 # save window and split-view frames there, which for the stable app is Junior's production preferences.
 # The check runs a copy of the packaged app under a throwaway bundle identifier, so the domain it inspects is
 # disposable and the real com.juniornkanabassi.CreatorOS preferences are never read or written.
+# Both variants run with --agent-screen --background, so nothing appears on screen or takes focus.
 # Usage: zsh Scripts/check-isolated-defaults.sh <packaged CreatorOS.app> [--headless]
 set -euo pipefail
 app="${1:?usage: check-isolated-defaults.sh <CreatorOS.app> [--headless]}"
@@ -41,54 +42,35 @@ trap cleanup EXIT
 frame_key='NSWindow Frame SwiftUI.WindowGroup<SwiftUI.ModifiedContent<SwiftUI.ModifiedContent<SwiftUI.ModifiedContent<ProjectTemplates.MainView, SwiftUI._EnvironmentKeyWritingModifier<Swift.Optional<ProjectTemplates.AppModel>>>, SwiftUI._FlexFrameLayout>, SwiftUI._AppearanceActionModifier>>-1-AppWindow-1'
 defaults write "$id" "$frame_key" "100 100 1111 777 0 0 1512 900 "
 seeded=$(defaults export "$id" - | plutil -convert json -o - -)
-# --display-name runs the test-window positioning path, which moves the window after it opens. Prefer a screen other
-# than the one the window opens on, so the move is real; print its name and its top-left-origin rectangle. The app
-# picks the first screen with the given name, so only a screen that is the first of its name is a usable target.
-target=$(/usr/bin/swift -e '
-import AppKit
-let screens = NSScreen.screens
-let usable = screens.filter { s in screens.first { $0.localizedName == s.localizedName } == s }
-let s = usable.first { $0 != NSScreen.main } ?? screens[0], f = s.frame, h = screens[0].frame.height
-print("\(Int(f.minX)) \(Int(h - f.maxY)) \(Int(f.maxX)) \(Int(h - f.minY)) \(s.localizedName)")')
-display=${target#* * * * }
-[[ -n "$display" ]] || { print -u2 "FAIL could not read a display name"; exit 1; }
-# A foreground launch and a normal quit, as in real use: SwiftUI saves the frame itself on the way out.
-launch_flags=()
-[[ "$headless" != --headless ]] || launch_flags=(--headless --background)
-"$stage/CreatorOS.app/Contents/MacOS/ProjectTemplates" "${launch_flags[@]}" --data-directory "$root" --display-name "$display" >/dev/null 2>&1 &
+# A windowed launch and a normal quit, as in real use: SwiftUI saves the frame itself on the way out. --agent-screen keeps
+# that window ordered in but transparent and click-through, and --background keeps focus where it is.
+launch_flags=(--agent-screen --background)
+variant=windowed
+[[ "$headless" != --headless ]] || { launch_flags+=(--headless); variant=headless; }
+"$stage/CreatorOS.app/Contents/MacOS/ProjectTemplates" "${launch_flags[@]}" --data-directory "$root" >/dev/null 2>&1 &
 pid=$!
 for _ in {1..100}; do [[ -S "$root/control.sock" ]] && break; sleep 0.1; done
 [[ -S "$root/control.sock" ]] || { print -u2 "FAIL isolated app did not start"; exit 1; }
 type=$(/usr/bin/lsappinfo info -app "$pid" 2>/dev/null | sed -n 's/.*type="\([A-Za-z]*\)".*/\1/p' | head -1)
 [[ "$type" == "UIElement" || "$type" == "BackgroundOnly" ]] || { print -u2 "FAIL the isolated app has a Dock tile (ApplicationType=$type)"; exit 1; }
-sleep 3   # let the window open, position itself and autosave if it is going to
-if [[ "$headless" != --headless ]]; then
-# The window must have moved onto the target display, or the positioning path was skipped and a PASS proves nothing.
+sleep 3   # let the window open and autosave if it is going to
+# No window may be visible, and the main window must not have adopted the seeded frame. The windowed variant must have
+# its main window ordered in, or the frame check proves nothing.
 /usr/bin/swift -e '
 import CoreGraphics
-let a = CommandLine.arguments, pid = Int(a[1])!, r = a[2].split(separator: " ").prefix(4).map { Double($0)! }
-let windows = CGWindowListCopyWindowInfo([.optionAll], kCGNullWindowID) as! [[String: Any]]
+let pid = Int(CommandLine.arguments[1])!, windowed = CommandLine.arguments[2] == "windowed"
+let windows = (CGWindowListCopyWindowInfo([.optionAll], kCGNullWindowID) as? [[String: Any]] ?? [])
+  .filter { $0[kCGWindowOwnerPID as String] as? Int == pid }
+if windows.contains(where: { ($0[kCGWindowIsOnscreen as String] as? Bool ?? false) && ($0[kCGWindowAlpha as String] as? Double ?? 1) > 0 }) {
+  print("FAIL the isolation check showed a window"); exit(1)
+}
 let bounds = windows.compactMap { w -> [String: Double]? in
-  guard w[kCGWindowOwnerPID as String] as? Int == pid, w[kCGWindowLayer as String] as? Int == 0,
-        let b = w[kCGWindowBounds as String] as? [String: Double], b["Width"]! > 500 else { return nil }
+  guard w[kCGWindowLayer as String] as? Int == 0, let b = w[kCGWindowBounds as String] as? [String: Double], b["Width"]! > 500 else { return nil }
   return b
 }
 if bounds.contains(where: { $0["Width"] == 1111 }) { print("FAIL the test window took the saved production-style frame, so autosave is attached"); exit(1) }
-let placed = bounds.contains { b in
-  let x = b["X"]! + b["Width"]! / 2, y = b["Y"]! + b["Height"]! / 2
-  return x >= r[0] && x <= r[2] && y >= r[1] && y <= r[3]
-}
-if !placed { print("FAIL the test window was not positioned on the target display"); exit(1) }' "$pid" "$target"
-else
-  /usr/bin/swift -e '
-import CoreGraphics
-let pid = Int(CommandLine.arguments[1])!
-let windows = CGWindowListCopyWindowInfo(.optionOnScreenOnly, kCGNullWindowID) as? [[String: Any]] ?? []
-if windows.contains(where: { ($0[kCGWindowOwnerPID as String] as? Int) == pid && ($0[kCGWindowAlpha as String] as? Double ?? 1) > 0 }) {
-    print("FAIL headless isolation check showed a window"); exit(1)
-}' "$pid"
-  print "PASS headless isolation showed no window; display placement not exercised"
-fi
+if windowed && bounds.isEmpty { print("FAIL the windowed isolation check has no main window, so the frame check proves nothing"); exit(1) }' "$pid" "$variant"
+print "PASS isolated launch showed no window and refused the saved frame"
 /usr/bin/swift -e 'import AppKit; _ = NSRunningApplication(processIdentifier: pid_t(CommandLine.arguments[1])!)?.terminate()' "$pid"
 for _ in {1..100}; do kill -0 "$pid" 2>/dev/null || break; sleep 0.1; done
 kill -0 "$pid" 2>/dev/null && { print -u2 "FAIL isolated app did not quit"; exit 1; }

@@ -1,14 +1,13 @@
 #!/usr/bin/env python3
 """A command against a closed CreatorOS starts it headless: no window on screen, not even for a frame, no Dock tile,
-quick to answer. An unused headless copy quits by itself. With --visible, --show also turns a copy into the ordinary app
-with its window in front, on the Prompter XL (or --display-name NAME) so nothing appears on the main monitor.
-Usage: python3 Scripts/check-headless.py <built CreatorOS.app> [--visible [--display-name NAME]].
-Runs only on disposable data directories. Without --visible nothing appears on screen."""
+quick to answer. An unused headless copy quits by itself. --show turns a copy into the ordinary app, but a check's copy
+(--agent-screen) stays invisible, in the background and out of the Dock throughout.
+Usage: python3 Scripts/check-headless.py <built CreatorOS.app>. Runs only on disposable data directories; nothing
+appears on any screen and nothing takes focus."""
 import instances
 import json, os, pathlib, re, statistics, subprocess, sys, tempfile, time
+os.environ['CREATOROS_AGENT_SCREEN'] = '1'  # every CLI and app child of this check stays invisible and focus-free
 app = pathlib.Path(sys.argv[1]).resolve()
-visible = '--visible' in sys.argv[2:]
-display = sys.argv[sys.argv.index('--display-name') + 1] if '--display-name' in sys.argv else 'Prompter XL'
 
 assert app.suffix == '.app', 'give the built CreatorOS.app'
 cli, exe = app / 'Contents/MacOS/creatoros', app / 'Contents/MacOS/ProjectTemplates'
@@ -47,6 +46,15 @@ print(windows.filter { $0[kCGWindowOwnerPID as String] as? Int == pid && $0[kCGW
     && ($0[kCGWindowAlpha as String] as? Double ?? 1) > 0 }.count)''', str(pid)], capture_output=True, text=True, timeout=120)
     return int(out.stdout.strip())
 
+def frontmost():
+    out = subprocess.run(['/usr/bin/swift', '-e', 'import AppKit; print(NSWorkspace.shared.frontmostApplication?.processIdentifier ?? -1)'],
+                         capture_output=True, text=True, timeout=120)
+    return int(out.stdout.strip())
+
+def command_line(pid):
+    """Arguments and, after them, the environment of one of this user's processes."""
+    return subprocess.run(['/bin/ps', '-E', '-ww', '-o', 'command=', '-p', str(pid)], capture_output=True, text=True).stdout
+
 try:
     check(command('status')[0] == {'running': False}, 'status works while stopped without launching')
     seen = watch(4)  # the launch and a little after it, sampled every 5 ms
@@ -56,6 +64,10 @@ try:
     print('INFO cold command, launch included: %.0f ms' % cold)
     check(cold < 10000, 'the first command answers while the app starts headless')
     check(state['headless'] is True, 'the copy the command started reports headless')
+    started = command_line(pid)
+    # open would drop this check's environment; a direct child keeps it.
+    check(' --agent-screen ' in started and 'CREATOROS_AGENT_SCREEN=1' in started,
+          'the CLI started the test copy directly, not through open, with --agent-screen and this environment')
     check(instances.activation_type(pid) in ('UIElement', 'BackgroundOnly'), 'the headless copy has no Dock tile')
     windows, dock = seen()
     check(windows == 0, 'the headless launch never put a window on screen, not even for a frame (saw %d)' % windows)
@@ -71,7 +83,7 @@ try:
     # An unused headless copy quits by itself; --idle-quit shortens the ten minutes for this check. Launched directly,
     # not through LaunchServices, which is the other way a headless copy starts.
     seen = watch(4)
-    idle = subprocess.Popen([str(exe), '--data-directory', str(idle_root), '--background', '--headless', '--idle-quit', '2'],
+    idle = subprocess.Popen([str(exe), '--agent-screen', '--data-directory', str(idle_root), '--background', '--headless', '--idle-quit', '2'],
                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     for _ in range(100):
         if (idle_root / 'control.sock').exists(): break
@@ -82,22 +94,22 @@ try:
     try: idle.wait(timeout=15)
     except subprocess.TimeoutExpired: pass
     check(idle.poll() is not None, 'an unused headless copy quits by itself')
-    if visible:
-        # --display-name puts the window on that screen as it opens, so the revealed window never lands on the main monitor.
-        shown = subprocess.Popen([str(exe), '--data-directory', str(root), '--background', '--headless', '--display-name', display],
-                                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        for _ in range(100):  # status answers {running: false} until this copy's socket is up; it never launches one
-            if 'headless' in command('status')[0]: break
-            time.sleep(0.1)
-        command('project', 'open', idea['id'], '--show')
-        state, _ = command('status')
-        check(state['headless'] is False and state['pid'] == shown.pid, '--show turns the headless copy into the visible app')
-        check(instances.activation_type(shown.pid) == 'Foreground', 'the revealed app has its Dock tile')
-        time.sleep(1)
-        check(onscreen_windows(shown.pid) == 1, 'the revealed app shows its window')
-    else:
-        print('INFO --show skipped; pass --visible to check it on the Prompter XL')
+    # --show promotes the copy, but under --agent-screen it never shows a window, gains a Dock tile or takes focus.
+    seen = watch(8)
+    shown = subprocess.Popen([str(exe), '--agent-screen', '--data-directory', str(root), '--background', '--headless'],
+                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    for _ in range(100):  # status answers {running: false} until this copy's socket is up; it never launches one
+        if 'headless' in command('status')[0]: break
+        time.sleep(0.1)
+    command('project', 'open', idea['id'], '--show')
+    state, _ = command('status')
+    check(state['headless'] is False and state['pid'] == shown.pid, '--show turns the headless copy into the ordinary app')
+    time.sleep(1)
+    check(instances.activation_type(shown.pid) in ('UIElement', 'BackgroundOnly'), 'the revealed check copy still has no Dock tile')
+    check(onscreen_windows(shown.pid) == 0, 'the revealed check copy shows no window')
+    check(frontmost() != shown.pid, 'the revealed check copy stayed in the background')
+    windows, dock = seen()
+    check(windows == 0 and not dock, '--show never put a check copy on screen or in the Dock (saw %d, Dock %s)' % (windows, dock))
 finally:
-    instances.quit_all(root, idle_root)
-    instances.assert_none_alive(root, idle_root)
+    instances.cleanup(root, idle_root)
 print('RESULT %d headless checks passed' % checks)

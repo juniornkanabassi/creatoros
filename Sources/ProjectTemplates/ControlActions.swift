@@ -465,6 +465,7 @@ extension AppModel {
         let url = try await Task.detached { try ProjectBrowser.openable(item, root: root) }.value
         try beforeOpen()
         if let ext, url.pathExtension.lowercased() != ext { throw AppFailure("This is not a \(ext == "prproj" ? "Premiere project" : ext + " file").") }
+        guard !AgentScreen.active else { throw ControlFailure(code: "not_allowed", message: "Opening other applications is disabled during invisible checks.") }
         guard await NSWorkspace.shared.urlForApplication(toOpen: url) != nil else { throw AppFailure("No app is registered for this file type. Install or choose the appropriate editor in macOS first.") }
         let configuration = NSWorkspace.OpenConfiguration(); configuration.activates = activates
         try await NSWorkspace.shared.open(url, configuration: configuration)

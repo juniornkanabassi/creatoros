@@ -1,4 +1,4 @@
-import Foundation
+import AppKit
 import Darwin
 import TemplateCore
 
@@ -147,25 +147,37 @@ do {
         let launch = Process()
         launch.standardInput = FileHandle.nullDevice; launch.standardOutput = FileHandle.nullDevice; launch.standardError = FileHandle.nullDevice
         var viaOpen = true
+        // A test instance (a data directory) or a check (CREATOROS_AGENT_SCREEN=1) starts as a direct child with --agent-screen:
+        // never through open, which drops this environment, and never with anything on screen or any focus taken.
+        let agent = dataDirectory != nil || ProcessInfo.processInfo.environment["CREATOROS_AGENT_SCREEN"] == "1"
         // --headless: no window, Dock tile or update prompt. --background keeps an app older than this CLI out of the way too.
-        let headlessArguments = ["--background", "--headless"] + (dataDirectory != nil ? ["--data-directory", root.path] : [])
-        if bundle.pathExtension == "app" {
+        let headlessArguments = ["--background", "--headless"] + (agent ? ["--agent-screen"] : [])
+            + (dataDirectory != nil ? ["--data-directory", root.path] : [])
+        // Inside CreatorOS.app this is Contents/MacOS/ProjectTemplates; in a build folder, the one built beside this CLI.
+        // Never the installed app for a build-folder CLI, which may be an older release that does not know these commands.
+        let sibling = executable.deletingLastPathComponent().appendingPathComponent("ProjectTemplates")
+        let hasSibling = FileManager.default.isExecutableFile(atPath: sibling.path)
+        if bundle.pathExtension == "app" && !agent {
+            // Production keeps LaunchServices: the app is its own responsible process for privacy prompts and is not this CLI's child.
             launch.executableURL = URL(fileURLWithPath: "/usr/bin/open")
             launch.arguments = ["-g", "-n", "-a", bundle.path, "--args"] + headlessArguments
-        } else {
-            // Not inside an app: this CLI came from a build folder. Start the ProjectTemplates beside it, never the installed app,
-            // which may be an older release that does not know these commands.
-            let sibling = executable.deletingLastPathComponent().appendingPathComponent("ProjectTemplates")
-            if FileManager.default.isExecutableFile(atPath: sibling.path) {
-                viaOpen = false
-                launch.executableURL = sibling
-                launch.arguments = headlessArguments
-            } else if dataDirectory != nil {
-                throw fail("no_app", "No ProjectTemplates executable sits beside this creatoros, so it cannot start a test instance. Build it (swift build) or run creatoros from inside CreatorOS.app.", 1)
-            } else {
-                launch.executableURL = URL(fileURLWithPath: "/usr/bin/open")
-                launch.arguments = ["-g", "-n", "-b", AppRuntime.releaseIdentifier, "--args"] + headlessArguments
+        } else if hasSibling {
+            viaOpen = false
+            launch.executableURL = sibling
+            launch.arguments = headlessArguments
+        } else if dataDirectory != nil {
+            throw fail("no_app", "No ProjectTemplates executable sits beside this creatoros, so it cannot start a test instance. Build it (swift build) or run creatoros from inside CreatorOS.app.", 1)
+        } else if agent {
+            guard let app = NSWorkspace.shared.urlForApplication(withBundleIdentifier: AppRuntime.releaseIdentifier),
+                  let installed = Bundle(url: app)?.executableURL else {
+                throw fail("no_app", "CreatorOS is not installed, so a check cannot start it. Run creatoros from inside CreatorOS.app.", 1)
             }
+            viaOpen = false
+            launch.executableURL = installed
+            launch.arguments = headlessArguments
+        } else {
+            launch.executableURL = URL(fileURLWithPath: "/usr/bin/open")
+            launch.arguments = ["-g", "-n", "-b", AppRuntime.releaseIdentifier, "--args"] + headlessArguments
         }
         try launch.run()
         if viaOpen { launch.waitUntilExit() }

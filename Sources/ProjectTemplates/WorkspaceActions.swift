@@ -136,7 +136,9 @@ extension AppModel {
             await saveTaskForWorkspace()
             guard storeUsable, let current = library.projects.first(where: { $0.id == record.id }) else { throw AppFailure("The record is unavailable; nothing was put in the Bin.") }
             try runtime.requireWritable(confirmed)
-            trashURL = try IdeaWorkspaceEngine.trash(for: current, confirmedURL: confirmed)
+            trashURL = try IdeaWorkspaceEngine.trash(for: current, confirmedURL: confirmed) { [runtime] in
+                try BackgroundFileOperations.trash($0, runtime: runtime)
+            }
             trashed = true
             try await commitDurably { lib in
                 if removingRecord { lib.projects.removeAll { $0.id == record.id } }
@@ -191,7 +193,7 @@ struct CompatibilitySheet: View {
                 Text("A corrected copy preserves the original and document contents. Renamed media may need relinking in Premiere Pro, OBS or Watchtower. A rename manifest is included.").font(TypeStyle.caption).foregroundStyle(.secondary)
                 if let output = m.compatibilityOutput {
                     Text("Created: \(output.path)").textSelection(.enabled)
-                    Button("Show Copy in Finder") { NSWorkspace.shared.activateFileViewerSelecting([output]) }
+                    Button("Show Copy in Finder") { NSWorkspace.shared.revealOutsideChecks([output]) }
                 } else if report.canCopy {
                     HStack {
                         Text(destination?.path ?? "Choose an alpha output folder").font(TypeStyle.caption).textSelection(.enabled)

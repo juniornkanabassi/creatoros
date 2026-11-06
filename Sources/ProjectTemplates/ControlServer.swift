@@ -228,6 +228,7 @@ extension AppModel {
         }
         if action == "project.reveal" {
             let url = try await folderToShow(record)
+            guard !AgentScreen.active else { throw ControlFailure(code: "not_allowed", message: "Opening other applications is disabled during invisible checks.") }
             let config = NSWorkspace.OpenConfiguration(); config.activates = params["show"] as? Bool == true
             try await NSWorkspace.shared.open(url, configuration: config)
             return ["id": record.id.uuidString, "path": url.path]

@@ -3,6 +3,9 @@ import AppKit
 import TemplateCore
 import Darwin
 import CryptoKit
+import TestOffscreen
+
+TestOffscreenInstalled()
 
 var checks = 0
 func check(_ condition: @autoclosure () throws -> Bool, _ name: String) throws {
@@ -40,7 +43,7 @@ do {
     let fm = FileManager.default
     let base = fm.temporaryDirectory.appendingPathComponent("ContentTemplate-checks-" + UUID().uuidString)
     try fm.createDirectory(at: base, withIntermediateDirectories: false)
-    // Keep this run's disposable fixtures for inspection; no user folder is ever removed.
+    defer { try? fm.removeItem(at: base) }
     print("FIXTURES \(base.path)")
     let source = base.appendingPathComponent("Original")
     let destination = base.appendingPathComponent("Projects")

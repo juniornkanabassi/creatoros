@@ -20,6 +20,8 @@ jobs:
           persist-credentials: false
       - name: Build
         run: swift build --scratch-path .build-ci
+      - name: Offscreen guard regression
+        run: swift test --scratch-path .build-ci
       - name: Core assertions on synthetic data (CoreChecks)
         run: swift run --scratch-path .build-ci CoreChecks
       - name: Durable save and native file providers

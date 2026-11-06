@@ -45,7 +45,7 @@ struct FolderBrowserHost: View {
                 Button { goUp() } label: { Image(systemName: "chevron.up") }.disabled(folder.isEmpty || projectFilesOnly).help("Enclosing folder").accessibilityLabel("Enclosing folder")
                 Button("Root") { folder = ""; selection = nil; projectFilesOnly = false }.disabled(folder.isEmpty && !projectFilesOnly)
                     .help("Return to the top of this project's folder.")
-                Button { if let root { NSWorkspace.shared.activateFileViewerSelecting([root.appendingPathComponent(selection ?? folder)]) } } label: { Image(systemName: "arrow.up.forward.app") }
+                Button { if let root { NSWorkspace.shared.revealOutsideChecks([root.appendingPathComponent(selection ?? folder)]) } } label: { Image(systemName: "arrow.up.forward.app") }
                     .disabled(root == nil).help("Reveal in Finder: the selected item, or this folder when nothing is selected, ready to drag into YouTube or anywhere else")
                     .accessibilityLabel("Reveal in Finder")
                 Text(projectFilesOnly ? "Premiere, After Effects, Photoshop and audio projects" : (folder.isEmpty ? title : folder))
@@ -67,7 +67,7 @@ struct FolderBrowserHost: View {
                     else {
                         FileBrowserView(dataSource: FolderDataSource(root: root), mode: m.viewMode(surface), folder: $folder, selection: $selection,
                                         filter: query, reloadKey: "\(root.path)#\(refreshCount)", onActivate: { node in requestOpen(node) },
-                                        onReveal: { node in NSWorkspace.shared.activateFileViewerSelecting([root.appendingPathComponent(node.id)]) },
+                                        onReveal: { node in NSWorkspace.shared.revealOutsideChecks([root.appendingPathComponent(node.id)]) },
                                         dragURL: managedTemplate ? nil : { node in outgoing(root: root, path: node.id) },
                                         fileDrop: fileDrop)
                     }

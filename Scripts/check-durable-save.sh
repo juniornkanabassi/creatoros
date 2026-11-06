@@ -62,17 +62,20 @@ print "TemplateCore module: $module_file"
 # The app sources import Sparkle (Updates.swift), so the harness links the framework SwiftPM built beside them.
 [[ -d "$framework_dir/Sparkle.framework" ]] || { print -u2 "No Sparkle.framework in $framework_dir; rebuild first"; exit 1; }
 check_dir=$(mktemp -d "${CONTENT_TEMPLATE_CHECK_ROOT:-/private/tmp}/creatoros-durable-check.XXXXXX")
+# The check's AppModel keeps interface state in this data directory's own suite (AppRuntime.defaultsSuite). Remove exactly
+# that domain, its plist and this scratch folder once the check has ended, even if it crashed before its own cleanup.
+suite=local.creatoros.alpha.$(print -rn -- "${check_dir:A}/Data" | /usr/bin/base64)
+trap '/usr/bin/defaults delete "$suite" >/dev/null 2>&1 || true; rm -f ~/Library/Preferences/"$suite".plist; rm -rf "$check_dir"' EXIT
 cp Sources/ProjectTemplates/ProjectTemplatesApp.swift "$check_dir/ProjectTemplatesApp.swift"
 # Keep all real UI declarations, replacing only the executable entrypoint.
 sed -i '' 's/^@main struct ContentTemplateApp/struct ContentTemplateApp/' "$check_dir/ProjectTemplatesApp.swift"
+# Link the unchanged TestOffscreen guard first: its constructor keeps every window this harness makes transparent and
+# click-through and stops it activating, before any check code runs. An object file on the link line is always loaded.
+/usr/bin/xcrun clang -fobjc-arc -fmodules -I Tests/TestOffscreen/include -c Tests/TestOffscreen/TestOffscreen.m -o "$check_dir/TestOffscreen.o"
 swiftc -parse-as-library -module-name CreatorOSDurableCheck -I "$module_dir" \
     -F "$framework_dir" -framework Sparkle -Xlinker -rpath -Xlinker "$framework_dir" \
     Sources/ProjectTemplates/^ProjectTemplatesApp.swift(.N) \
     "$check_dir/ProjectTemplatesApp.swift" "${CONTENT_TEMPLATE_CHECK_SOURCE:-Scripts/check-durable-save.swift}" \
-    "${objects[@]}" -o "$check_dir/check"
-# The check's AppModel keeps interface state in this data directory's own suite (AppRuntime.defaultsSuite). Remove exactly
-# that domain and its plist once the check has ended, even if it crashed before its own cleanup.
-suite=local.creatoros.alpha.$(print -rn -- "${check_dir:A}/Data" | /usr/bin/base64)
-trap '/usr/bin/defaults delete "$suite" >/dev/null 2>&1 || true; rm -f ~/Library/Preferences/"$suite".plist' EXIT
-"$check_dir/check" --data-directory "$check_dir/Data"
-print "Disposable evidence retained: $check_dir"
+    "${objects[@]}" "$check_dir/TestOffscreen.o" -o "$check_dir/check"
+/usr/bin/nm -g "$check_dir/check" | grep ' _TestOffscreenInstalled$' >/dev/null || { print -u2 "FAIL the TestOffscreen guard is not linked into the harness"; exit 1; }
+"$check_dir/check" --agent-screen --data-directory "$check_dir/Data"

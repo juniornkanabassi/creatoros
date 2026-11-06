@@ -53,6 +53,8 @@ extension NSSplitView { @objc func refuseAutosaveName(_ name: String?) {} }
     @StateObject private var model = AppModel()
     @NSApplicationDelegateAdaptor(CreatorOSDelegate.self) private var delegate
     init() {
+        // A check's copy (--agent-screen) hides every window before any exists, so none shows even for a frame.
+        AgentScreen.install()
         // macOS restores the windows an app had when it quit; after Junior closed the window and quit, that was none,
         // so a relaunch from Spotlight showed nothing. Always open the main window instead; it keeps its own frame below.
         UserDefaults.standard.register(defaults: ["ApplePersistenceIgnoreState": true])
@@ -91,10 +93,10 @@ extension NSSplitView { @objc func refuseAutosaveName(_ name: String?) {} }
         }
         Updates.shared.start()
     }
-    /// An isolated run: no Dock tile, no activation, unless the launch asked for --show.
+    /// An isolated run: no Dock tile, no activation, unless the launch asked for --show. An --agent-screen copy never has either.
     static var quietLaunch: Bool {
         let arguments = ProcessInfo.processInfo.arguments
-        return dataRootArgument(arguments) != nil && !arguments.contains("--show")
+        return AgentScreen.active || (dataRootArgument(arguments) != nil && !arguments.contains("--show"))
     }
     var body: some Scene {
         WindowGroup(AppInfo.label) {
@@ -229,16 +231,8 @@ struct ZoomedInterface<Content: View>: View {
 /// so the View menu item is given back its Control-Command-F equivalent here.
 enum WindowSetup {
     private static var keyMonitor: Any?
-    private static var positionedTestWindow = false
     static func apply(zoom: @escaping (Int) -> Void, reset: @escaping () -> Void) {
         let args = ProcessInfo.processInfo.arguments
-        if !positionedTestWindow, args.contains("--data-directory"), let index = args.firstIndex(of: "--display-name"), args.indices.contains(index + 1),
-           let screen = NSScreen.screens.first(where: { $0.localizedName == args[index + 1] }),
-           let window = NSApp.windows.first(where: { $0.styleMask.contains(.titled) }) {
-            let frame = screen.visibleFrame
-            window.setFrameOrigin(NSPoint(x: frame.midX - window.frame.width / 2, y: frame.midY - window.frame.height / 2))
-            positionedTestWindow = true
-        }
         for window in NSApp.windows where window.styleMask.contains(.titled) {
             window.collectionBehavior.insert(.fullScreenPrimary)
             // Reopen where it was last left: AppKit saves the frame under this name and restores it when set.
@@ -351,7 +345,7 @@ struct MainView: View {
             VStack(alignment: .leading, spacing: Space.md) {
                 HStack { Text(record.name).font(TypeStyle.title2); Spacer(); Button("Done") { m.workspaceToBrowse = nil }.help("Close this window") }
                 Text("This is the idea's draft folder. Add notes and attachments by opening it in Finder. Start Project will copy this folder without merging another template.").font(TypeStyle.caption)
-                Button("Open Workspace in Finder") { m.attempt { let root = try IdeaWorkspaceEngine.resolve(for: record); try m.runtime.requireWritable(root); NSWorkspace.shared.open(root) } }
+                Button("Open Workspace in Finder") { m.attempt { let root = try IdeaWorkspaceEngine.resolve(for: record); try m.runtime.requireWritable(root); NSWorkspace.shared.openOutsideChecks(root) } }
                     .help("Open the idea's draft folder in Finder")
                 FolderBrowserHost(title: record.name, resolveRoot: { [runtime = m.runtime] in let url = try IdeaWorkspaceEngine.resolve(for: record); try runtime.requireWritable(url); return url })
             }.padding(Space.xl).frame(width: 820, height: 640).errorNotice()

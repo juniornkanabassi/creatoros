@@ -2,8 +2,9 @@
 """Disposable built-app socket checks; no foreground UI or production data."""
 import atexit, json, os, pathlib, socket, subprocess, sys, tempfile, time
 import instances
+os.environ['CREATOROS_AGENT_SCREEN'] = '1'  # every CLI, MCP and app child of this check stays invisible and focus-free
 roots = []
-atexit.register(lambda: instances.quit_all(*roots) if roots else None)  # whatever this run launched is quit, however it ends
+atexit.register(lambda: instances.cleanup(*roots) if roots else None)  # reap this run's children, then remove its fixtures
 rename_source = pathlib.Path('Sources/TemplateCore/ProjectRename.swift').read_text()
 volume_guard = 'try requireExclusiveRenaming(root.resourceValues(forKeys: [.volumeSupportsExclusiveRenamingKey]).volumeSupportsExclusiveRenaming)'
 assert volume_guard in rename_source and rename_source.index(volume_guard) < rename_source.index('try walk(root)')
@@ -27,7 +28,7 @@ roots.append(root)
 # A stale socket owned by this fixture must be replaced, never a regular file.
 stale = socket.socket(socket.AF_UNIX)
 stale.bind(str(root / 'control.sock')); stale.close()
-proc = subprocess.Popen([str(exe), '--headless', '--background', '--data-directory', str(root)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+proc = subprocess.Popen([str(exe), '--agent-screen', '--headless', '--background', '--data-directory', str(root)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 try:
     for _ in range(100):
         try:
@@ -69,7 +70,7 @@ blocked_root = pathlib.Path(tempfile.mkdtemp(prefix='cos-socket-file-', dir='/pr
 roots.append(blocked_root)
 assert not instances.pids(*roots), 'the first test instance must be gone before the second starts'
 (blocked_root / 'control.sock').write_bytes(b'keep this regular file')
-blocked = subprocess.Popen([str(exe), '--headless', '--background', '--data-directory', str(blocked_root)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+blocked = subprocess.Popen([str(exe), '--agent-screen', '--headless', '--background', '--data-directory', str(blocked_root)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 try:
     time.sleep(.5)
     assert (blocked_root / 'control.sock').read_bytes() == b'keep this regular file'

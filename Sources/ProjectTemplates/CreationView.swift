@@ -350,7 +350,7 @@ struct CreationPreview: View {
                 FlowLayout(spacing: Space.sm) {
                     Label("Project created", systemImage: "checkmark.circle.fill").foregroundStyle(.green)
                     Text(created.lastPathComponent).font(TypeStyle.caption).foregroundStyle(.secondary).lineLimit(1)
-                    Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([created]) }.help("Show the new project folder in Finder")
+                    Button("Show in Finder") { NSWorkspace.shared.revealOutsideChecks([created]) }.help("Show the new project folder in Finder")
                     Button("Browse Project") {
                         if let record = m.library.projects.first(where: { $0.path == created.path }) { m.selectedProject = record.id; m.page = .projects; m.selectProject() }
                         m.newProjectPresented = false

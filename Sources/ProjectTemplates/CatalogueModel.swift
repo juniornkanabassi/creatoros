@@ -131,7 +131,7 @@ extension AppModel {
     func open(_ record: ProjectRecord) {
         attempt {
             let url = try projectFolderForAction(record)
-            if !NSWorkspace.shared.open(url) { throw AppFailure("Finder could not open this folder.") }
+            if !NSWorkspace.shared.openOutsideChecks(url) { throw AppFailure("Finder could not open this folder.") }
         }
     }
     func removeLocation(_ location: CatalogueLocation) { attempt { try forgetLocation(location) } }

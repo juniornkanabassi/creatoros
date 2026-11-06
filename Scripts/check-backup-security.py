@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
-import hashlib, json, pathlib, subprocess, tempfile
+import atexit, hashlib, json, pathlib, shutil, subprocess, tempfile
 root = pathlib.Path(tempfile.mkdtemp(prefix='cos-backup-', dir='/private/tmp'))
+atexit.register(shutil.rmtree, root)
 backup = root / 'backup'; (backup / 'Sources').mkdir(parents=True)
 (backup / 'README.md').write_text('fixture')
 (backup / 'Sources/note.md').write_text('# Fixture\nThis note has enough body words to pass.\n')

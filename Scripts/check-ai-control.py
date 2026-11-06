@@ -2,6 +2,7 @@
 """Run every control command on synthetic data in the supplied build, with no input events."""
 import instances
 import atexit, concurrent.futures, json, os, pathlib, signal, socket, subprocess, sys, tempfile, time, uuid
+os.environ['CREATOROS_AGENT_SCREEN'] = '1'  # every CLI, MCP and app child of this check stays invisible and focus-free
 app = pathlib.Path(sys.argv[1]).resolve()
 cli = app / 'Contents/MacOS/creatoros' if app.suffix == '.app' else app.parent / 'creatoros'
 exe = app / 'Contents/MacOS/ProjectTemplates' if app.suffix == '.app' else app
@@ -9,7 +10,7 @@ shim = app / 'Contents/Resources/mcp/creatoros-mcp.mjs' if app.suffix == '.app' 
 root = pathlib.Path(tempfile.mkdtemp(prefix='cos-ai-', dir='/private/tmp'))
 checks = 0
 roots = [root]  # every data directory this run launches an app for; all are swept at the end
-atexit.register(lambda: instances.quit_all(*roots))  # also when a check before the main try fails; quits, then forgets preferences
+atexit.register(lambda: instances.cleanup(*roots))  # also on failure; reap children before removing preferences and fixtures
 
 def check(condition, label):
     global checks
@@ -43,7 +44,7 @@ if app.suffix == '.app':
     check(command('library','stats')['templates'] == 1, 'stopped built app launches through CLI symlink')
     pid = command('status')['pid']
 else:
-    proc = subprocess.Popen([str(exe), '--headless', '--background','--data-directory',str(root)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    proc = subprocess.Popen([str(exe), '--agent-screen', '--headless', '--background','--data-directory',str(root)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     pid = proc.pid
 try:
     for _ in range(100):
@@ -434,6 +435,8 @@ try:
     check(promoted['id'] == bin_idea['id'] and promoted['name'].endswith('Binned project'), 'create --from-idea accepts a different title')
     binned = command('project', 'workspace-bin', promoted['id'], '--confirm')
     check(binned['workspace'] is None and not pathlib.Path(bin_ws['workspace']['path']).exists() and binned['binPath'], 'workspace-bin moves the workspace to the Bin, never deletes it')
+    check(pathlib.Path(binned['binPath']).is_relative_to(root / 'TestBin') and pathlib.Path(binned['binPath']).is_dir(),
+          'invisible checks keep binned fixtures inside the disposable data directory')
     check(error('project', 'create', '--from-idea', started['id'])['code'] == 'invalid_params', 'create --from-idea refuses a record that is already a project')
     check(error('project', 'create', '--from-idea', 'Parity idea', '--format', 'Long')['code'] == 'invalid_params', 'create --from-idea refuses a mismatched --format')
     plain_idea = command('idea', 'add', '--title', 'Plain idea', '--format', 'Short')
@@ -483,6 +486,10 @@ try:
     candidates = command('project', 'open-premiere', iconic['id'])
     check(candidates['candidates'] == ['02 Project Files/cut.prproj'], 'project open-premiere returns the candidates')
     check(error('project', 'open-premiere', iconic['id'], '--file', '01 Documents/Script.md')['code'] == 'invalid_params', 'project open-premiere refuses a document that is not a Premiere project')
+    for show in ([], ['--show']):
+        for action in [('reveal',), ('open-file', '--path', '01 Documents/Script.md'), ('open-premiere', '--file', '02 Project Files/cut.prproj')]:
+            check(error('project', action[0], iconic['id'], *action[1:], *show)['code'] == 'not_allowed',
+                  'invisible checks refuse external windows: ' + action[0] + (' --show' if show else ''))
     donor = root / 'Donor'; donor.mkdir(); (donor / 'clip.mov').write_bytes(b'moov')
     before = world()
     add_dry = command('project', 'add-files', iconic['id'], '--from', str(donor / 'clip.mov'), '--to', '03 Media', '--copy', '--dry-run')

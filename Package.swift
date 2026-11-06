@@ -16,8 +16,11 @@ let package = Package(
                                 // build.sh embeds Sparkle.framework in Contents/Frameworks; a bare SwiftPM binary finds it beside itself.
                                 linkerSettings: [.unsafeFlags(["-Xlinker", "-rpath", "-Xlinker", "@executable_path/../Frameworks",
                                                                     "-Xlinker", "-rpath", "-Xlinker", "@executable_path"])]),
-              .executableTarget(name: "CoreChecks", dependencies: ["TemplateCore"]),
+              // Keeps every test window invisible and stops tests activating the process (see TestOffscreen.m).
+              .target(name: "TestOffscreen", path: "Tests/TestOffscreen"),
+              .executableTarget(name: "CoreChecks", dependencies: ["TemplateCore", "TestOffscreen"]),
               .executableTarget(name: "creatoros", dependencies: ["TemplateCore"]),
-              .executableTarget(name: "ContentTool", dependencies: ["TemplateCore"])],
+              .executableTarget(name: "ContentTool", dependencies: ["TemplateCore"]),
+              .testTarget(name: "CreatorOSTests", dependencies: ["TestOffscreen"], path: "Tests/CreatorOSTests")],
     swiftLanguageModes: [.v5]
 )

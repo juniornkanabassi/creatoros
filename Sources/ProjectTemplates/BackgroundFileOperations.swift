@@ -3,13 +3,27 @@ import TemplateCore
 
 /// Blocking filesystem work uses captured values; AppModel publishes results and owns all mutations.
 enum BackgroundFileOperations {
+    static func trash(_ url: URL, runtime: AppRuntime) throws -> URL? {
+        try runtime.requireWritable(url)
+        if AgentScreen.active {
+            guard runtime.ownsDisposablePreferences else { throw AppFailure("Invisible checks require a disposable data directory.") }
+            let bin = runtime.root.appendingPathComponent("TestBin", isDirectory: true)
+            try runtime.requireWritable(bin)
+            try FileManager.default.createDirectory(at: bin, withIntermediateDirectories: true)
+            let destination = bin.appendingPathComponent(UUID().uuidString)
+            try FileManager.default.moveItem(at: url, to: destination)
+            return destination
+        }
+        var trashed: NSURL?
+        try FileManager.default.trashItem(at: url, resultingItemURL: &trashed)
+        return trashed as URL?
+    }
+
     static func trashIfPresent(_ payload: URL, runtime: AppRuntime) async throws -> URL? {
         try await Task.detached(priority: .userInitiated) {
             try runtime.requireWritable(payload)
             guard FileManager.default.fileExists(atPath: payload.path) else { return nil }
-            var trashed: NSURL?
-            try FileManager.default.trashItem(at: payload, resultingItemURL: &trashed)
-            return trashed as URL?
+            return try trash(payload, runtime: runtime)
         }.value
     }
 

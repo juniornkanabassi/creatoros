@@ -2,7 +2,7 @@
 
 Only a process whose arguments carry one of the caller's own disposable data directories (under /private/tmp) is ever
 looked at, so the everyday app (no --data-directory) can never be matched or stopped by these helpers."""
-import base64, os, pathlib, signal, subprocess, tempfile, time
+import base64, os, pathlib, shutil, signal, subprocess, tempfile, time
 
 def _roots(roots):
     clean = [str(r) for r in roots]
@@ -42,6 +42,14 @@ def quit_all(*roots, grace=10):
 def preferences_domain(root):
     """The defaults suite an isolated run on this data directory uses (AppRuntime.defaultsSuite, pinned in CoreChecks)."""
     return 'local.creatoros.alpha.' + base64.b64encode(str(root).encode()).decode()
+
+def cleanup(*roots):
+    """Reap this run's children before removing their preferences and disposable fixtures."""
+    quit_all(*roots)
+    assert_none_alive(*roots)
+    for root in _roots(roots):
+        if pathlib.Path(root).exists():
+            shutil.rmtree(root)
 
 def forget_preferences(*roots):
     """Remove each root's own defaults domain, then its exact plist, once no instance on that root is left to rewrite it."""

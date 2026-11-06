@@ -1,6 +1,65 @@
 import AppKit
 import SwiftUI
 
+/// `--agent-screen` (every real-app check) and app-hosted XCTest runs: nothing this copy shows can appear on any of
+/// Junior's displays or take focus. Windows are still ordered in, so Accessibility and window lists still see them, but
+/// every one, sheets, alerts and Settings included, is fully transparent and lets clicks through, and the app never
+/// activates or gains a Dock tile. Video Prompter a28a30c, with TestOffscreen's swaps so no window shows for even one frame.
+enum AgentScreen {
+    static let active = CommandLine.arguments.contains("--agent-screen")
+        || ProcessInfo.processInfo.environment["CREATOROS_AGENT_SCREEN"] == "1"
+        || ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
+    /// From the App's init, first, before any window exists.
+    @MainActor static func install() {
+        guard active else { return }
+        NSWindow.keepEveryWindowInvisible()
+        // Every way a window is put on screen hides it first, and alpha can never be raised again.
+        swap(NSWindow.self, #selector(setter: NSWindow.alphaValue), #selector(NSWindow.agentScreen_setAlphaValue(_:)))
+        swap(NSWindow.self, #selector(NSWindow.order(_:relativeTo:)), #selector(NSWindow.agentScreen_order(_:relativeTo:)))
+        swap(NSWindow.self, #selector(NSWindow.orderFront(_:)), #selector(NSWindow.agentScreen_orderFront(_:)))
+        swap(NSWindow.self, #selector(NSWindow.orderFrontRegardless), #selector(NSWindow.agentScreen_orderFrontRegardless))
+        swap(NSWindow.self, #selector(NSWindow.makeKeyAndOrderFront(_:)), #selector(NSWindow.agentScreen_makeKeyAndOrderFront(_:)))
+        swap(NSApplication.self, NSSelectorFromString("activateIgnoringOtherApps:"), #selector(NSApplication.agentScreen_activate(ignoringOtherApps:)))
+        swap(NSApplication.self, NSSelectorFromString("activate"), #selector(NSApplication.agentScreen_activateNow))
+    }
+    private static func swap(_ type: AnyClass, _ original: Selector, _ replacement: Selector) {
+        guard let old = class_getInstanceMethod(type, original), let new = class_getInstanceMethod(type, replacement) else { return }
+        method_exchangeImplementations(old, new)
+    }
+}
+extension NSWindow {
+    /// Video Prompter a28a30c: the backstop for any window that reaches the screen another way.
+    static func keepEveryWindowInvisible() {
+        NotificationCenter.default.addObserver(forName: NSWindow.didUpdateNotification, object: nil, queue: .main) { note in
+            guard let window = note.object as? NSWindow, window.alphaValue != 0 || !window.ignoresMouseEvents else { return }
+            MainActor.assumeIsolated { window.alphaValue = 0; window.ignoresMouseEvents = true }
+        }
+    }
+    // After AgentScreen.install swaps these in, each agentScreen_ call below runs AppKit's original.
+    private func agentScreenHide() { agentScreen_setAlphaValue(0); ignoresMouseEvents = true }
+    @objc func agentScreen_setAlphaValue(_ value: CGFloat) { agentScreen_setAlphaValue(0) }
+    @objc func agentScreen_order(_ mode: NSWindow.OrderingMode, relativeTo other: Int) { agentScreenHide(); agentScreen_order(mode, relativeTo: other) }
+    @objc func agentScreen_orderFront(_ sender: Any?) { agentScreenHide(); agentScreen_orderFront(sender) }
+    @objc func agentScreen_orderFrontRegardless() { agentScreenHide(); agentScreen_orderFrontRegardless() }
+    @objc func agentScreen_makeKeyAndOrderFront(_ sender: Any?) { agentScreenHide(); agentScreen_makeKeyAndOrderFront(sender) }
+}
+extension NSApplication {
+    @objc func agentScreen_activate(ignoringOtherApps flag: Bool) {}
+    @objc func agentScreen_activateNow() {}
+}
+
+extension NSWorkspace {
+    /// Finder and document windows belong to other processes, so our window guard cannot hide them.
+    @discardableResult func openOutsideChecks(_ url: URL) -> Bool {
+        guard !AgentScreen.active else { return false }
+        return open(url)
+    }
+    func revealOutsideChecks(_ urls: [URL]) {
+        guard !AgentScreen.active else { return }
+        activateFileViewerSelecting(urls)
+    }
+}
+
 /// A launch by `creatoros` or the MCP server (`--headless`) runs as a background service: the control socket answers,
 /// and there is no window, no Dock tile and no update prompt. The app turns into the ordinary windowed app the moment a
 /// window is wanted: a command with --show, a reopen from the Dock, Spotlight or Finder, or anything that activates it.
@@ -52,11 +111,12 @@ import SwiftUI
         timer?.invalidate(); timer = nil
         if let activeObserver { NotificationCenter.default.removeObserver(activeObserver) }
         activeObserver = nil
-        NSApp.setActivationPolicy(.regular)
+        // An --agent-screen copy goes through every step of becoming the ordinary app except gaining a Dock tile.
+        NSApp.setActivationPolicy(AgentScreen.active ? .accessory : .regular)
         Updates.shared.resume()
         onPromote()
         guard let window = mainWindow else { return }
-        window.alphaValue = 1; window.ignoresMouseEvents = false
+        if !AgentScreen.active { window.alphaValue = 1; window.ignoresMouseEvents = false }
         if !NSApp.windows.contains(where: \.isVisible) { window.makeKeyAndOrderFront(nil); windowHidden = false }
     }
     /// Promote and bring the main window forward: --show, or a reopen from the Dock, Spotlight or Finder.
