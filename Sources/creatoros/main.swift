@@ -139,10 +139,10 @@ do {
     // answers; the next one then finds the socket. It is let go before the request, so a long command never holds up others.
     var launchLock: Int32 = -1
     if connection == nil {
-        if dataDirectory != nil {
-            // Every CLI-started isolated instance is invisible; validate before creating a lock or data folder.
+        if dataDirectory != nil && !checkRequested {
+            // Every CLI-started isolated instance is invisible, so only a temporary data folder may be started here.
             do { _ = try AppRuntime.forInvisibleLaunch(dataRoot: root) }
-            catch { throw fail("usage", error.localizedDescription) }
+            catch { throw fail("usage", "CreatorOS is not running on \(root.path), and the command line starts only an invisible copy, which needs a temporary data folder. Start the app on that folder first.") }
         }
         // A first launch on a new data folder has no folder yet; make it (as the app would) so the lock always exists.
         try? FileManager.default.createDirectory(at: root, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])

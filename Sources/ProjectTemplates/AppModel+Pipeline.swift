@@ -55,7 +55,7 @@ extension AppModel {
         let ids = before.map(\.id)
         guard !ids.isEmpty else { return }
         attempt {
-            reportTagFailures(try moveAll(ids: ids, to: target), name: target)
+            reportTagFailures(try moveAll(ids: ids, to: target), name: before.count == 1 ? before[0].name : target)
             let changed = before.filter { $0.stage != target }
             let wanted = Set(changed.map(\.id))
             if !changed.isEmpty { registerStageUndo(before: changed, after: library.projects.filter { wanted.contains($0.id) }, manager: undoManager) }
@@ -90,7 +90,7 @@ extension AppModel {
     func removeProject(_ id: UUID) {
         if let record = library.projects.first(where: { $0.id == id }), record.ideaWorkspace != nil {
             if record.isPlanned { requestBinIdea(record) }
-            else { error = "Review the old idea workspace before removing this project from the list. Its recovery reference is still retained." }
+            else { fail("This project still links to its old idea folder. Decide what to do with that folder first.", action: ("Review…", { [weak self] in self?.workspaceCleanup = record })) }
             return
         }
         guard let index = library.projects.firstIndex(where: { $0.id == id }) else { return }

@@ -183,6 +183,8 @@ private final class InvisibleKeyWindow: NSWindow {
         manager.undo(); manager.undo(); model.releaseWriter(queueOwner)
         try check(model.pendingUndos.count == 2 && model.error?.contains("2 undo steps") == true,
                   "two busy undo attempts retain both popped actions in order")
+        model.error = "An unrelated failure arrived while the undo waited."; model.error = nil
+        try check(model.pendingUndos.count == 2 && model.canRetryUndo, "a later error or a dismissed notice keeps the queued undo steps")
         let queuedLater = try model.addIdeaRecord(title: "Added while undo waits", format: "Short", campaign: "", notes: "Keep")
         model.retryUndo(); await settle()
         try check(!model.canRetryUndo && (try encoded(model.library.projects.first { $0.id == record.id }!)) == firstMetadata
@@ -246,12 +248,12 @@ private final class InvisibleKeyWindow: NSWindow {
         event { model.setStage("Writing", for: record.id) }; await settle()
         let dismissalOwner = try model.acquireWriter(); manager.undo(); model.releaseWriter(dismissalOwner)
         model.error = nil
-        try check(!model.canRetryUndo, "dismissing the recovery message clears the pending action")
-        manager.removeAllActions()
-        event { model.setStage("Editing", for: record.id) }; await settle()
-        let errorOwner = try model.acquireWriter(); manager.undo(); model.releaseWriter(errorOwner)
+        try check(model.canRetryUndo, "dismissing the recovery message keeps the pending action for Retry Undo")
         model.error = "A different error"
-        try check(!model.canRetryUndo, "a new unrelated error clears the pending action")
+        try check(model.canRetryUndo, "a new unrelated error keeps the pending action for Retry Undo")
+        model.retryUndo(); await settle()
+        try check(!model.canRetryUndo && model.library.projects.first { $0.id == record.id }?.stage == "Published",
+                  "the kept action still undoes the stage move when retried")
         manager.removeAllActions(); model.error = nil
 
         let field = try model.addField("Sponsor"), retained = try model.addField("Episode")

@@ -13,7 +13,7 @@ import TemplateCore
     @Published var plan: CopyPlan?
     @Published var validation = ""
     /// A long operation is showing progress. Whoever sets it holds the writer slot (checked in debug builds).
-    @Published var busy = false { didSet { if busy { assert(writer != nil, "busy without the writer slot") } else { settleStatus() } } }
+    @Published var busy = false { didSet { if busy { assert(writer != nil, "busy without the writer slot") } else { Task { @MainActor in settleStatus() } } } }
     @Published var fraction = 0.0
     @Published var status = "" { didSet { settleStatus() } }
     @Published var error: String? { didSet { errorChanged() } }
@@ -66,7 +66,6 @@ import TemplateCore
     /// Supplied by the active window; CLI actions never register user undo steps.
     weak var undoManager: UndoManager?
     @Published var pendingUndos: [PendingUndo] = []
-    var reportingUndoError = false
     var controlResults: [String: (parameters: Data, result: [String: Any])] = [:]
     var controlPending = Set<String>()
     /// The request id of the control mutation that is running now, so app.cancel only stops the operation its caller started.
@@ -262,14 +261,16 @@ import TemplateCore
     func fail(_ message: String, action: (title: String, run: () -> Void)) { error = message; errorAction = action }
 
     private func errorChanged() {
-        if !reportingUndoError && error != pendingUndoMessage { pendingUndos = [] }
+        // Queued undo steps are already off their undo managers, so no later error or dismissal may drop them.
         errorAction = nil
         if let error { announce(error) }
     }
     /// A finished status line is read out by VoiceOver and stays in the work area for a few seconds. Progress lines end in "…".
+    private var settledStatus = ""
     private func settleStatus() {
-        guard !busy, !status.isEmpty, !status.hasSuffix("…") else { return }
+        guard !busy, !status.isEmpty, !status.hasSuffix("…"), status != settledStatus else { return }
         let message = status
+        settledStatus = message
         announce(message)
         Task { try? await Task.sleep(for: .seconds(6)); if status == message { status = "" } }
     }

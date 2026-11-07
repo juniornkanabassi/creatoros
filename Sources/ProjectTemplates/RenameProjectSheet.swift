@@ -109,7 +109,7 @@ struct RenameProjectSheet: View {
             }
             if let issue { Text(issue).foregroundStyle(.red).font(TypeStyle.callout).textSelection(.enabled) }
             if let plan {
-                Text("^[\(plan.changes.count) change](inflect: true) →\(plan.newName)").font(TypeStyle.headline)
+                Text("^[\(plan.changes.count) change](inflect: true) → \(plan.newName)").font(TypeStyle.headline)
                 List(Array(plan.changes.enumerated()), id: \.offset) { _, change in
                     VStack(alignment: .leading, spacing: Space.xxs) {
                         Text(change.path.isEmpty ? "Project folder" : change.path).font(TypeStyle.caption).foregroundStyle(.secondary)

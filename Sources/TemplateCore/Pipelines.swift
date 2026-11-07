@@ -19,7 +19,9 @@ public enum StageColour: String, CaseIterable, Codable, Sendable {
         switch self { case .none: 0; case .gray: 1; case .green: 2; case .purple: 3; case .blue: 4; case .yellow: 5; case .red: 6; case .orange: 7 }
     }
     public init(finderIndex: Int) { self = StageColour.allCases.first { $0.finderIndex == finderIndex } ?? .none }
-    public var title: String { self == .none ? "No colour" : rawValue.prefix(1).uppercased() + rawValue.dropFirst() }
+    public var title: String {
+        switch self { case .none: "No colour"; case .gray: "Grey"; default: rawValue.prefix(1).uppercased() + rawValue.dropFirst() }
+    }
 }
 
 /// Finder tags on a folder, read and written through the same extended attribute Finder uses.

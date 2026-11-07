@@ -418,7 +418,10 @@ struct PipelineBoard: View {
         .onKeyPress(.return) { open() }
         .onKeyPress(.space) { open() }
         // Delete removes the focused card through the same action as its context menu, which registers Undo.
-        .onDeleteCommand { if let id = focusedCard { m.removeProject(id) } }
+        .onDeleteCommand {
+            guard let record = m.library.projects.first(where: { $0.id == focusedCard }) else { return }
+            if record.isPlanned { m.requestBinIdea(record) } else { m.removeProject(record.id) }
+        }
         .onKeyPress(.escape) {
             guard focusedCard != nil, m.pipelineSelection != nil else { return .ignored }
             m.pipelineSelection = nil

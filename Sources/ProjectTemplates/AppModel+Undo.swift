@@ -20,10 +20,8 @@ extension AppModel {
         return first.message + (pendingUndos.count > 1 ? " \(pendingUndos.count) undo steps are waiting." : "")
     }
     private func reportUndoError(_ message: String) {
-        reportingUndoError = true
         let count = pendingUndos.count
         error = message + (canRetryUndo ? " \(count) other undo \(count == 1 ? "step is" : "steps are") waiting. Use Retry Undo to continue." : "")
-        reportingUndoError = false
     }
     private final class UndoRecoveryResult {
         var recovered = 0
