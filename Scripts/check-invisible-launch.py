@@ -8,6 +8,9 @@ import sys
 import tempfile
 import time
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import instances  # noqa: E402
+
 location = Path(sys.argv[1]).resolve()
 binaries = location / 'Contents/MacOS' if location.suffix == '.app' else location
 app, cli = binaries / 'ProjectTemplates', binaries / 'creatoros'
@@ -84,6 +87,10 @@ with tempfile.TemporaryDirectory(prefix='cos-invisible-launch-', dir='/private/t
             except subprocess.TimeoutExpired:
                 process.kill()
                 process.wait(timeout=5)
+        # cfprefsd writes the copy's suite under the real home whatever CFFIXED_USER_HOME says; the launcher removes it.
+        instances.forget_preferences(data)
+    check(not (Path.home() / 'Library/Preferences' / (instances.preferences_domain(data) + '.plist')).exists(),
+          'promoted invisible copy leaves no preferences in the real home')
     direct_data = root / 'Direct'
     direct = subprocess.Popen([str(app), '--agent-screen', '--data-directory', str(direct_data), '--background', '--show', '--idle-quit', '2'],
                               env=env, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
@@ -102,4 +109,7 @@ with tempfile.TemporaryDirectory(prefix='cos-invisible-launch-', dir='/private/t
             except subprocess.TimeoutExpired:
                 direct.kill()
                 direct.wait(timeout=5)
+        instances.forget_preferences(direct_data)
+    check(not (Path.home() / 'Library/Preferences' / (instances.preferences_domain(direct_data) + '.plist')).exists(),
+          'direct invisible copy leaves no preferences in the real home')
 print('RESULT %d invisible-launch checks passed' % checks)
