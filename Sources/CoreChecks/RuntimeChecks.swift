@@ -18,6 +18,12 @@ func runtimeChecks(base: URL) throws {
     try production.validate(productionLibrary)
     try check(!production.isIsolated && AppRuntime.contains(production.root, stable) && AppRuntime.contains(stable, production.root), "production uses the preserved stable library and accepts saved external destinations")
     try rejects("production refuses home as a write destination") { try production.requireWritable(FileManager.default.homeDirectoryForCurrentUser) }
+    try rejects("production refuses the canonical home URL as a write destination") {
+        try production.requireWritable(FileManager.default.homeDirectoryForCurrentUser.resolvingSymlinksInPath())
+    }
+    try rejects("production refuses a directory-marked home URL as a write destination") {
+        try production.requireWritable(URL(fileURLWithPath: FileManager.default.homeDirectoryForCurrentUser.path, isDirectory: true))
+    }
     try rejects("production rejects relative stored paths before URL normalisation") { var bad = Library(); bad.presets[0].destination = "relative/project"; try production.validate(bad) }
     try check(try AppRuntime.forLaunch(bundleIdentifier: AppRuntime.alphaIdentifier, channel: "α", dataRoot: alpha).isIsolated, "alpha identity remains isolated")
     try check(try !AppRuntime.forLaunch(bundleIdentifier: AppRuntime.releaseIdentifier, channel: "").isIsolated, "release identity selects production")
@@ -29,7 +35,7 @@ func runtimeChecks(base: URL) throws {
     try rejects("alpha refuses sibling-prefix escape") { try runtime.requireWritable(base.appendingPathComponent("Alpha-old")) }
     try rejects("alpha refuses parent traversal") { try runtime.requireWritable(alpha.appendingPathComponent("../Stable")) }
     try rejects("alpha refuses broad temporary root") { _ = try AppRuntime(root: URL(fileURLWithPath: "/private/tmp")) }
-    try rejects("alpha refuses arbitrary production directory override") { _ = try AppRuntime(root: FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Content Creation")) }
+    try rejects("alpha refuses a directory outside the temporary roots") { _ = try AppRuntime(root: URL(fileURLWithPath: "/Users/Shared/CreatorOS-outside-temporary-root")) }
     try FileManager.default.createDirectory(at: alpha, withIntermediateDirectories: true)
     try FileManager.default.createDirectory(at: stable, withIntermediateDirectories: true)
     let alias = alpha.appendingPathComponent("Outside")

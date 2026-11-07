@@ -97,9 +97,8 @@ public struct AppRuntime: Sendable {
         if scope == .isolated {
             guard Self.contains(root, lexical), Self.contains(root, resolved) else { throw AppFailure("This isolated launch only writes inside \(root.path). Choose a folder there; production files stay outside this test workspace.") }
         } else {
-            let home = FileManager.default.homeDirectoryForCurrentUser.standardizedFileURL
-            let forbidden = [URL(fileURLWithPath: "/"), home, Self.alphaRoot.standardizedFileURL]
-            guard !forbidden.contains(where: { lexical == $0 || Self.contains($0, lexical) && $0 == Self.alphaRoot.standardizedFileURL }) else {
+            let home = Self.systemPath(FileManager.default.homeDirectoryForCurrentUser.standardizedFileURL.path)
+            guard lexical.path != "/", lexical.path != home, !Self.contains(Self.alphaRoot.standardizedFileURL, lexical) else {
                 throw AppFailure("CreatorOS will not use this broad or isolated path as a write destination: \(lexical.path)")
             }
         }
