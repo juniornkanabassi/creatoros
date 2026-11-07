@@ -20,7 +20,14 @@ extension AppModel {
         }
     }
     static func splitSeries(_ text: String) -> [String] { text.split(separator: ",").map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty } }
-    func setStage(_ stage: String, for id: UUID) { attempt { _ = try moveToStage(stage, for: id) } }
+    func setStage(_ stage: String, for id: UUID) {
+        let before = library.projects.first(where: { $0.id == id })
+        attempt {
+            _ = try moveToStage(stage, for: id)
+            guard let before, before.stage != stage, let after = library.projects.first(where: { $0.id == id }) else { return }
+            registerStageUndo(before: [before], after: [after], manager: undoManager)
+        }
+    }
     /// Moves one record to a stage on its own board and starts its Finder tag write. Unknown records and stages from the other
     /// board are refused here, so a stray drop or a control call can never put a stream on the recordings board.
     @discardableResult
@@ -34,9 +41,15 @@ extension AppModel {
     }
     /// Moves every card in one column at once; a deliberate action from the column's own menu.
     func moveAll(from stage: String, to target: String) {
-        let ids = projects(in: stage).map(\.id)
+        let before = projects(in: stage)
+        let ids = before.map(\.id)
         guard !ids.isEmpty else { return }
-        attempt { _ = try moveAll(ids: ids, to: target) }
+        attempt {
+            _ = try moveAll(ids: ids, to: target)
+            let changed = before.filter { $0.stage != target }
+            let wanted = Set(changed.map(\.id))
+            if !changed.isEmpty { registerStageUndo(before: changed, after: library.projects.filter { wanted.contains($0.id) }, manager: undoManager) }
+        }
     }
     /// Moves exactly these records. Every one must be able to take the stage on its own board.
     @discardableResult
@@ -70,7 +83,12 @@ extension AppModel {
             else { error = "Review the old idea workspace before removing this project from the list. Its recovery reference is still retained." }
             return
         }
-        attempt { try removeRecord(id) }
+        guard let index = library.projects.firstIndex(where: { $0.id == id }) else { return }
+        let record = library.projects[index]
+        attempt {
+            try removeRecord(id)
+            registerProjectUndo(record, index: index, restoring: true, manager: undoManager)
+        }
     }
     /// Forgets a record. Its folder is never touched.
     func removeRecord(_ id: UUID) throws {
@@ -95,7 +113,14 @@ extension AppModel {
         preview = nil; plan = nil
         refresh()
     }
-    func setStages(_ stages: [String], for kind: PipelineKind = .recordings) { attempt { try applyStages(stages, for: kind) } }
+    func setStages(_ stages: [String], for kind: PipelineKind = .recordings) {
+        let before = library.stages(for: kind)
+        attempt {
+            try applyStages(stages, for: kind)
+            let after = library.stages(for: kind)
+            if before != after { registerStageListUndo(before: before, after: after, kind: kind, manager: undoManager) }
+        }
+    }
     func applyStages(_ stages: [String], for kind: PipelineKind = .recordings) throws {
         let checked = try Configuration.stages(stages)
         try mutate { if kind == .live { $0.liveStages = checked } else { $0.stages = checked } }
