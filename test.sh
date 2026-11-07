@@ -36,6 +36,8 @@ export CREATOROS_AGENT_SCREEN=1 CONTENT_TEMPLATE_CHECK_ROOT="$work/harness"
 step 'SwiftPM offscreen regression' swift test --scratch-path "$build" --skip-build
 step 'CoreChecks' "$bin/CoreChecks"
 step 'Durable save and native providers' zsh Scripts/check-durable-save.sh "$objects"
+step 'Undo and recovery' env CONTENT_TEMPLATE_CHECK_SOURCE=Scripts/check-undo.swift zsh Scripts/check-durable-save.sh "$objects"
+step 'Council interface behaviour' env CONTENT_TEMPLATE_CHECK_SOURCE=Scripts/check-council-ui.swift zsh Scripts/check-durable-save.sh "$objects"
 if (( source_only )); then
     step 'AppModel and control actions' env CONTENT_TEMPLATE_CHECK_SOURCE=Scripts/check-control-model.swift zsh Scripts/check-durable-save.sh "$objects"
     step 'Invisible launch isolation' python3 Scripts/check-invisible-launch.py "$bin"

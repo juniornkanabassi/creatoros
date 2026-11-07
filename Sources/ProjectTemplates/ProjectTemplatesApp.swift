@@ -127,7 +127,12 @@ extension NSSplitView { @objc func refuseAutosaveName(_ name: String?) {} }
                 Button("Find Missing Projects") { model.relinkAll() }.keyboardShortcut("r", modifiers: [.command, .shift]).disabled(model.relinkBatchRunning)
                 Button("Show Duplicates…") { model.duplicatesPresented = true }.disabled(model.duplicateGroups.isEmpty)
                 Button("Check LucidLink Compatibility…") { model.checkCompatibility() }.disabled(model.busy)
+                Divider()
+                Button("Import Template…") { model.beginImport() }.keyboardShortcut("i").disabled(model.busy)
+                Button("Add Existing Project…") { model.addExisting() }.disabled(model.busy)
             }
+            SidebarCommands()
+            ToolbarCommands()
             CommandGroup(after: .textEditing) {
                 Button("Find") { AppModel.focusSearchField() }.keyboardShortcut("f")
             }
@@ -271,7 +276,45 @@ enum WindowSetup {
 struct MainView: View {
     @EnvironmentObject var m: AppModel
     var body: some View {
-        NavigationSplitView {
+        Group {
+            // Pipeline is a board: it takes the whole width and shows a selected card in an inspector.
+            // Projects and Templates keep the list-and-detail columns.
+            if m.page == .pipeline {
+                NavigationSplitView { sidebar } detail: {
+                    workArea(minimumWidth: 480) { PipelineBoard() }
+                        .inspector(isPresented: Binding(get: { m.pipelineSelectedRecord != nil }, set: { if !$0 { m.pipelineSelection = nil } })) {
+                            ZoomedInterface(scale: m.uiScale, minimumWidth: 300) { PipelineInspector() }
+                                .inspectorColumnWidth(min: 300, ideal: 340, max: 480)
+                        }
+                        .modifier(PipelinePageChrome())
+                }
+            } else {
+                NavigationSplitView { sidebar } content: {
+                    ZoomedInterface(scale: m.uiScale, minimumWidth: 300) {
+                        if m.page == .projects { ProjectList() } else { TemplateSetList() }
+                    }
+                    .navigationSplitViewColumnWidth(min: 360, ideal: max(360, 440 * m.uiScale), max: 600 * m.uiScale)
+                } detail: {
+                    workArea(minimumWidth: 360) {
+                        if m.page == .projects { ProjectDetail() } else { TemplateSetDetail() }
+                    }
+                    .navigationSplitViewColumnWidth(min: 420, ideal: 640 * m.uiScale)
+                }
+            }
+        }
+        .navigationTitle(m.page.rawValue)
+        .modifier(UndoContext())
+        .onReceive(NotificationCenter.default.publisher(for: NSWindow.willCloseNotification)) { notice in
+            guard !Headless.shared.active, let window = notice.object as? NSWindow,
+                  window === Headless.shared.mainWindow else { return }
+            NSApp.terminate(nil)
+        }
+        .disabled(!m.storeUsable)
+        .overlay { if GridOverlay.enabled { GridOverlay() } }
+        .modifier(MainSheets())
+    }
+
+    private var sidebar: some View {
             List(selection: $m.page) {
                 ForEach(Page.allCases) { page in
                     // Size the row itself: scaling the AppKit-backed List would misplace its hit targets.
@@ -289,20 +332,13 @@ struct MainView: View {
             }
             .listStyle(.sidebar)
             .navigationSplitViewColumnWidth(min: 192, ideal: max(192, 216 * m.uiScale), max: 280 * m.uiScale)
-        } content: {
-            ZoomedInterface(scale: m.uiScale, minimumWidth: 300) {
-            Group {
-                switch m.page {
-                case .pipeline: PipelineSidebar()
-                case .projects: ProjectList()
-                case .templates: TemplateSetList()
-                }
-            }
-            }
-            .navigationSplitViewColumnWidth(min: 360, ideal: max(360, 440 * m.uiScale), max: 600 * m.uiScale)
-        } detail: {
-            ZoomedInterface(scale: m.uiScale, minimumWidth: 360) {
+    }
+
+    /// The main work column: an error and the progress bar take their own rows above the page, so they never cover it.
+    private func workArea<Content: View>(minimumWidth: CGFloat, @ViewBuilder _ page: @escaping () -> Content) -> some View {
+        ZoomedInterface(scale: m.uiScale, minimumWidth: minimumWidth) {
             VStack(spacing: 0) {
+                if m.error != nil && m.storeUsable { ErrorNotice().gridProbe("error-notice", area: "work-area", edge: nil) }
                 if m.busy || (!m.status.isEmpty && m.status.hasPrefix("Looking")) {
                     HStack(spacing: Space.md) {
                         if m.busy { ProgressView(value: m.fraction).frame(width: 160) }
@@ -311,27 +347,18 @@ struct MainView: View {
                         if m.busy { Button("Cancel") { m.cancellation.cancel() }.keyboardShortcut(.cancelAction).help("Stop the current operation") }
                     }.padding(.horizontal, Space.xl).padding(.vertical, Space.md).background(.bar)
                 }
-                Group {
-                    switch m.page {
-                    case .pipeline: PipelineBoard()
-                    case .projects: ProjectDetail()
-                    case .templates: TemplateSetDetail()
-                    }
-                }.frame(maxWidth: .infinity, maxHeight: .infinity)
+                page().frame(maxWidth: .infinity, maxHeight: .infinity).gridProbe("work-page", area: "work-area", edge: nil)
+            }
+            .gridArea("work-area", inset: 0)
+        }
+    }
+}
 
-            }
-            }
-            .navigationSplitViewColumnWidth(min: 420, ideal: 640 * m.uiScale)
-        }
-        .navigationTitle(m.page.rawValue)
-        .onReceive(NotificationCenter.default.publisher(for: NSWindow.willCloseNotification)) { notice in
-            guard !Headless.shared.active, let window = notice.object as? NSWindow,
-                  window === Headless.shared.mainWindow else { return }
-            NSApp.terminate(nil)
-        }
-        .disabled(!m.storeUsable)
-        .errorNotice()
-        .overlay { if GridOverlay.enabled { GridOverlay() } }
+/// The main window's alerts, sheets and confirmations, shared by both layouts.
+private struct MainSheets: ViewModifier {
+    @EnvironmentObject var m: AppModel
+    func body(content: Content) -> some View {
+        content
         // Only a failed library load/save blocks the whole app. Recoverable errors stay by the active work.
         .alert("Library changes are paused", isPresented: Binding(get: { !m.storeUsable && m.error != nil && !Headless.shared.active }, set: { if !$0 { m.error = nil } })) {
             Button("Keep Open", role: .cancel) { m.error = nil }
@@ -469,12 +496,12 @@ struct ImportSheet: View {
                 .pickerStyle(.segmented).labelsHidden().onChange(of: m.importMode) { m.scanImport() }.disabled(m.busy)
                 .accessibilityLabel("What to copy").help("Copy files and folders, or only the folder structure")
             if let plan = m.importPlan {
-                Text("\(plan.visible.count) items · \(ByteCountFormatter.string(fromByteCount: plan.bytes, countStyle: .file)) of file data, plus Finder metadata").font(TypeStyle.caption).foregroundStyle(.secondary)
+                Text("^[\(plan.visible.count) item](inflect: true) · \(ByteCountFormatter.string(fromByteCount: plan.bytes, countStyle: .file)) of file data, plus Finder metadata").font(TypeStyle.caption).foregroundStyle(.secondary)
                 FileBrowserView(dataSource: PreviewDataSource(rendering: PreviewRenderer.render(structure: plan, fields: ProjectFields(number: "", format: "", title: ""))),
                                 mode: .column, folder: $folder, selection: $selection, reloadKey: plan.entries.count)
                     .background(.background, in: RoundedRectangle(cornerRadius: Radius.md)).overlay(RoundedRectangle(cornerRadius: Radius.md).strokeBorder(.quaternary))
                 if !plan.excluded.isEmpty {
-                    DisclosureGroup("\(plan.excluded.count) excluded items") {
+                    DisclosureGroup("^[\(plan.excluded.count) excluded item](inflect: true)") {
                         ScrollView { Text(plan.excluded.joined(separator: "\n")).font(TypeStyle.caption).frame(maxWidth: .infinity, alignment: .leading) }.frame(maxHeight: 92)
                     }.font(TypeStyle.callout)
                 }

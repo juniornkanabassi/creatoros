@@ -232,19 +232,65 @@ struct ProjectStatusEditor: View {
     }
 }
 
-/// Content column of Pipeline: filters, counts, and the selected card's details.
-struct PipelineSidebar: View {
+extension AppModel {
+    /// The card shown in the Pipeline inspector, if it is still in the library.
+    var pipelineSelectedRecord: ProjectRecord? { library.projects.first { $0.id == pipelineSelection } }
+    /// Double-click, or the Open action: an idea fills in New Project, a project opens in Projects.
+    func openPipelineCard(_ record: ProjectRecord) {
+        if record.isPlanned { startPlanned(record) }
+        else { selectedProject = record.id; page = .projects; selectProject() }
+    }
+}
+
+/// Arrow-key movement between board cards. Columns are the cards' ids, left to right, top to bottom.
+enum BoardNavigation {
+    enum Move { case up, down, left, right }
+    /// The card to focus next, or nil when there is nowhere to go. With nothing focused, the first card.
+    static func target(from current: UUID?, _ move: Move, columns: [[UUID]]) -> UUID? {
+        guard let current, let column = columns.firstIndex(where: { $0.contains(current) }),
+              let row = columns[column].firstIndex(of: current) else { return columns.first { !$0.isEmpty }?.first }
+        switch move {
+        case .up: return row > 0 ? columns[column][row - 1] : nil
+        case .down: return row + 1 < columns[column].count ? columns[column][row + 1] : nil
+        case .left, .right:
+            let step = move == .left ? -1 : 1
+            var next = column + step
+            while columns.indices.contains(next) {
+                if !columns[next].isEmpty { return columns[next][min(row, columns[next].count - 1)] }
+                next += step
+            }
+            return nil
+        }
+    }
+}
+
+/// Pipeline's toolbar, search and sheets, around the board and its inspector.
+struct PipelinePageChrome: ViewModifier {
     @EnvironmentObject var m: AppModel
-    var selected: ProjectRecord? { m.library.projects.first { $0.id == m.pipelineSelection } }
+    func body(content: Content) -> some View {
+        content
+            .toolbar {
+                ToolbarItemGroup(placement: .primaryAction) {
+                    if m.pipelineKind == .recordings {
+                        Button { m.newIdeaPresented = true } label: { Label("New Idea", systemImage: "lightbulb") }.help("Add an idea without a folder yet")
+                    }
+                    Button { m.newProjectPresented = true } label: { Label("Create Project", systemImage: "folder.badge.plus").labelStyle(.titleAndIcon) }
+                        .buttonStyle(.borderedProminent).help(m.pipelineKind == .live ? "Create a project folder from a template (⌘N). Choose Live for this board." : "Create a project folder from a template (⌘N). Long, Short and Podcast appear on this board.")
+                }
+            }
+            .searchable(text: $m.search, placement: .toolbar, prompt: "Search projects, notes and documents")
+            .sheet(isPresented: $m.newIdeaPresented) { NewIdeaSheet() }
+            .onAppear { m.refreshMounts() }
+    }
+}
+
+/// The selected card's details, in the Pipeline inspector.
+struct PipelineInspector: View {
+    @EnvironmentObject var m: AppModel
     @State private var showAdvanced = false
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            Picker("Board", selection: $m.pipelineKind) { ForEach(PipelineKind.allCases) { Text($0.title).tag($0) } }
-                .pickerStyle(.segmented).labelsHidden().padding(.horizontal, Space.lg).padding(.top, Space.md)
-                .help("Recordings move from idea to published. Live streams are scheduled, then streamed.").accessibilityLabel("Board")
-            ProjectFilters(includeStage: false, kind: m.pipelineKind).padding(.horizontal, Space.lg).padding(.vertical, Space.md)
-            Divider()
-            if let record = selected {
+        Group {
+            if let record = m.pipelineSelectedRecord {
                 Form {
                     Section {
                         HStack(spacing: Space.md) {
@@ -269,7 +315,7 @@ struct PipelineSidebar: View {
                                     Button("Create Workspace…") { m.workspacePrompt = record }.help("Make a draft folder for this idea's notes and attachments")
                                 } else { Button("Browse Workspace…") { m.workspaceToBrowse = record }.help("See the files in this idea's draft folder") }
                             } else {
-                                Button("Show in Projects") { m.selectedProject = record.id; m.page = .projects; m.selectProject() }.help("Open this project's files and details in Projects")
+                                Button("Show in Projects") { m.openPipelineCard(record) }.help("Open this project's files and details in Projects")
                                 Button("Open in Finder") { m.open(record) }.help("Open the project folder in Finder")
                             }
                         }
@@ -286,58 +332,106 @@ struct PipelineSidebar: View {
                         }.accessibilityAction { showAdvanced.toggle() }
                     }
                 }.formStyle(.grouped)
-            } else {
-                ContentUnavailableView(m.pipelineKind == .live ? "Streams, scheduled and streamed" : "Your content, stage by stage",
-                                       systemImage: m.pipelineKind == .live ? "dot.radiowaves.left.and.right" : "rectangle.3.group",
-                                       description: Text(m.pipelineKind == .live
-                                                         ? "Select a stream to edit its details. Drag it to Streamed once it is done. Each stage's colour is also the folder's tag colour in Finder."
-                                                         : "Select a card to edit its stage, campaign, editor and notes. Drag cards between columns to move them along. Each stage's colour is also the folder's tag colour in Finder."))
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .toolbar {
-            ToolbarItemGroup(placement: .primaryAction) {
-                if m.pipelineKind == .recordings {
-                    Button { m.newIdeaPresented = true } label: { Label("New Idea", systemImage: "lightbulb") }.help("Add an idea without a folder yet")
-                }
-                Button { m.newProjectPresented = true } label: { Label("Create Project", systemImage: "folder.badge.plus").labelStyle(.titleAndIcon) }
-                    .buttonStyle(.borderedProminent).help(m.pipelineKind == .live ? "Create a project folder from a template (⌘N). Choose Live for this board." : "Create a project folder from a template (⌘N). Long, Short and Podcast appear on this board.")
+            ToolbarItem {
+                Button { m.pipelineSelection = nil } label: { Label("Hide Details", systemImage: "sidebar.trailing") }
+                    .help("Hide the card details (Escape on the board)")
             }
         }
-        .searchable(text: $m.search, placement: .toolbar, prompt: "Search projects, notes and documents")
-        .sheet(isPresented: $m.newIdeaPresented) { NewIdeaSheet() }
-        .onAppear { m.refreshMounts(); showAdvanced = m.defaults.bool(forKey: "disclosure.pipelineAdvanced") }
+        .onAppear { showAdvanced = m.defaults.bool(forKey: "disclosure.pipelineAdvanced") }
         .onChange(of: showAdvanced) { m.defaults.set(showAdvanced, forKey: "disclosure.pipelineAdvanced") }
     }
 }
 
-/// Detail column of Pipeline: one column per stage, cards draggable between them.
+/// Pipeline: the board selector and filters, then one column per stage, cards draggable between them.
 struct PipelineBoard: View {
     @EnvironmentObject var m: AppModel
+    @FocusState private var focusedCard: UUID?
+    @State private var requestedCard: UUID?
+    @State private var width: CGFloat = 0
+    /// Columns share the width before the board scrolls, from 200 pt (scrolls) to 320 pt (few stages).
+    private var columnWidth: CGFloat {
+        let count = CGFloat(max(m.boardStages.count, 1))
+        let share = (width - 2 * Space.lg - (count - 1) * Space.md) / count - 2 * Space.md
+        return min(320, max(200, (share / 4).rounded(.down) * 4))
+    }
+    private var filtered: Bool { m.formatFilter != "All formats" || !m.hiddenLocations.isEmpty }
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
+            HStack(alignment: .top, spacing: Space.lg) {
+                Picker("Board", selection: $m.pipelineKind) { ForEach(PipelineKind.allCases) { Text($0.title).tag($0) } }
+                    .pickerStyle(.segmented).labelsHidden().fixedSize()
+                    .help("Recordings move from idea to published. Live streams are scheduled, then streamed.").accessibilityLabel("Board")
+                ProjectFilters(includeStage: false, kind: m.pipelineKind)
+            }.padding(.horizontal, Space.lg).padding(.vertical, Space.md)
+            Divider()
             // One explanation for an empty board instead of an empty label in every column; the columns stay as drop targets.
             if m.boardStages.allSatisfy({ m.projects(in: $0).isEmpty }) {
-                Label(m.pipelineKind == .live
-                      ? "No streams here yet. Press Create Project and choose Live; the stream appears in the first column. If you expected some, check the filters."
-                      : "No projects here yet. Add an idea or press Create Project; drag cards between columns as the work moves on. If you expected some, check the filters.",
+                Label((m.pipelineKind == .live
+                       ? "No streams here yet. Press Create Project and choose Live."
+                       : "No projects here yet. Add an idea or press Create Project.") + (filtered ? " Some may be hidden by the filters." : ""),
                       systemImage: "info.circle")
                     .font(TypeStyle.callout).foregroundStyle(.secondary).padding(.horizontal, Space.lg).padding(.top, Space.lg)
             }
-            ScrollView(.horizontal) {
-                HStack(alignment: .top, spacing: Space.md) {
-                    ForEach(m.boardStages, id: \.self) { stage in StageColumn(stage: stage) }
-                }.padding(Space.lg)
+            ScrollViewReader { proxy in
+                ScrollView(.horizontal) {
+                    HStack(alignment: .top, spacing: Space.md) {
+                        ForEach(m.boardStages, id: \.self) { stage in
+                            StageColumn(stage: stage, width: columnWidth, focusedCard: $focusedCard, requestedCard: requestedCard)
+                                .id(stage)
+                        }
+                    }.padding(Space.lg)
+                }
+                .scrollIndicators(.visible)
+                .onChange(of: requestedCard) {
+                    guard let id = requestedCard,
+                          let stage = m.boardStages.first(where: { m.projects(in: $0).contains(where: { $0.id == id }) }) else { return }
+                    proxy.scrollTo(stage, anchor: .center)
+                }
             }
         }
+        .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width = $0 }
         .background(Surface.secondary)
+        .onKeyPress(.upArrow) { move(.up) }
+        .onKeyPress(.downArrow) { move(.down) }
+        .onKeyPress(.leftArrow) { move(.left) }
+        .onKeyPress(.rightArrow) { move(.right) }
+        .onKeyPress(.return) { open() }
+        .onKeyPress(.space) { open() }
+        .onKeyPress(.escape) {
+            guard focusedCard != nil, m.pipelineSelection != nil else { return .ignored }
+            m.pipelineSelection = nil
+            return .handled
+        }
+        // A card selected elsewhere (Show in Pipeline, the inspector) is where the arrows continue from.
+        .onChange(of: m.pipelineSelection) { if let id = m.pipelineSelection, focusedCard != nil { requestedCard = id } }
+        .onChange(of: focusedCard) { if focusedCard == requestedCard { requestedCard = nil } }
+    }
+    private func move(_ direction: BoardNavigation.Move) -> KeyPress.Result {
+        guard focusedCard != nil || requestedCard != nil else { return .ignored }
+        let columns = m.boardStages.map { m.projects(in: $0).map(\.id) }
+        guard let next = BoardNavigation.target(from: requestedCard ?? focusedCard, direction, columns: columns) else { return .handled }
+        requestedCard = next
+        // With the inspector open it follows the focused card, as a list selection would.
+        if m.pipelineSelection != nil { m.pipelineSelection = next }
+        return .handled
+    }
+    private func open() -> KeyPress.Result {
+        guard let id = requestedCard ?? focusedCard else { return .ignored }
+        m.pipelineSelection = id
+        return .handled
     }
 }
 
 struct StageColumn: View {
     @EnvironmentObject var m: AppModel
     let stage: String
+    var width: CGFloat = 252
+    var focusedCard: FocusState<UUID?>.Binding
+    var requestedCard: UUID?
     @State private var targeted = false
     var body: some View {
         let items = m.projects(in: stage)
@@ -358,16 +452,31 @@ struct StageColumn: View {
                 } label: { Image(systemName: "ellipsis.circle") }.menuStyle(.borderlessButton).fixedSize().help("Move every card in this column")
                     .accessibilityLabel("\(stage) column actions")
             }.padding(.horizontal, Space.xs)
-            ScrollView {
-                LazyVStack(spacing: Space.sm) {
-                    ForEach(items) { record in ProjectCard(record: record) }
-                    if items.isEmpty && m.boardStages.contains(where: { !m.projects(in: $0).isEmpty }) {
-                        Text("Drag cards here").font(TypeStyle.caption).foregroundStyle(.tertiary).padding(.top, Space.md)
-                    }
-                }.padding(Space.xxs)
+            ScrollViewReader { proxy in
+                ScrollView {
+                    LazyVStack(spacing: Space.sm) {
+                        ForEach(items) { record in
+                            ProjectCard(record: record, focusedCard: focusedCard).id(record.id)
+                                .onAppear {
+                                    if requestedCard == record.id { focusedCard.wrappedValue = record.id }
+                                }
+                        }
+                        if items.isEmpty && m.boardStages.contains(where: { !m.projects(in: $0).isEmpty }) {
+                            Text("Drag cards here").font(TypeStyle.caption).foregroundStyle(.tertiary).padding(.top, Space.md)
+                        }
+                    }.padding(Space.xxs)
+                }
+                .task(id: requestedCard) {
+                    guard let id = requestedCard, items.contains(where: { $0.id == id }) else { return }
+                    proxy.scrollTo(id, anchor: .center)
+                    // A lazy offscreen card needs a layout turn before it can receive keyboard focus.
+                    await Task.yield()
+                    guard !Task.isCancelled, requestedCard == id else { return }
+                    focusedCard.wrappedValue = id
+                }
             }
         }
-        .frame(width: 252)
+        .frame(width: width)
         .padding(Space.md)
         .background(RoundedRectangle(cornerRadius: Radius.lg).fill(targeted ? colour.opacity(0.18) : colour.opacity(0.06)))
         .background(RoundedRectangle(cornerRadius: Radius.lg).fill(Surface.control.opacity(0.6)))
@@ -382,15 +491,20 @@ struct StageColumn: View {
 struct ProjectCard: View {
     @EnvironmentObject var m: AppModel
     let record: ProjectRecord
+    var focusedCard: FocusState<UUID?>.Binding
     var selected: Bool { m.pipelineSelection == record.id }
     private var gridID: String { "pipeline-card-" + record.id.uuidString }
     var body: some View {
+        let stage = m.effectiveStage(record)
         VStack(alignment: .leading, spacing: Space.sm) {
             HStack(spacing: Space.sm) {
                 FormatIcon(data: m.library.presets.first { $0.format == record.format }?.icon, size: 16)
                 Text(record.number ?? m.label(for: record.format)).font(TypeStyle.caption.weight(.semibold).monospacedDigit()).foregroundStyle(.secondary)
                 Spacer()
-                if record.isPlanned { Image(systemName: "lightbulb").font(TypeStyle.caption).foregroundStyle(.secondary).help("Idea without a folder yet") }
+                if record.isPlanned {
+                    Image(systemName: "lightbulb").font(TypeStyle.caption).foregroundStyle(.secondary)
+                        .help("Idea without a folder yet").accessibilityLabel("Idea")
+                }
                 else { LocationBadge(location: record.location, compact: true) }
             }.gridProbe(gridID + "-metadata", area: gridID)
             Text(record.isPlanned ? record.name : record.title).font(TypeStyle.callout.weight(.medium)).lineLimit(3).multilineTextAlignment(.leading)
@@ -407,33 +521,40 @@ struct ProjectCard: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(RoundedRectangle(cornerRadius: Radius.md).fill(Surface.control))
         .overlay(alignment: .leading) {
-            Capsule().fill(m.stageColour(m.effectiveStage(record))).frame(width: 4).padding(.vertical, Space.sm).padding(.leading, Space.xs)
+            Capsule().fill(m.stageColour(stage)).frame(width: 4).padding(.vertical, Space.sm).padding(.leading, Space.xs)
         }
         .overlay(RoundedRectangle(cornerRadius: Radius.md).strokeBorder(selected ? Color.accentColor : .clear, lineWidth: 2))
         .contentShape(Rectangle())
+        .contentShape(.focusEffect, RoundedRectangle(cornerRadius: Radius.md))
+        // Tab and the arrow keys reach every card; Return or Space shows its details (PipelineBoard).
+        .focusable()
+        .focused(focusedCard, equals: record.id)
         // Double-click opens the project in Projects; a single click selects it. The double-tap is registered first so it wins.
-        .onTapGesture(count: 2) { if !record.isPlanned { m.selectedProject = record.id; m.page = .projects; m.selectProject() } else { m.startPlanned(record) } }
-        .onTapGesture { m.pipelineSelection = record.id }
+        .onTapGesture(count: 2) { m.openPipelineCard(record) }
+        .onTapGesture { m.pipelineSelection = record.id; focusedCard.wrappedValue = record.id }
         .draggable(record.id.uuidString)
         .help(record.isPlanned ? "Double-click to start this idea as a project" : "Double-click to open in Projects")
         .contextMenu {
-            Menu("Move to") { ForEach(m.moveTargets(for: record), id: \.self) { stage in Button(stage) { m.setStage(stage, for: record.id) }.disabled(stage == m.effectiveStage(record)) } }
+            Menu("Move to") { ForEach(m.moveTargets(for: record), id: \.self) { target in Button(target) { m.setStage(target, for: record.id) }.disabled(target == stage) } }
             if record.isPlanned {
                 Button("Start Project…") { m.startPlanned(record) }
                 if record.ideaWorkspace == nil { Button("Create Workspace…") { m.workspacePrompt = record } }
                 else { Button("Browse Workspace…") { m.workspaceToBrowse = record } }
             }
-            else { Button("Show in Projects") { m.selectedProject = record.id; m.page = .projects; m.selectProject() }; Button("Open in Finder") { m.open(record) } }
+            else { Button("Show in Projects") { m.openPipelineCard(record) }; Button("Open in Finder") { m.open(record) } }
             Divider()
             Button(record.isPlanned ? "Bin Idea…" : "Remove from List", role: .destructive) { if record.isPlanned { m.requestBinIdea(record) } else { m.removeProject(record.id) } }
         }
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(record.name), \(m.effectiveStage(record))")
-        .accessibilityAddTraits(.isButton)
+        .accessibilityLabel((record.isPlanned ? "Idea, " : "") + "\(record.name), \(stage)")
+        .accessibilityAddTraits(selected ? [.isButton, .isSelected] : .isButton)
         .accessibilityAction { m.pipelineSelection = record.id }
-        .accessibilityAction(named: Text(record.isPlanned ? "Start Project" : "Show in Projects")) {
-            if record.isPlanned { m.startPlanned(record) }
-            else { m.selectedProject = record.id; m.page = .projects; m.selectProject() }
+        .accessibilityAction(named: Text(record.isPlanned ? "Start Project" : "Show in Projects")) { m.openPipelineCard(record) }
+        // Switch Control and Voice Control move a card without dragging.
+        .accessibilityActions {
+            ForEach(m.moveTargets(for: record).filter { $0 != stage }, id: \.self) { target in
+                Button("Move to \(target)") { m.setStage(target, for: record.id) }
+            }
         }
     }
 }

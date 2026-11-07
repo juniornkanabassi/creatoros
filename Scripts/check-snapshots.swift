@@ -111,6 +111,19 @@ import TemplateCore
                 try await capture("browser-" + mode.rawValue, FolderBrowserHost(title: "Disposable project files", resolveRoot: { fixture }),
                                   size: CGSize(width: 820, height: 640), scheme: scheme)
             }
+            // Inspector contents are captured directly as well as the native board container.
+            // NSHostingView does not always composite a native inspector in a hidden window.
+            let detailFixtures = [
+                ("pipeline-project-details", model.library.projects.first { !$0.isPlanned && $0.format == "Short" }!),
+                ("pipeline-idea-details", model.library.projects.first { $0.isPlanned }!),
+                ("pipeline-live-details", model.library.projects.first { $0.format == "Livestream" }!)
+            ]
+            for (name, record) in detailFixtures {
+                model.pipelineKind = PipelineKind.of(format: record.format)
+                model.pipelineSelection = record.id
+                try await capture(name, PipelineInspector(), size: CGSize(width: 340, height: 720), scheme: scheme)
+            }
+            model.pipelineSelection = nil
             model.error = "The selected folder is no longer available. Reconnect its drive, then choose the folder again."
             model.page = .projects
             try await capture("projects-error", MainView(), size: CGSize(width: 1280, height: 820), scheme: scheme)
@@ -192,6 +205,7 @@ import TemplateCore
         model.draft.destination = model.preset.destination
         model.draft.title = "A new disposable project"
         model.draft.number = "003"
+        model.numberEdited()
         model.mountedLocations = Set(model.distinctLocations.map(\.key))
         model.refresh()
         await model.refreshTask?.value
