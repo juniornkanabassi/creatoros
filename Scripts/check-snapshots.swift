@@ -30,6 +30,17 @@ import TemplateCore
         }
 
         func capture<V: View>(_ name: String, _ view: V, size: CGSize, scheme: ColorScheme, fitHeight: Bool = false) async throws {
+            if name == "projects" || name == "projects-error", let record = model.selectedRecord {
+                model.setViewMode(.list, for: .projectFiles)
+                model.inspections[record.id] = nil
+                model.selectProject()
+                for _ in 0..<100 {
+                    if model.inspections[record.id]?.available == true { break }
+                    try await Task.sleep(for: .milliseconds(50))
+                }
+                precondition(model.inspections[record.id]?.available == true,
+                             "Selected fixture project did not become available within five seconds")
+            }
             checkNoWindows()
             GridProbes.shared.reset()
             let content = view.environmentObject(model).environment(\.colorScheme, scheme)
@@ -79,6 +90,7 @@ import TemplateCore
 
         for scheme in [ColorScheme.light, .dark] {
             model.error = nil
+            for surface in BrowserSurface.allCases { model.setViewMode(.list, for: surface) }
             for page in Page.allCases {
                 model.page = page
                 model.pipelineKind = .recordings
@@ -103,6 +115,37 @@ import TemplateCore
             model.page = .projects
             try await capture("projects-error", MainView(), size: CGSize(width: 1280, height: 820), scheme: scheme)
             model.error = nil
+
+            // First-run states are a separate part of every appearance gate.
+            let populatedLibrary = model.library
+            let populatedDraft = model.draft
+            let projectSelection = model.selectedProject
+            let creationSelection = model.selection
+            let templatesSelection = model.templatesSelection
+            try await model.commitDurably { library in
+                library.projects = []
+                library.templates = []
+                library.templateSets = []
+            }
+            model.selectedProject = nil
+            model.selection = nil
+            model.templatesSelection = nil
+            for page in Page.allCases {
+                model.page = page
+                model.pipelineKind = .recordings
+                try await capture(page.rawValue.lowercased() + "-empty", MainView(), size: CGSize(width: 1280, height: 820), scheme: scheme)
+                if page == .pipeline {
+                    model.pipelineKind = .live
+                    try await capture("pipeline-live-empty", MainView(), size: CGSize(width: 1280, height: 820), scheme: scheme)
+                }
+            }
+            try await model.commitDurably { $0 = populatedLibrary }
+            model.selectedProject = projectSelection
+            model.selection = creationSelection
+            model.templatesSelection = templatesSelection
+            model.draft = populatedDraft
+            model.refresh()
+            await model.refreshTask?.value
         }
         await model.saveTaskForWorkspace()
         checkNoWindows()
@@ -146,9 +189,9 @@ import TemplateCore
         model.templatesSelection = .set(set.id)
         model.selection = .set(set.id)
         model.format = "Short"
-        model.destination = model.preset.destination
-        model.title = "A new disposable project"
-        model.number = "003"
+        model.draft.destination = model.preset.destination
+        model.draft.title = "A new disposable project"
+        model.draft.number = "003"
         model.mountedLocations = Set(model.distinctLocations.map(\.key))
         model.refresh()
         await model.refreshTask?.value

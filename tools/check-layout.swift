@@ -54,6 +54,11 @@ if let index = paths.firstIndex(of: "--unit"), index + 1 < paths.count, let valu
     paths.removeSubrange(index...(index + 1))
 }
 
+guard !paths.isEmpty, unit.isFinite, unit > 0 else {
+    fputs("FAIL supply layout files and a positive grid unit\n", stderr)
+    exit(1)
+}
+
 var failedFiles = 0
 for path in paths {
     guard let data = FileManager.default.contents(atPath: path),

@@ -73,9 +73,13 @@ You need an Apple silicon Mac and Xcode 26 or the Swift 6 command-line tools wit
 swift build --scratch-path /private/tmp/content-template-build
 swift run --scratch-path /private/tmp/content-template-build CoreChecks
 zsh build.sh
+# Full gate after building a disposable bundle and its archive:
+zsh test.sh "/path/to/CreatorOS.app" "/path/to/CreatorOS 1.7.0.zip"
+# Source, offscreen snapshots and layout gate used by CI:
+zsh test.sh --source-only
 ```
 
-`CoreChecks` is the test suite and prints `RESULT n checks passed`. `build.sh` writes `CreatorOS.app`, zipped into `../Outputs` outside the clone (set `CONTENT_TEMPLATE_OUTPUT_ROOT` to change it). It signs and notarises with my Developer ID when that certificate is in the keychain; on any other Mac it signs ad hoc, which is fine for running it yourself but which macOS treats as unverified. To try the app without touching a real library, launch it with `--data-directory` pointing at an empty temporary folder. The source layout, the checks and the install script are covered in [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md).
+`CoreChecks` checks the engine and prints `RESULT n checks passed`; `test.sh` is the normal complete check gate. `build.sh` writes `CreatorOS.app`, zipped into `../Outputs` outside the clone (set `CONTENT_TEMPLATE_OUTPUT_ROOT` to change it). It signs and notarises with my Developer ID when that certificate is in the keychain; on any other Mac it signs ad hoc, which is fine for running it yourself but which macOS treats as unverified. To try the app without touching a real library, launch it with `--data-directory` pointing at an empty temporary folder. The source layout, the checks and the install script are covered in [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md).
 
 ## Limits worth knowing
 

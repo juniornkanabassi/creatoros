@@ -33,6 +33,28 @@ swift run --scratch-path /private/tmp/content-template-build CoreChecks --librar
 zsh build.sh
 ```
 
+### Normal check gate
+
+After building a disposable app bundle, run the whole local gate with its matching archive:
+
+```sh
+CREATOROS_TEST_SCRATCH=/private/tmp/creatoros-check-build \
+SNAPSHOT_OUTPUT=/private/tmp/creatoros-check-snapshots \
+zsh test.sh "/path/to/CreatorOS.app" "/path/to/CreatorOS 1.7.0.zip"
+```
+
+The normal gate builds debug targets, runs the SwiftPM, core, durable-save, control, CLI/MCP,
+headless, launch-isolation, defaults-cleanup and backup checks, captures every page in both
+appearances, checks the grid and layout, verifies the package signature, and tests fresh and
+replacement installs in a disposable folder. It never installs into Applications. Tests run
+with a disposable home and data folders; the home and fixtures are removed on exit. Build
+scratch and snapshot output are removed too unless the caller supplies the two paths above.
+Keep supplied snapshots as review evidence and delete supplied build scratch after shipping.
+
+`zsh test.sh --source-only` is the CI gate. It includes core, model, launch-isolation, backup, offscreen snapshot,
+grid and layout checks; packaging, CLI/MCP and install checks additionally run in the full
+local gate. `.github/workflows/fast-checks.yml` runs this source gate and retains snapshots.
+
 ### No windows in tests or checks
 
 `python3 Scripts/check-invisible.py <command> [args...]` runs any check under a background sampler. Every 0.2 seconds it checks the test process tree and independently identifies CreatorOS and test executables, including orphaned children, and verifies that the frontmost app is unchanged. It records unrelated new windows separately; unrelated focus changes still fail the strict check. The sampling interval alone cannot rule out shorter flashes. The guards prevent windows being made visible in the first place. Invisible runs refuse Finder and external document opens. Bin operations in invisible disposable runs stay under their own data folder and are removed with the fixtures.
@@ -51,13 +73,12 @@ For a disposable launch, run the binary directly with a dedicated temporary data
 
 ```sh
 zsh tools/grid-lint.sh
-zsh tools/snap.sh /private/tmp/bama/build-creatoros
-swift tools/check-layout.swift /private/tmp/bama/build-creatoros/snapshots/*-layout.json
+zsh tools/snap.sh /private/tmp/bama/build-creatoros /private/tmp/creatoros-snapshots
 zsh Scripts/check-isolated-defaults.sh "/path/to/CreatorOS.app" --headless
 python3 Scripts/test-isolation-cleanup.py
 ```
 
-The snapshot harness compiles against the current app sources using the existing disposable check harness. It captures light and dark content for every main page, Settings tab, About, New Project and file-browser mode without ordering a window or activating the app. It also captures an actionable error. Fixtures are created through the model, never by editing a library file. The PNGs use AppKit off-screen rendering, so window compositing, active-window focus, native pointer gestures and physical-drive behaviour still need a live check. Both isolation variants launch with `--agent-screen --background`: the default keeps a transparent main window ordered in to prove a saved frame is refused, and `--headless` checks the headless start; both compare the throwaway defaults domain byte for byte.
+The snapshot harness compiles against the current app sources using the existing disposable check harness. It captures light and dark content for every main page, Settings tab, About, New Project and file-browser mode without ordering a window or activating the app. It also captures an actionable error and empty Projects, Templates and both Pipeline boards. The snapshot command requires fresh light/dark pairs for every surface and runs grid lint and layout checks itself. Fixtures are created through the model, never by editing a library file. The PNGs use AppKit off-screen rendering, so window compositing, active-window focus, native pointer gestures and physical-drive behaviour still need a live check. Both isolation variants launch with `--agent-screen --background`: the default keeps a transparent main window ordered in to prove a saved frame is refused, and `--headless` checks the headless start; both compare the throwaway defaults domain byte for byte.
 
 ## Source layout
 

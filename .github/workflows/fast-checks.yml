@@ -1,4 +1,4 @@
-# Fast checks on every pull request: the core assertions, the durable-save check and the backup utility's unit tests.
+# Source checks on every pull request, including every light/dark page and layout/grid gate.
 # Unsigned, no secrets, read-only token, synthetic data only; nothing is signed, released, published or installed.
 # build.sh, release.sh, install.sh and the checks that need a packaged app stay on the Mac.
 name: Fast checks
@@ -18,18 +18,15 @@ jobs:
       - uses: actions/checkout@v5
         with:
           persist-credentials: false
-      - name: Build
-        run: swift build --scratch-path .build-ci
-      - name: Offscreen guard regression
-        run: swift test --scratch-path .build-ci
-      - name: Core assertions on synthetic data (CoreChecks)
-        run: swift run --scratch-path .build-ci CoreChecks
-      - name: Durable save and native file providers
-        run: |
-          dir=.build-ci
-          [ -d "$dir/$(uname -m)-apple-macosx/debug" ] && dir="$dir/$(uname -m)-apple-macosx/debug"   # legacy layout; Xcode 27 uses the root
-          zsh Scripts/check-durable-save.sh "$dir"
-      - name: Backup utility unit tests and security checks
-        run: |
-          python3 -B -m unittest discover -s Scripts -p test_notion_backup.py
-          python3 Scripts/check-backup-security.py
+      - name: Offscreen source, snapshot and layout gates
+        env:
+          CREATOROS_TEST_SCRATCH: ${{ runner.temp }}/creatoros-build
+          SNAPSHOT_OUTPUT: ${{ runner.temp }}/creatoros-snapshots
+        run: zsh test.sh --source-only
+      - name: Retain light and dark snapshot evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: creatoros-snapshots
+          path: ${{ runner.temp }}/creatoros-snapshots
+          if-no-files-found: error
