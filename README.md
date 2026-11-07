@@ -14,7 +14,7 @@ New Project shows the whole folder it is about to create as soon as you choose a
 
 Projects lists everything you have made across your drives and cloud folders, with a coloured badge for each location and a clear sign when a drive is not connected. You can search, filter, pin and group projects, open them in Finder or Premiere Pro, and browse their files in icon, list or column view. If you move a project folder, CreatorOS can find it again within your saved locations.
 
-The Pipeline has two boards, one for recordings and one for live streams, with your own stages and colours. Each card holds the campaign, series, editor, notes and a Notion link. Ideas without a folder sit in the first column until you start them as a project. Changing a stage can also write a matching Finder tag on the folder.
+The Pipeline has two boards, one for recordings and one for live streams, with your own stages and colours. Each card holds the campaign, series, editor, notes and a Notion link. Ideas without a folder sit in the first column until you start them as a project. Changing a stage can also write a matching Finder tag on the folder. The board fills the window, with card details in an inspector. You can move between cards with the arrow keys and open their details with Return or Space. Undo can restore a removed project record or reverse a stage change. Removing a project from the list leaves its folder intact.
 
 For LucidLink, which refuses folder icon files, New Project has a Plain folders switch, and you can remove a project's folder icons before uploading and put them back afterwards.
 

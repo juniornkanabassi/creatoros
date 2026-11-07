@@ -78,7 +78,7 @@ zsh Scripts/check-isolated-defaults.sh "/path/to/CreatorOS.app" --headless
 python3 Scripts/test-isolation-cleanup.py
 ```
 
-The snapshot harness compiles against the current app sources using the existing disposable check harness. It captures light and dark content for every main page, Settings tab, About, New Project and file-browser mode without ordering a window or activating the app. It also captures an actionable error and empty Projects, Templates and both Pipeline boards. The snapshot command requires fresh light/dark pairs for every surface and runs grid lint and layout checks itself. Fixtures are created through the model, never by editing a library file. The PNGs use AppKit off-screen rendering, so window compositing, active-window focus, native pointer gestures and physical-drive behaviour still need a live check. Both isolation variants launch with `--agent-screen --background`: the default keeps a transparent main window ordered in to prove a saved frame is refused, and `--headless` checks the headless start; both compare the throwaway defaults domain byte for byte.
+The snapshot harness compiles against the current app sources using the existing disposable check harness. It captures light and dark content for every main page, Settings tab, About, New Project and file-browser mode without ordering a window or activating the app. It also captures an actionable error, empty Projects, Templates and both Pipeline boards, and the project, idea and live-stream inspector contents. The snapshot command requires fresh light/dark pairs for every surface and runs grid lint and layout checks itself. Fixtures are created through the model, never by editing a library file. The PNGs use AppKit off-screen rendering, so window compositing, active-window focus, native pointer gestures and physical-drive behaviour still need a live check. Both isolation variants launch with `--agent-screen --background`: the default keeps a transparent main window ordered in to prove a saved frame is refused, and `--headless` checks the headless start; both compare the throwaway defaults domain byte for byte.
 
 ## Source layout
 
@@ -101,7 +101,10 @@ Sources/TemplateCore/     engine, no UI
   Configuration.swift     validation of custom field names and stage lists
   ProjectBrowser.swift    safe read-only folder listing and opening rules
 Sources/ProjectTemplates/ the app
-  AppModel.swift          state, selection, structure cache, numbering, mounts, relinking
+  AppModel.swift          shared state, writer/save lifecycle, mounts and relinking
+  AppTypes.swift          navigation, selection and presentation types
+  AppModel+Creation.swift creation, numbering and preview actions
+  AppModel+Undo.swift     per-window undo and guarded recovery of interrupted undo
   AppModel+Pipeline.swift pipeline and Finder-tag actions using the same writer slot
   BackgroundFileOperations.swift detached template recovery and relink-root checks
   Grid.swift, DesignTokens.swift shared spacing, corners, native type and adaptive surfaces
@@ -278,3 +281,11 @@ args = ["/Applications/JuniorOS Apps/CreatorOS.app/Contents/Resources/mcp/creato
 ```
 
 For a disposable build check: `python3 Scripts/check-ai-control.py <built ProjectTemplates executable or CreatorOS.app>` (the executable form needs `creatoros` beside it) runs every command on synthetic data, sends every MCP tool through the shim and covers dry-run byte identity, request-id retries, hidden-location refusals and concurrent callers; `python3 Scripts/check-control.py <app> <scratch>` runs the socket boundary and the AppModel harness (`Scripts/check-control-model.swift`, including GUI-sheet collisions); `zsh Scripts/check-isolated-defaults.sh "/path/to/CreatorOS.app"` launches a re-identified copy with `--data-directory` and fails if anything reaches its defaults domain (it never touches the production domain). `MCP_CLI` overrides the shim's executable for testing. MCP inherits `CREATOROS_DATA_DIRECTORY`. UI gestures, physical disconnected drives, real LucidLink and Adobe relinking need separate acceptance evidence.
+
+## Council interface changes
+
+Pipeline uses the available width for its board. Selecting a card opens its inspector; arrow keys move between cards and Return or Space opens the selected card's details. Settings names save on Return or when the field loses focus.
+
+Removing a project from the list and moving a stage through the GUI register native Undo actions. Settings field and stage-list removal do too. Undo validates the current records before changing them, so it refuses to overwrite later edits. A busy rejected Undo retains a Retry Undo action; queued steps recover together on their originating window's history. A busy Redo leaves the restored data in place and asks the user to repeat the change once the writer is idle.
+
+Undo is per-window GUI editing state, like text-field Undo. It is not exposed as a global CLI or MCP command that could reverse another caller's work. The existing explicit mutation, dry-run and request-id APIs remain unchanged.

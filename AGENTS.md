@@ -7,3 +7,5 @@ Reviews here follow the JuniorOS `03 Skills/Review workflow.md`. This project's 
 Tests and launch checks must never show windows or take focus: the TestOffscreen guard is a dependency of every test target, and real-app checks pass the invisible flag. Never use open, computer use or a visible Simulator in tests (6 Nov 2026).
 
 After meaningful work, update the existing memory and validation record automatically. Build with `zsh build.sh`; run the CoreChecks executable using the instructions in `docs/DEVELOPMENT.md`. Do not install over a running app or modify a user's library without a backup and an explicit in-scope reason.
+
+The normal complete gate is `zsh test.sh <disposable-built-app> <matching-archive>`. It includes offscreen snapshots and grid/layout checks; `zsh test.sh --source-only` is the CI subset.
