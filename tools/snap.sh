@@ -24,7 +24,7 @@ python3 - "$output" "$started" <<'PY'
 import pathlib, sys
 root, started = pathlib.Path(sys.argv[1]), int(sys.argv[2])
 surfaces = ['projects', 'pipeline', 'pipeline-live', 'templates',
-            'settings-formats', 'settings-naming', 'settings-pipeline', 'settings-locations',
+            'settings-formats', 'settings-naming', 'settings-pipeline', 'settings-finder', 'settings-locations',
             'about', 'new-project', 'browser-icon', 'browser-list', 'browser-column', 'projects-error',
             'projects-empty', 'pipeline-empty', 'pipeline-live-empty', 'templates-empty',
             'pipeline-project-details', 'pipeline-idea-details', 'pipeline-live-details']

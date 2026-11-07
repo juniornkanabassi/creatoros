@@ -32,7 +32,7 @@ struct ProjectList: View {
                     ContentUnavailableView {
                         Label("No projects yet", systemImage: "externaldrive")
                     } description: {
-                        Text("CreatorOS makes correctly named project folders from your templates, then tracks them through your pipeline.\n\n1. Import a template in Templates.\n2. Press Create Project and name it.\n3. Follow it on the Pipeline board.\n\nAlready have projects? Use Add Existing. Files stay where they are.")
+                        Text("CreatorOS makes correctly named project folders from your templates, then tracks them through your pipeline.\n\n1. Import a template in Templates.\n2. Create a project from it and name it.\n3. Follow it on the Pipeline board.\n\nAlready have projects? Choose File, Add Existing Project. Files stay where they are.")
                     } actions: {
                         if m.library.templates.isEmpty {
                             Button("Import Template…") { m.beginImport() }.help("Choose a template folder or Post Haste package to copy into CreatorOS. Your original is never changed.")
@@ -49,7 +49,7 @@ struct ProjectList: View {
                         Text(location.name).font(TypeStyle.caption).help(location.path)
                         Spacer()
                         Button("Scan Again") { m.rescanLocation(location) }.font(TypeStyle.caption).help("Look through this location again for projects that are not in the list yet")
-                        Button { m.removeLocation(location) } label: { Image(systemName: "minus.circle") }.buttonStyle(.plain).help("Forget this location. Projects already registered stay.")
+                        Button { m.removeLocation(location) } label: { Image(systemName: "minus.circle").frame(minWidth: 28, minHeight: 28).contentShape(Rectangle()) }.buttonStyle(.plain).help("Forget this location. Projects already registered stay.")
                             .accessibilityLabel("Forget \(location.name)")
                     }
                 }
@@ -146,7 +146,7 @@ struct ProjectActions: View {
             if record.ideaWorkspace != nil { Button("Review Old Idea Workspace…") { m.workspaceCleanup = record }.help("Decide whether to keep the draft folder this project started from") }
         }
         Divider()
-        Button("Remove from List", role: .destructive) { m.removeProject(record.id) }.help("Forget this project. Its folder is not touched.")
+        Button("Remove from List", role: .destructive) { m.removeProject(record.id) }.help("Take this project off the list. Its folder is not touched.")
     }
 }
 
@@ -217,7 +217,8 @@ struct ProjectInspector: View {
                 }.fixedSize().help("Rename, pin, relink and other actions for this project, with their keyboard shortcuts")
             }
             DisclosureGroup(isExpanded: $showStatus) {
-                ProjectStatusEditor(record: record).padding(.top, Space.sm)
+                // Outside a Form a TextField hides its title; the columns style shows Campaign, Editor, Series and Notes.
+                Form { ProjectStatusEditor(record: record) }.formStyle(.columns).padding(.top, Space.sm)
             } label: {
                 HStack(spacing: Space.sm) { Text("Details").font(TypeStyle.headline); StageMenu(record: record) }
             }
@@ -285,7 +286,7 @@ struct RelinkReportSheet: View {
         VStack(alignment: .leading, spacing: Space.lg) {
             if report.outcomes.isEmpty {
                 ContentUnavailableView("Nothing is missing", systemImage: "checkmark.circle",
-                                       description: Text("All \(report.checked) projects on the ticked drives are where the list says. Nothing needed relinking."))
+                                       description: Text("All ^[\(report.checked) project](inflect: true) on the ticked drives are where the list says. Nothing needed relinking."))
                     .frame(maxWidth: .infinity, minHeight: 220)
             } else {
                 Text("Missing Projects").font(TypeStyle.title2.weight(.semibold))
@@ -368,7 +369,7 @@ struct DuplicatesSheet: View {
                                     }
                                     Spacer()
                                     Button("Show") { m.selectedProject = record.id; m.page = .projects; m.selectProject(); m.duplicatesPresented = false }.controlSize(.small).help("Close this list and select this copy in Projects")
-                                    Button("Remove from List") { m.removeProject(record.id) }.controlSize(.small).help("Forget this copy. Its folder stays where it is.")
+                                    Button("Remove from List") { m.removeProject(record.id) }.controlSize(.small).help("Take this copy off the list. Its folder stays where it is.")
                                 }.padding(.vertical, Space.xxs)
                             }
                         }

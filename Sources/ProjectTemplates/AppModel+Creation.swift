@@ -76,7 +76,13 @@ extension AppModel {
                 let url = try URL(resolvingBookmarkData: bookmark, options: [.withoutUI, .withoutMounting], relativeTo: nil, bookmarkDataIsStale: &stale)
                 guard !stale else { throw AppFailure("Choose the destination again to refresh its bookmark.") }
                 draft.destination = url.path
-            } catch { draft.destination = ""; self.error = "Destination is unavailable. Choose it again. \(error.localizedDescription)" }
+            } catch {
+                draft.destination = ""
+                fail("Destination is unavailable. Choose it again. \(error.localizedDescription)", action: ("Choose…", { [weak self] in
+                    self?.chooseDestination()
+                    if self?.draft.destination.isEmpty == false { self?.error = nil }
+                }))
+            }
         }
         draft.restartNumbering(suggested: suggestedNumber)
         refresh()

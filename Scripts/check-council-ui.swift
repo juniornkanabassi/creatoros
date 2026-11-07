@@ -111,6 +111,15 @@ import TemplateCore
         let clear = try await render(width: 1280)
         check(clear["error-notice"] == nil && clear["work-page"] != nil, "no error row is drawn without an error")
 
+        // At the default window every recording stage is on screen without scrolling the board.
+        if let work = clear["work-page"] {
+            let stages = model.boardStages
+            let columns = stages.compactMap { clear["stage-column-" + $0] }
+            check(stages.count == 6 && columns.count == stages.count, "the recordings board records its six stage columns")
+            let clipped = columns.filter { $0.x < work.x - 0.5 || $0.x + $0.width > work.x + work.width + 0.5 }.map(\.name)
+            check(clipped.isEmpty, "all six stage columns fit the \(Int(work.width)) pt board at 1280 pt (clipped: \(clipped))")
+        }
+
         print("RESULT \(checks) council ui checks passed")
     }
 }

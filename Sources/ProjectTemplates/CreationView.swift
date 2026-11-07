@@ -70,7 +70,7 @@ struct FormatButtons: View {
         return Button { selection = format } label: {
             HStack(spacing: Space.xs) {
                 if let preset = m.library.presets.first(where: { $0.format == format }) {
-                    FormatIcon(data: preset.icon, size: 20).overlay(alignment: .bottomTrailing) {
+                    FormatIcon(data: preset.icon, size: 16).overlay(alignment: .bottomTrailing) {
                         if missing {
                             Image(systemName: "exclamationmark.circle.fill").font(TypeStyle.caption2).foregroundStyle(.orange)
                                 .offset(x: Space.xs, y: Space.xs) // grid: ok badge overlaps its format icon
@@ -78,7 +78,7 @@ struct FormatButtons: View {
                     }
                 }
                 Text(label).font(TypeStyle.callout.weight(selection == format ? .semibold : .regular)).lineLimit(1).fixedSize()
-            }.frame(minHeight: 20).padding(.horizontal, Space.xs).padding(.vertical, Space.xs)
+            }.frame(minHeight: 20).padding(.horizontal, Space.xs)
         }.buttonStyle(.bordered).tint(selection == format ? .accentColor : .secondary)
             .help(missing ? "\(label) is not set up in this template set yet" : label)
             .accessibilityLabel(label).accessibilityAddTraits(selection == format ? .isSelected : [])

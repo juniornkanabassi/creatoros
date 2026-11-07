@@ -38,17 +38,15 @@ struct FolderBrowserHost: View {
                     .pickerStyle(.segmented).labelsHidden().fixedSize().onChange(of: projectFilesOnly) { if projectFilesOnly { loadDocuments() } }
                     .accessibilityLabel("Files to show").help("Browse every file, or show only editing documents such as Premiere and Photoshop projects.")
                 if !projectFilesOnly { ViewModePicker(surface: surface) }
-                TextField(projectFilesOnly ? "Search documents" : "Search this folder", text: $query)
-                    .textFieldStyle(.roundedBorder).frame(width: 160)
-                    .accessibilityLabel(projectFilesOnly ? "Search documents" : "Search this folder")
-                    .help("Filter the names shown in this browser.")
-                Button { refreshCount += 1; if projectFilesOnly { loadDocuments() } } label: { Image(systemName: "arrow.clockwise") }
-                    .help("Read this folder again, keeping your place in the browser.").accessibilityLabel("Refresh files")
-                Button { if let selection { requestOpen(path: selection) } } label: {
-                    Label("Open in Default App", systemImage: "arrow.up.forward.app").labelStyle(.iconOnly)
-                }.disabled(selection == nil || selection == folder)
-                    .help("Open the selected document in its usual app. Template files ask for confirmation.")
-                    .accessibilityLabel("Open in Default App")
+                // Search and Refresh wrap together, so neither sits alone on a second row.
+                HStack(spacing: Space.sm) {
+                    TextField(projectFilesOnly ? "Search documents" : "Search this folder", text: $query)
+                        .textFieldStyle(.roundedBorder).frame(minWidth: 120, idealWidth: 160, maxWidth: 160)
+                        .accessibilityLabel(projectFilesOnly ? "Search documents" : "Search this folder")
+                        .help("Filter the names shown in this browser.")
+                    Button { refreshCount += 1; if projectFilesOnly { loadDocuments() } } label: { Image(systemName: "arrow.clockwise") }
+                        .help("Read this folder again, keeping your place in the browser.").accessibilityLabel("Refresh files")
+                }
             }
             HStack(spacing: Space.sm) {
                 Button { goUp() } label: { Image(systemName: "chevron.up") }.disabled(folder.isEmpty || projectFilesOnly).help("Enclosing folder").accessibilityLabel("Enclosing folder")
@@ -57,6 +55,11 @@ struct FolderBrowserHost: View {
                 Button { if let root { NSWorkspace.shared.revealOutsideChecks([root.appendingPathComponent(selection ?? folder)]) } } label: { Image(systemName: "folder") }
                     .disabled(root == nil).help("Reveal in Finder: the selected item, or this folder when nothing is selected, ready to drag into YouTube or anywhere else")
                     .accessibilityLabel("Reveal in Finder")
+                Button { if let selection { requestOpen(path: selection) } } label: {
+                    Label("Open in Default App", systemImage: "arrow.up.forward.app").labelStyle(.iconOnly)
+                }.disabled(selection == nil || selection == folder)
+                    .help("Open the selected document in its usual app. Template files ask for confirmation.")
+                    .accessibilityLabel("Open in Default App")
                 Text(projectFilesOnly ? "Premiere, After Effects, Photoshop and audio projects" : (folder.isEmpty ? title : folder))
                     .font(TypeStyle.caption).lineLimit(1).truncationMode(.middle).textSelection(.enabled)
                     .help(projectFilesOnly ? "Premiere, After Effects, Photoshop and audio projects" : (root?.appendingPathComponent(folder).path ?? title))

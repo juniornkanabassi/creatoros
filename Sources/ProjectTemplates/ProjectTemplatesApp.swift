@@ -133,6 +133,7 @@ extension NSSplitView { @objc func refuseAutosaveName(_ name: String?) {} }
             }
             SidebarCommands()
             ToolbarCommands()
+            InspectorCommands()
             CommandGroup(after: .textEditing) {
                 Button("Find") { AppModel.focusSearchField() }.keyboardShortcut("f")
             }
@@ -339,7 +340,7 @@ struct MainView: View {
         ZoomedInterface(scale: m.uiScale, minimumWidth: minimumWidth) {
             VStack(spacing: 0) {
                 if m.error != nil && m.storeUsable { ErrorNotice().gridProbe("error-notice", area: "work-area", edge: nil) }
-                if m.busy || (!m.status.isEmpty && m.status.hasPrefix("Looking")) {
+                if m.busy || !m.status.isEmpty {
                     HStack(spacing: Space.md) {
                         if m.busy { ProgressView(value: m.fraction).frame(width: 160) }
                         Text(m.status.isEmpty ? "Working…" : m.status).lineLimit(2).font(TypeStyle.caption).foregroundStyle(.secondary)
@@ -392,10 +393,10 @@ private struct MainSheets: ViewModifier {
             }.padding(Space.xxl).frame(width: 620).errorNotice()
         }
         .confirmationDialog(m.binIdea?.isPlanned == false ? "Put the old workspace in the Bin?" : "Bin this idea?", isPresented: Binding(get: { m.binIdea != nil }, set: { if !$0 { m.binIdea = nil } }), titleVisibility: .visible) {
-            Button(m.confirmedWorkspaceURL == nil ? "Remove Idea" : "Move Owned Workspace to Bin", role: .destructive) { m.confirmBinIdea() }
+            Button(m.confirmedWorkspaceURL == nil ? "Bin Idea" : "Move Its Draft Folder to Bin", role: .destructive) { m.confirmBinIdea() }
             Button("Cancel", role: .cancel) { m.binIdea = nil }
         } message: {
-            Text(m.confirmedWorkspaceURL.map { "Only this owned workspace will be moved to Finder's recoverable Bin: \($0.path)" } ?? "This idea has no workspace. Only its library record will be removed.")
+            Text(m.confirmedWorkspaceURL.map { "Only this draft folder will be moved to Finder's recoverable Bin: \($0.path)" } ?? "This idea has no workspace. Only its library record will be removed.")
         }
         .sheet(item: $m.newSetPrompt) { _ in NewSetSheet().errorNotice() }
         .sheet(item: $m.templateToBrowse) { record in

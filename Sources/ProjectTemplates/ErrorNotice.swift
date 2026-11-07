@@ -11,12 +11,15 @@ struct ErrorNotice: View {
                     .accessibilityHidden(true)
                 Text(message).font(TypeStyle.callout).textSelection(.enabled)
                     .frame(maxWidth: .infinity, alignment: .leading)
+                if let action = m.errorAction {
+                    Button(action.title) { action.run() }.disabled(m.busy)
+                }
                 if m.canRetryUndo {
                     Button("Retry Undo") { m.retryUndo() }
                         .disabled(m.busy || m.writeLocked)
                         .help("Retry the undo after the current change finishes")
                 }
-                Button { m.error = nil } label: { Image(systemName: "xmark") }
+                Button { m.error = nil } label: { Image(systemName: "xmark").frame(minWidth: 28, minHeight: 28).contentShape(Rectangle()) }
                     .buttonStyle(.plain).help("Dismiss this message")
                     .accessibilityLabel("Dismiss error message")
             }

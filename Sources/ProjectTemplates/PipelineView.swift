@@ -90,7 +90,7 @@ struct StageMenu: View {
                 NSColor.controlAccentColor.setFill(); NSBezierPath(ovalIn: circle).fill()
                 let tick = NSBezierPath(); tick.lineWidth = 1.8; tick.lineCapStyle = .round; tick.lineJoinStyle = .round
                 tick.move(to: NSPoint(x: 4.6, y: 8.2)); tick.line(to: NSPoint(x: 7.0, y: 5.8)); tick.line(to: NSPoint(x: 11.6, y: 10.6))
-                NSColor.white.setStroke(); tick.stroke()
+                NSColor.alternateSelectedControlTextColor.setStroke(); tick.stroke()
             } else {
                 let ring = NSBezierPath(ovalIn: circle); ring.lineWidth = 1.3
                 NSColor.secondaryLabelColor.setStroke(); ring.stroke()
@@ -119,10 +119,29 @@ struct ProjectFilters: View {
     var includeStage = true
     /// On Pipeline the buttons follow the board; Projects shows every format.
     var kind: PipelineKind? = nil
+    /// Pipeline keeps its board picker and location controls on one shared leading edge.
+    var includeBoardPicker = false
     var body: some View {
         VStack(alignment: .leading, spacing: Space.sm) {
-        if kind != .live { FormatButtons(selection: $m.formatFilter, includeAll: true, kind: kind).help("Filter by the format the project was created as.") }
-        FlowLayout(spacing: Space.md) {
+            if includeBoardPicker {
+                FlowLayout(spacing: Space.md) {
+                    Picker("Board", selection: $m.pipelineKind) { ForEach(PipelineKind.allCases) { Text($0.title).tag($0) } }
+                        .pickerStyle(.segmented).labelsHidden().fixedSize()
+                        .help("Recordings move from idea to published. Live streams are scheduled, then streamed.").accessibilityLabel("Board")
+                    filterControls
+                }
+                FormatButtons(selection: $m.formatFilter, includeAll: true, kind: kind)
+                    .help("Filter by the format the project was created as.")
+            } else {
+                if kind != .live {
+                    FormatButtons(selection: $m.formatFilter, includeAll: true, kind: kind)
+                        .help("Filter by the format the project was created as.")
+                }
+                FlowLayout(spacing: Space.md) { filterControls }
+            }
+        }
+    }
+    @ViewBuilder private var filterControls: some View {
             let locations = m.distinctLocations
             let shownLocations = locations.filter { !m.hiddenLocations.contains($0.key) }.count
             Menu {
@@ -157,9 +176,8 @@ struct ProjectFilters: View {
             Button { m.refreshEverything() } label: { Image(systemName: "arrow.clockwise") }.controlSize(.small)
                 .help("Refresh: check which drives are connected, check the selected project's folder again, and rerun the search")
                 .accessibilityLabel("Refresh")
-        }
-        }
     }
+
 }
 
 /// Campaign, editor, series and notes for one project. Saves on submit and when focus leaves a field.
@@ -179,7 +197,7 @@ struct ProjectStatusEditor: View {
         VStack(alignment: .leading, spacing: Space.md) {
             TextField("Campaign", text: $campaign, prompt: Text("Campaign, if any")).onSubmit(save)
                 .accessibilityLabel("Campaign").help("The campaign this project belongs to. Saved as you type; the folder name is not changed.")
-            TextField("With", text: $editor, prompt: Text("Editor or collaborator")).onSubmit(save)
+            TextField("Editor", text: $editor, prompt: Text("Editor or collaborator")).onSubmit(save)
                 .accessibilityLabel("Editor or collaborator").help("Who you are making this with. Shown on the card.")
             TextField("Series", text: $series, prompt: Text("Series, separated by commas")).onSubmit(save)
                 .accessibilityLabel("Series").help("Series this belongs to. Separate several with commas.")
@@ -196,7 +214,6 @@ struct ProjectStatusEditor: View {
                 }
             }
         }
-        .labelsHidden()
         .onAppear { reload() }
         .onChange(of: record.id) { reload() }
         // Something else changed the record (a command, or another window). Refresh only the fields the user has not touched,
@@ -287,7 +304,6 @@ struct PipelinePageChrome: ViewModifier {
 /// The selected card's details, in the Pipeline inspector.
 struct PipelineInspector: View {
     @EnvironmentObject var m: AppModel
-    @State private var showAdvanced = false
     var body: some View {
         Group {
             if let record = m.pipelineSelectedRecord {
@@ -323,13 +339,11 @@ struct PipelineInspector: View {
                         if record.isPlanned { Text("Starting fills in New Project with this idea. The idea becomes the project once its folder is created.") }
                     }
                     Section {
-                        DisclosureGroup("Advanced", isExpanded: $showAdvanced) {
-                            Text(record.isPlanned ? "Remove this idea from the board. Its draft folder, if any, goes to the recoverable Bin after you confirm."
-                                                  : "Forget this project. Only the record is removed; the folder is not touched.")
-                                .font(TypeStyle.caption).foregroundStyle(.secondary)
-                            Button(record.isPlanned ? "Bin Idea…" : "Remove from List", role: .destructive) { if record.isPlanned { m.requestBinIdea(record) } else { m.removeProject(record.id) } }
-                                .help(record.isPlanned ? "Review this idea and its owned workspace before putting it in the Bin." : "Forget this project. Its folder is not touched.")
-                        }.accessibilityAction { showAdvanced.toggle() }
+                        Button(record.isPlanned ? "Bin Idea…" : "Remove from List", role: .destructive) { if record.isPlanned { m.requestBinIdea(record) } else { m.removeProject(record.id) } }
+                            .help(record.isPlanned ? "Review this idea and its draft folder before putting it in the Bin." : "Take this project off the list. Its folder is not touched.")
+                    } footer: {
+                        Text(record.isPlanned ? "Its draft folder, if any, goes to the recoverable Bin after you confirm."
+                                              : "Only the record is removed; the folder is not touched. Undo brings it back.")
                     }
                 }.formStyle(.grouped)
             }
@@ -338,11 +352,9 @@ struct PipelineInspector: View {
         .toolbar {
             ToolbarItem {
                 Button { m.pipelineSelection = nil } label: { Label("Hide Details", systemImage: "sidebar.trailing") }
-                    .help("Hide the card details (Escape on the board)")
+                    .help("Hide the card details (Escape on the board, or Control-Command-I)")
             }
         }
-        .onAppear { showAdvanced = m.defaults.bool(forKey: "disclosure.pipelineAdvanced") }
-        .onChange(of: showAdvanced) { m.defaults.set(showAdvanced, forKey: "disclosure.pipelineAdvanced") }
     }
 }
 
@@ -352,33 +364,37 @@ struct PipelineBoard: View {
     @FocusState private var focusedCard: UUID?
     @State private var requestedCard: UUID?
     @State private var width: CGFloat = 0
-    /// Columns share the width before the board scrolls, from 200 pt (scrolls) to 320 pt (few stages).
+    /// Columns share the width before the board scrolls, from 148 pt (scrolls) to 320 pt (few stages). Six recording stages
+    /// need 6 x (148 + 2 x 8) + 5 x 8 + 2 x 16 = 1056 pt, which the 1064 pt beside the sidebar at the default 1280 pt window gives.
     private var columnWidth: CGFloat {
         let count = CGFloat(max(m.boardStages.count, 1))
-        let share = (width - 2 * Space.lg - (count - 1) * Space.md) / count - 2 * Space.md
-        return min(320, max(200, (share / 4).rounded(.down) * 4))
+        let share = (width - 2 * Space.lg - (count - 1) * Space.sm) / count - 2 * Space.sm
+        return min(320, max(148, (share / 4).rounded(.down) * 4))
     }
     private var filtered: Bool { m.formatFilter != "All formats" || !m.hiddenLocations.isEmpty }
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            HStack(alignment: .top, spacing: Space.lg) {
-                Picker("Board", selection: $m.pipelineKind) { ForEach(PipelineKind.allCases) { Text($0.title).tag($0) } }
-                    .pickerStyle(.segmented).labelsHidden().fixedSize()
-                    .help("Recordings move from idea to published. Live streams are scheduled, then streamed.").accessibilityLabel("Board")
-                ProjectFilters(includeStage: false, kind: m.pipelineKind)
-            }.padding(.horizontal, Space.lg).padding(.vertical, Space.md)
+            ProjectFilters(includeStage: false, kind: m.pipelineKind, includeBoardPicker: true)
+                .padding(.horizontal, Space.lg).padding(.vertical, Space.md)
             Divider()
             // One explanation for an empty board instead of an empty label in every column; the columns stay as drop targets.
             if m.boardStages.allSatisfy({ m.projects(in: $0).isEmpty }) {
-                Label((m.pipelineKind == .live
-                       ? "No streams here yet. Press Create Project and choose Live."
-                       : "No projects here yet. Add an idea or press Create Project.") + (filtered ? " Some may be hidden by the filters." : ""),
-                      systemImage: "info.circle")
-                    .font(TypeStyle.callout).foregroundStyle(.secondary).padding(.horizontal, Space.lg).padding(.top, Space.lg)
+                HStack(spacing: Space.md) {
+                    Label((m.pipelineKind == .live
+                           ? "No streams here yet. Create Project, then choose Live, makes the first one."
+                           : "No projects here yet. New Idea or Create Project makes the first one.") + (filtered ? " Some may be hidden by the filters." : ""),
+                          systemImage: "info.circle")
+                        .font(TypeStyle.callout).foregroundStyle(.secondary)
+                    if m.pipelineKind == .live {
+                        Button("Create Project…") { m.newProjectPresented = true }.help("Create a project folder from a template (⌘N). Choose Live for this board.")
+                    } else {
+                        Button("New Idea…") { m.newIdeaPresented = true }.help("Add an idea without a folder yet")
+                    }
+                }.padding(.horizontal, Space.lg).padding(.top, Space.lg)
             }
             ScrollViewReader { proxy in
                 ScrollView(.horizontal) {
-                    HStack(alignment: .top, spacing: Space.md) {
+                    HStack(alignment: .top, spacing: Space.sm) {
                         ForEach(m.boardStages, id: \.self) { stage in
                             StageColumn(stage: stage, width: columnWidth, focusedCard: $focusedCard, requestedCard: requestedCard)
                                 .id(stage)
@@ -401,6 +417,8 @@ struct PipelineBoard: View {
         .onKeyPress(.rightArrow) { move(.right) }
         .onKeyPress(.return) { open() }
         .onKeyPress(.space) { open() }
+        // Delete removes the focused card through the same action as its context menu, which registers Undo.
+        .onDeleteCommand { if let id = focusedCard { m.removeProject(id) } }
         .onKeyPress(.escape) {
             guard focusedCard != nil, m.pipelineSelection != nil else { return .ignored }
             m.pipelineSelection = nil
@@ -437,11 +455,11 @@ struct StageColumn: View {
         let items = m.projects(in: stage)
         let colour = m.stageColour(stage)
         VStack(alignment: .leading, spacing: Space.sm) {
-            HStack(spacing: Space.sm) {
-                Circle().fill(colour).frame(width: 12, height: 12)
-                Text(stage).font(TypeStyle.headline)
-                Text("\(items.count)").font(TypeStyle.caption.monospacedDigit()).foregroundStyle(.secondary)
-                    .padding(.horizontal, Space.sm).padding(.vertical, 1).background(.quaternary, in: Capsule())
+            HStack(spacing: Space.xs) {
+                Circle().fill(colour).frame(width: 8, height: 8)
+                Text(stage).font(TypeStyle.headline).lineLimit(1)
+                Text("\(items.count)").font(TypeStyle.caption.monospacedDigit()).foregroundStyle(.primary)
+                    .padding(.horizontal, Space.xs).padding(.vertical, 1).background(.quaternary, in: Capsule())
                 Spacer()
                 Menu {
                     Menu("Move All \(items.count) to") {
@@ -449,9 +467,9 @@ struct StageColumn: View {
                             Button(target) { m.moveAll(from: stage, to: target) }.disabled(target == stage)
                         }
                     }.disabled(items.isEmpty)
-                } label: { Image(systemName: "ellipsis.circle") }.menuStyle(.borderlessButton).fixedSize().help("Move every card in this column")
+                } label: { Image(systemName: "ellipsis.circle") }.menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize().help("Move every card in this column")
                     .accessibilityLabel("\(stage) column actions")
-            }.padding(.horizontal, Space.xs)
+            }
             ScrollViewReader { proxy in
                 ScrollView {
                     LazyVStack(spacing: Space.sm) {
@@ -462,7 +480,7 @@ struct StageColumn: View {
                                 }
                         }
                         if items.isEmpty && m.boardStages.contains(where: { !m.projects(in: $0).isEmpty }) {
-                            Text("Drag cards here").font(TypeStyle.caption).foregroundStyle(.tertiary).padding(.top, Space.md)
+                            Text("Drag cards here").font(TypeStyle.caption).foregroundStyle(.secondary).padding(.top, Space.md)
                         }
                     }.padding(Space.xxs)
                 }
@@ -477,9 +495,11 @@ struct StageColumn: View {
             }
         }
         .frame(width: width)
-        .padding(Space.md)
+        .padding(Space.sm)
+        .gridArea("stage-column-" + stage, inset: 0)
         .background(RoundedRectangle(cornerRadius: Radius.lg).fill(targeted ? colour.opacity(0.18) : colour.opacity(0.06)))
         .background(RoundedRectangle(cornerRadius: Radius.lg).fill(Surface.control.opacity(0.6)))
+        .overlay(RoundedRectangle(cornerRadius: Radius.lg).strokeBorder(.separator, lineWidth: 1))
         .overlay(RoundedRectangle(cornerRadius: Radius.lg).strokeBorder(targeted ? colour : .clear, lineWidth: 2))
         .dropDestination(for: String.self) { ids, _ in
             for id in ids.compactMap(UUID.init) { m.setStage(stage, for: id) }
@@ -494,6 +514,11 @@ struct ProjectCard: View {
     var focusedCard: FocusState<UUID?>.Binding
     var selected: Bool { m.pipelineSelection == record.id }
     private var gridID: String { "pipeline-card-" + record.id.uuidString }
+    /// The full title first, since the card clips it at three lines.
+    private var helpText: String {
+        let action = record.isPlanned ? "Double-click to start this idea as a project" : "Double-click to open in Projects"
+        return "\(record.isPlanned ? record.name : record.title)\n\(action)"
+    }
     var body: some View {
         let stage = m.effectiveStage(record)
         VStack(alignment: .leading, spacing: Space.sm) {
@@ -533,7 +558,7 @@ struct ProjectCard: View {
         .onTapGesture(count: 2) { m.openPipelineCard(record) }
         .onTapGesture { m.pipelineSelection = record.id; focusedCard.wrappedValue = record.id }
         .draggable(record.id.uuidString)
-        .help(record.isPlanned ? "Double-click to start this idea as a project" : "Double-click to open in Projects")
+        .help(helpText)
         .contextMenu {
             Menu("Move to") { ForEach(m.moveTargets(for: record), id: \.self) { target in Button(target) { m.setStage(target, for: record.id) }.disabled(target == stage) } }
             if record.isPlanned {

@@ -112,6 +112,6 @@ enum BadgeColour: String, CaseIterable, Identifiable {
         case .pink: .pink; case .indigo: .indigo; case .red: .red; case .yellow: .yellow; case .brown: .brown; case .mint: .mint
         }
     }
-    var title: String { rawValue.prefix(1).uppercased() + rawValue.dropFirst() }
+    var title: String { self == .gray ? "Grey" : rawValue.prefix(1).uppercased() + rawValue.dropFirst() }
 }
 

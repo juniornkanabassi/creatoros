@@ -23,9 +23,19 @@ extension AppModel {
     func setStage(_ stage: String, for id: UUID) {
         let before = library.projects.first(where: { $0.id == id })
         attempt {
-            _ = try moveToStage(stage, for: id)
+            reportTagFailures([try moveToStage(stage, for: id)], name: before?.name ?? stage)
             guard let before, before.stage != stage, let after = library.projects.first(where: { $0.id == id }) else { return }
             registerStageUndo(before: [before], after: [after], manager: undoManager)
+        }
+    }
+    /// The record is already saved when its Finder tag fails, so say that Finder is out of step instead of staying silent.
+    func reportTagFailures(_ tasks: [Task<TagOutcome, Never>], name: String) {
+        Task {
+            var failed = 0
+            for task in tasks where await task.value == .failed { failed += 1 }
+            guard failed > 0 else { return }
+            status = tasks.count == 1 ? "Could not tag ‘\(name)’ in Finder. Tag All Folders Now will retry."
+                : "Could not tag \(failed) of \(tasks.count) folders in Finder. Tag All Folders Now will retry."
         }
     }
     /// Moves one record to a stage on its own board and starts its Finder tag write. Unknown records and stages from the other
@@ -45,7 +55,7 @@ extension AppModel {
         let ids = before.map(\.id)
         guard !ids.isEmpty else { return }
         attempt {
-            _ = try moveAll(ids: ids, to: target)
+            reportTagFailures(try moveAll(ids: ids, to: target), name: target)
             let changed = before.filter { $0.stage != target }
             let wanted = Set(changed.map(\.id))
             if !changed.isEmpty { registerStageUndo(before: changed, after: library.projects.filter { wanted.contains($0.id) }, manager: undoManager) }
@@ -125,10 +135,14 @@ extension AppModel {
         let checked = try Configuration.stages(stages)
         try mutate { if kind == .live { $0.liveStages = checked } else { $0.stages = checked } }
     }
-    struct StageRenameReport { var projects = 0, tagsToRewrite = 0, tags: [TagOutcome] = [] }
-    /// The rename field in Settings.
-    func renameStage(_ old: String, to new: String, on kind: PipelineKind) {
-        Task { do { _ = try await renameStageCore(old, to: new, on: kind) } catch { self.error = error.localizedDescription } }
+    struct StageRenameReport { var projects = 0, tagsToRewrite = 0, tags: [TagOutcome] = [], newName = "" }
+    /// The rename field in Settings: a rename the user can undo.
+    @discardableResult
+    func renameStage(_ old: String, to new: String, on kind: PipelineKind) async throws -> StageRenameReport {
+        let manager = undoManager
+        let report = try await renameStageCore(old, to: new, on: kind)
+        registerStageRenameUndo(old: old, new: report.newName, kind: kind, manager: manager)
+        return report
     }
     /// Renames a stage on one board and takes everything that used the old name with it: the records on that stage, its colour,
     /// the saved stage filter, and the Finder tag on every staged folder that is on a connected, ticked drive (the old tag is
@@ -146,26 +160,33 @@ extension AppModel {
         guard checked[index] != old else { throw AppFailure("The new name is the same as the old one.") }
         let name = checked[index]
         func affected(_ lib: Library) -> [ProjectRecord] { lib.projects.filter { kind.includes(format: $0.format) && $0.stage == old } }
-        var report = StageRenameReport(projects: affected(library).count)
+        var report = StageRenameReport(projects: affected(library).count, newName: name)
         let taggable = { (r: ProjectRecord) in self.library.finderTagsEnabled && !r.isPlanned && !self.hiddenLocations.contains(r.location.key) && r.location.isMounted }
         report.tagsToRewrite = affected(library).filter(taggable).count
         if dryRun { return report }
         await writePauseForTests?()
         let ids = Set(affected(library).map(\.id))
-        let otherBoardUsesOld = library.stages(for: kind == .live ? .recordings : .live).contains(old)
-        let colour = library.colour(of: old)
-        try await commitDurably { lib in
-            if kind == .live { lib.liveStages = checked } else { lib.stages = checked }
-            for i in lib.projects.indices where kind.includes(format: lib.projects[i].format) && lib.projects[i].stage == old { lib.projects[i].stage = name }
-            var colours = lib.stageColours ?? [:]
-            if colour != .none, colours[name] == nil { colours[name] = colour.rawValue }
-            if !otherBoardUsesOld { colours[old] = nil }
-            lib.stageColours = colours
-        }
-        if excludedStages.contains(old) && !otherBoardUsesOld { excludedStages.remove(old); excludedStages.insert(name) }
-        let tasks = library.projects.filter { ids.contains($0.id) }.map { tagFolder($0, replacing: old) }
-        for task in tasks { report.tags.append(await task.value) }
+        try await commitDurably { applyRename(&$0, from: old, to: name, checked: checked, on: kind) }
+        for task in startedRename(from: old, to: name, on: kind, ids: ids) { report.tags.append(await task.value) }
         return report
+    }
+    /// The library half of a rename: the list, the records on the stage and its colour.
+    func applyRename(_ lib: inout Library, from old: String, to name: String, checked: [String], on kind: PipelineKind) {
+        let otherBoardUsesOld = lib.stages(for: kind == .live ? .recordings : .live).contains(old)
+        let colour = lib.colour(of: old)
+        if kind == .live { lib.liveStages = checked } else { lib.stages = checked }
+        for i in lib.projects.indices where kind.includes(format: lib.projects[i].format) && lib.projects[i].stage == old { lib.projects[i].stage = name }
+        var colours = lib.stageColours ?? [:]
+        if colour != .none, colours[name] == nil { colours[name] = colour.rawValue }
+        if !otherBoardUsesOld { colours[old] = nil }
+        lib.stageColours = colours
+    }
+    /// The rest of a saved rename: the saved stage filter follows, and each record's Finder tag is rewritten.
+    @discardableResult
+    func startedRename(from old: String, to name: String, on kind: PipelineKind, ids: Set<UUID>) -> [Task<TagOutcome, Never>] {
+        let otherBoardUsesOld = library.stages(for: kind == .live ? .recordings : .live).contains(old)
+        if excludedStages.contains(old) && !otherBoardUsesOld { excludedStages.remove(old); excludedStages.insert(name) }
+        return library.projects.filter { ids.contains($0.id) }.map { tagFolder($0, replacing: old) }
     }
     func setStageColour(_ colour: StageColour, for stage: String) { attempt { _ = try applyStageColour(colour, for: stage) } }
     @discardableResult
@@ -250,8 +271,9 @@ extension AppModel {
                 guard let record = library.projects.first(where: { $0.id == original.id }), !hiddenLocations.contains(record.location.key) else { report.hidden += 1; continue }
                 switch await tagFolder(record).value { case .applied: report.tagged += 1; case .skipped: report.missing += 1; case .failed: report.failed += 1 }
             }
-            var parts = ["Tagged \(report.tagged) folders in Finder."]
-            if report.missing > 0 { parts.append("\(report.missing) folders were not found.") }
+            func folders(_ n: Int) -> String { "\(n) folder\(n == 1 ? "" : "s")" }
+            var parts = ["Tagged \(folders(report.tagged)) in Finder."]
+            if report.missing > 0 { parts.append("\(folders(report.missing)) \(report.missing == 1 ? "was" : "were") not found.") }
             if report.failed > 0 { parts.append("\(report.failed) could not be written.") }
             if report.offline > 0 { parts.append("\(report.offline) are on drives that are not connected.") }
             status = parts.joined(separator: " ")

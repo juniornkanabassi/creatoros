@@ -134,6 +134,12 @@ extension AppModel {
             if !NSWorkspace.shared.openOutsideChecks(url) { throw AppFailure("Finder could not open this folder.") }
         }
     }
-    func removeLocation(_ location: CatalogueLocation) { attempt { try forgetLocation(location) } }
+    func removeLocation(_ location: CatalogueLocation) {
+        let index = (library.locations ?? []).firstIndex { $0.id == location.id }
+        attempt {
+            try forgetLocation(location)
+            if let index { registerLocationUndo(location, index: index, restoring: true, manager: undoManager) }
+        }
+    }
     func forgetLocation(_ location: CatalogueLocation) throws { try mutate { $0.locations = ($0.locations ?? []).filter { $0.id != location.id } } }
 }

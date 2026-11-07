@@ -2,6 +2,8 @@ import SwiftUI
 import AppKit
 import TemplateCore
 
+/// The app spells colours the British way; the raw colour names come from the case names.
+
 /// The form owns scrolling, while the window follows the selected tab's contents.
 private struct SettingsFormSize: ViewModifier {
     @State private var height: CGFloat = 400
@@ -68,7 +70,7 @@ struct SettingsView: View {
     @State private var newStage = ""
     @State private var newLiveStage = ""
     @State private var showNamingAdvanced = false
-    @State private var showPipelineAdvanced = false
+    @State private var showFinderAdvanced = false
     @State private var selectedTab = "Formats"
     var body: some View {
         Group {
@@ -81,11 +83,11 @@ struct SettingsView: View {
             .background(SettingsInitialFocus())
             .onAppear {
                 showNamingAdvanced = m.defaults.bool(forKey: "disclosure.settingsNaming")
-                showPipelineAdvanced = m.defaults.bool(forKey: "disclosure.settingsPipeline")
-                if let saved = m.defaults.string(forKey: "settings.tab"), ["Formats", "Naming", "Pipeline", "Locations"].contains(saved) { selectedTab = saved }
+                showFinderAdvanced = m.defaults.bool(forKey: "disclosure.settingsFinder")
+                if let saved = m.defaults.string(forKey: "settings.tab"), ["Formats", "Naming", "Pipeline", "Finder", "Locations"].contains(saved) { selectedTab = saved }
             }
             .onChange(of: showNamingAdvanced) { m.defaults.set(showNamingAdvanced, forKey: "disclosure.settingsNaming") }
-            .onChange(of: showPipelineAdvanced) { m.defaults.set(showPipelineAdvanced, forKey: "disclosure.settingsPipeline") }
+            .onChange(of: showFinderAdvanced) { m.defaults.set(showFinderAdvanced, forKey: "disclosure.settingsFinder") }
             .onChange(of: selectedTab) { m.defaults.set(selectedTab, forKey: "settings.tab") }
     }
 
@@ -94,6 +96,7 @@ struct SettingsView: View {
             formatTab.tag("Formats").tabItem { Label("Formats", systemImage: "folder") }
             namingTab.tag("Naming").tabItem { Label("Naming", systemImage: "textformat") }
             pipelineTab.tag("Pipeline").tabItem { Label("Pipeline", systemImage: "rectangle.3.group") }
+            finderTab.tag("Finder").tabItem { Label("Finder", systemImage: "tag") }
             locationsTab.tag("Locations").tabItem { Label("Locations", systemImage: "externaldrive") }
         }
     }
@@ -163,9 +166,14 @@ struct SettingsView: View {
     var pipelineTab: some View {
         Form {
             stageSection(.recordings, header: "Recording stages", newPrompt: "For example, Thumbnail",
-                         footer: "Long, Short and Podcast projects. Ideas sit in the first stage; a new project starts in the second.")
+                         footer: "Ideas sit in the first stage. A new Long, Short or Podcast starts in the second.")
             stageSection(.live, header: "Live stream stages", newPrompt: "For example, Clipped",
                          footer: "Live streams. A new stream starts in the first stage.")
+        }.formStyle(.grouped).modifier(SettingsFormSize())
+    }
+
+    var finderTab: some View {
+        Form {
             Section {
                 Toggle("Show stages as Finder tags", isOn: Binding(get: { m.library.finderTagsEnabled }, set: { m.setFinderTags($0) }))
                     .help("When a project changes stage, tag its folder with the stage's name and colour")
@@ -173,7 +181,7 @@ struct SettingsView: View {
                 Text("The folder gets a tag in the stage's colour. Folders are never moved, renamed or deleted.")
             }
             Section {
-                DisclosureGroup("Advanced", isExpanded: $showPipelineAdvanced) {
+                DisclosureGroup("Advanced", isExpanded: $showFinderAdvanced) {
                     Text("Renaming a stage moves its cards, its colour and the Finder tags on their folders with it. Abandoned is for projects that never saw the light of day. Resetting puts back the original stages.")
                         .font(TypeStyle.callout).foregroundStyle(.secondary)
                     Button("Reset Recording Stages") { m.setStages(Library.defaultStages, for: .recordings) }
@@ -192,7 +200,7 @@ struct SettingsView: View {
                         if m.tagging { ProgressView().controlSize(.small) }
                         Text(m.status).font(TypeStyle.caption).foregroundStyle(.secondary).lineLimit(2)
                     }
-                }.accessibilityAction { showPipelineAdvanced.toggle() }
+                }.accessibilityAction { showFinderAdvanced.toggle() }
             }
         }.formStyle(.grouped).modifier(SettingsFormSize())
         .onAppear { if !m.tagging { m.status = "" } }
@@ -256,7 +264,6 @@ struct SettingsView: View {
 
 struct AboutSettingsView: View {
     @EnvironmentObject var m: AppModel
-    @Environment(\.dismissWindow) private var dismissWindow
     @State private var showAboutAdvanced = false
     var body: some View {
         Form {
@@ -265,21 +272,10 @@ struct AboutSettingsView: View {
                     Image(nsImage: NSApp.applicationIconImage).resizable().scaledToFit()
                         .frame(width: 64, height: 64).accessibilityHidden(true)
                     Text(AppInfo.name).font(TypeStyle.title2)
-                    Spacer()
-                    Button("Done") { dismissWindow(id: "about") }.keyboardShortcut(.cancelAction)
-                        .help("Close About CreatorOS")
                 }
             }
             Section("About") {
                 LabeledContent("Version") { ReleaseVersionLabel(includeName: true) }
-                LabeledContent("Interface size") {
-                    HStack {
-                        Button("Smaller") { m.zoom(-1) }.help("Make the main window's text and controls smaller (⌘-)")
-                        Button("Actual") { m.zoomLevel = 0 }.help("Return to the standard size (⌘0)")
-                        Button("Bigger") { m.zoom(1) }.help("Make the main window's text and controls bigger (⌘=)")
-                        Text("\(Int((m.uiScale * 100).rounded()))%").monospacedDigit()
-                    }.controlSize(.small)
-                }
                 Text("Offline. No accounts or integrations.").font(TypeStyle.caption).foregroundStyle(.secondary)
                 DisclosureGroup("Advanced", isExpanded: $showAboutAdvanced) {
                     Text(m.runtime.isIsolated ? "Disposable launch: every write stays inside this test data folder." : "Everyday CreatorOS uses the preserved Project Templates library and your saved project locations.").font(TypeStyle.caption).foregroundStyle(.secondary)
@@ -327,7 +323,7 @@ private struct CustomFieldRow: View {
                     await Task.yield()
                     if m.library.fieldList.contains(where: { $0.id == field.id }) { removing = false }
                 }
-            } label: { Image(systemName: "minus.circle") }
+            } label: { Image(systemName: "minus.circle").frame(minWidth: 28, minHeight: 28).contentShape(Rectangle()).padding(.vertical, -Space.sm) }
                 .buttonStyle(.plain).help("Remove this field").accessibilityLabel("Remove \(field.name)")
         }
         .onAppear { name = field.name }
@@ -373,7 +369,7 @@ private struct StageSettingsRow: View {
                     await Task.yield()
                     if stages.contains(stage) { removing = false }
                 }
-            } label: { Image(systemName: "minus.circle") }
+            } label: { Image(systemName: "minus.circle").frame(minWidth: 28, minHeight: 28).contentShape(Rectangle()).padding(.vertical, -Space.sm) }
                 .buttonStyle(.plain).disabled(stages.count <= 2 || saving)
                 .help(stages.count <= 2 ? "A board needs at least two stages" : "Remove \(stage) from this board")
                 .accessibilityLabel("Remove \(stage)")
@@ -390,7 +386,7 @@ private struct StageSettingsRow: View {
         Task {
             defer { saving = false }
             guard !removing, stages.contains(stage) else { return }
-            do { _ = try await m.renameStageCore(stage, to: entered, on: kind) }
+            do { try await m.renameStage(stage, to: entered, on: kind) }
             catch { m.error = error.localizedDescription }
         }
     }

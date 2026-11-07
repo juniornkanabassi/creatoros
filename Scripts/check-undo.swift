@@ -292,6 +292,45 @@ private final class InvisibleKeyWindow: NSWindow {
         manager.undo(); await settle()
         try check(model.library.stageList.contains("External stage") && !model.library.stageList.contains("Editing"), "stage-list undo refuses a later configuration change")
         manager.removeAllActions(); model.error = nil
+
+        _ = try model.moveToStage("Writing", for: record.id); await settle()
+        manager.beginUndoGrouping()
+        try await model.renameStage("Writing", to: "Drafting", on: .recordings)
+        manager.endUndoGrouping(); await settle()
+        try check(manager.undoActionName == "Rename Stage" && model.library.stageList.contains("Drafting") && !model.library.stageList.contains("Writing")
+                  && model.library.projects.first { $0.id == record.id }?.stage == "Drafting", "stage rename registers one named undo step")
+        manager.undo(); await settle()
+        try check(model.library.stageList.contains("Writing") && !model.library.stageList.contains("Drafting")
+                  && model.library.projects.first { $0.id == record.id }?.stage == "Writing", "undo restores the old stage name on the list and its cards")
+        try check(try FinderTags.read(folder).contains { $0.name == "Writing" } && !FinderTags.read(folder).contains { $0.name == "Drafting" }, "stage rename undo puts the old Finder tag back")
+        manager.redo(); await settle()
+        try check(model.library.stageList.contains("Drafting") && model.library.projects.first { $0.id == record.id }?.stage == "Drafting", "redo applies the rename again")
+        manager.undo(); await settle()
+        manager.removeAllActions(); model.error = nil
+
+        let savedLocation = try CatalogueLocation(url: model.runtime.root)
+        try model.mutate { $0.locations = [savedLocation] }
+        event { model.removeLocation(savedLocation) }; await settle()
+        try check(manager.undoActionName == "Forget Location" && (model.library.locations ?? []).isEmpty, "forgetting a saved location registers a named undo step")
+        manager.undo(); await settle()
+        try check(model.library.locations?.map(\.id) == [savedLocation.id], "undo restores the forgotten location")
+        manager.redo(); await settle()
+        try check((model.library.locations ?? []).isEmpty, "redo forgets the location again")
+        manager.undo(); await settle()
+        manager.removeAllActions(); model.error = nil
+
+        let presetIndex = model.library.presets.firstIndex { $0.format == model.format }!
+        let gone = model.runtime.root.appendingPathComponent("Destination that goes away")
+        try FileManager.default.createDirectory(at: gone, withIntermediateDirectories: true)
+        let goneBookmark = try gone.bookmarkData(options: .minimalBookmark, includingResourceValuesForKeys: nil, relativeTo: nil)
+        try model.mutate { $0.presets[presetIndex].destinationBookmark = goneBookmark }
+        try FileManager.default.removeItem(at: gone)
+        model.changeFormat()
+        try check(model.error?.contains("Destination is unavailable") == true && model.errorAction?.title == "Choose…", "the unavailable destination error offers Choose…")
+        model.error = nil
+        try check(model.errorAction == nil, "clearing the error clears its action")
+        try model.mutate { $0.presets[presetIndex].destinationBookmark = nil }
+        model.changeFormat(); model.error = nil
         model.undoManager = nil
         model.setStage("Writing", for: record.id); await settle()
         try check(model.library.projects.first { $0.id == record.id }?.stage == "Writing" && !manager.canUndo, "missing UndoManager preserves normal operation without creating history")

@@ -172,6 +172,38 @@ extension AppModel {
         }
     }
 
+    /// Undo renames `new` back to `old`, with the records, colour and Finder tags that went with it. Redo does the reverse.
+    func registerStageRenameUndo(old: String, new: String, kind: PipelineKind, manager: UndoManager?) {
+        registerUndo("Rename Stage", manager: manager) { model, manager in
+            let stages = model.library.stages(for: kind)
+            guard let index = stages.firstIndex(of: new), !stages.contains(old) else {
+                throw AppFailure("Cannot undo this stage rename because the stages have changed again. No stages were changed.")
+            }
+            var renamed = stages; renamed[index] = old
+            let checked = try Configuration.stages(renamed)
+            let ids = Set(model.library.projects.filter { kind.includes(format: $0.format) && $0.stage == new }.map(\.id))
+            try model.mutate { model.applyRename(&$0, from: new, to: old, checked: checked, on: kind) }
+            model.startedRename(from: new, to: old, on: kind, ids: ids)
+            model.registerStageRenameUndo(old: new, new: old, kind: kind, manager: manager)
+        }
+    }
+
+    func registerLocationUndo(_ location: CatalogueLocation, index: Int, restoring: Bool, manager: UndoManager?) {
+        registerUndo("Forget Location", manager: manager) { model, manager in
+            try model.mutate { library in
+                var locations = library.locations ?? []
+                let saved = locations.contains { $0.id == location.id }
+                guard saved != restoring else {
+                    throw AppFailure("Cannot \(restoring ? "undo" : "redo") forgetting this location because the saved locations have changed. No locations were changed.")
+                }
+                if restoring { locations.insert(location, at: min(index, locations.count)) }
+                else { locations.removeAll { $0.id == location.id } }
+                library.locations = locations
+            }
+            model.registerLocationUndo(location, index: index, restoring: !restoring, manager: manager)
+        }
+    }
+
     func registerStageListUndo(before: [String], after: [String], kind: PipelineKind, manager: UndoManager?) {
         registerUndo("Change Stages", manager: manager) { model, manager in
             guard model.library.stages(for: kind) == after else {

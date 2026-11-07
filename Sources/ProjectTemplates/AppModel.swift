@@ -13,10 +13,12 @@ import TemplateCore
     @Published var plan: CopyPlan?
     @Published var validation = ""
     /// A long operation is showing progress. Whoever sets it holds the writer slot (checked in debug builds).
-    @Published var busy = false { didSet { if busy { assert(writer != nil, "busy without the writer slot") } } }
+    @Published var busy = false { didSet { if busy { assert(writer != nil, "busy without the writer slot") } else { settleStatus() } } }
     @Published var fraction = 0.0
-    @Published var status = ""
-    @Published var error: String? { didSet { if !reportingUndoError && error != pendingUndoMessage { pendingUndos = [] } } }
+    @Published var status = "" { didSet { settleStatus() } }
+    @Published var error: String? { didSet { errorChanged() } }
+    /// An optional fix offered beside the error, such as choosing a folder again. Cleared whenever the error changes.
+    @Published var errorAction: (title: String, run: () -> Void)?
     @Published var created: URL?
     @Published var importSource: URL?
     @Published var importName = ""
@@ -256,6 +258,25 @@ import TemplateCore
         }
     }
     func attempt(_ work: () throws -> Void) { do { try work() } catch { self.error = error.localizedDescription } }
+    /// Shows an error with a button that fixes it.
+    func fail(_ message: String, action: (title: String, run: () -> Void)) { error = message; errorAction = action }
+
+    private func errorChanged() {
+        if !reportingUndoError && error != pendingUndoMessage { pendingUndos = [] }
+        errorAction = nil
+        if let error { announce(error) }
+    }
+    /// A finished status line is read out by VoiceOver and stays in the work area for a few seconds. Progress lines end in "…".
+    private func settleStatus() {
+        guard !busy, !status.isEmpty, !status.hasSuffix("…") else { return }
+        let message = status
+        announce(message)
+        Task { try? await Task.sleep(for: .seconds(6)); if status == message { status = "" } }
+    }
+    private func announce(_ message: String) {
+        guard NSWorkspace.shared.isVoiceOverEnabled else { return }
+        AccessibilityNotification.Announcement(message).post()
+    }
 
     // MARK: Destinations and formats
 
@@ -653,7 +674,12 @@ import TemplateCore
             if let relinked { return .relinked(relinked) }
         }
         if apply { relinkCandidates[record.id] = found }
-        if apply && alert && found.isEmpty && !quietly { error = "No folder called ‘\(record.name)’ was found on the ticked drives. Use Locate Folder when you know where it went." }
+        if apply && alert && found.isEmpty && !quietly {
+            fail("No folder called ‘\(record.name)’ was found on the ticked drives. Use Locate Folder when you know where it went.", action: ("Locate Folder…", { [weak self] in
+                self?.locate(record)
+                if self?.library.projects.first(where: { $0.id == record.id })?.path != record.path { self?.error = nil }
+            }))
+        }
         if !originalMissing { return .stillThere }
         return found.isEmpty ? .notFound : .candidates(found)
     }

@@ -100,7 +100,7 @@ import TemplateCore
                     try await capture("pipeline-live", MainView(), size: CGSize(width: 1280, height: 820), scheme: scheme)
                 }
             }
-            for tab in ["Formats", "Naming", "Pipeline", "Locations"] {
+            for tab in ["Formats", "Naming", "Pipeline", "Finder", "Locations"] {
                 model.defaults.set(tab, forKey: "settings.tab")
                 try await capture("settings-" + tab.lowercased(), SettingsView(), size: CGSize(width: 520, height: 640), scheme: scheme, fitHeight: true)
             }
@@ -125,6 +125,7 @@ import TemplateCore
             }
             model.pipelineSelection = nil
             model.error = "The selected folder is no longer available. Reconnect its drive, then choose the folder again."
+            model.errorAction = ("Choose…", {})
             model.page = .projects
             try await capture("projects-error", MainView(), size: CGSize(width: 1280, height: 820), scheme: scheme)
             model.error = nil
