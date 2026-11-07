@@ -38,26 +38,29 @@ struct FolderBrowserHost: View {
                     .pickerStyle(.segmented).labelsHidden().fixedSize().onChange(of: projectFilesOnly) { if projectFilesOnly { loadDocuments() } }
                     .accessibilityLabel("Files to show").help("Browse every file, or show only editing documents such as Premiere and Photoshop projects.")
                 if !projectFilesOnly { ViewModePicker(surface: surface) }
+                TextField(projectFilesOnly ? "Search documents" : "Search this folder", text: $query)
+                    .textFieldStyle(.roundedBorder).frame(width: 160)
+                    .accessibilityLabel(projectFilesOnly ? "Search documents" : "Search this folder")
+                    .help("Filter the names shown in this browser.")
                 Button { refreshCount += 1; if projectFilesOnly { loadDocuments() } } label: { Image(systemName: "arrow.clockwise") }
                     .help("Read this folder again, keeping your place in the browser.").accessibilityLabel("Refresh files")
+                Button { if let selection { requestOpen(path: selection) } } label: {
+                    Label("Open in Default App", systemImage: "arrow.up.forward.app").labelStyle(.iconOnly)
+                }.disabled(selection == nil || selection == folder)
+                    .help("Open the selected document in its usual app. Template files ask for confirmation.")
+                    .accessibilityLabel("Open in Default App")
             }
             HStack(spacing: Space.sm) {
                 Button { goUp() } label: { Image(systemName: "chevron.up") }.disabled(folder.isEmpty || projectFilesOnly).help("Enclosing folder").accessibilityLabel("Enclosing folder")
                 Button("Root") { folder = ""; selection = nil; projectFilesOnly = false }.disabled(folder.isEmpty && !projectFilesOnly)
                     .help("Return to the top of this project's folder.")
-                Button { if let root { NSWorkspace.shared.revealOutsideChecks([root.appendingPathComponent(selection ?? folder)]) } } label: { Image(systemName: "arrow.up.forward.app") }
+                Button { if let root { NSWorkspace.shared.revealOutsideChecks([root.appendingPathComponent(selection ?? folder)]) } } label: { Image(systemName: "folder") }
                     .disabled(root == nil).help("Reveal in Finder: the selected item, or this folder when nothing is selected, ready to drag into YouTube or anywhere else")
                     .accessibilityLabel("Reveal in Finder")
                 Text(projectFilesOnly ? "Premiere, After Effects, Photoshop and audio projects" : (folder.isEmpty ? title : folder))
                     .font(TypeStyle.caption).lineLimit(1).truncationMode(.middle).textSelection(.enabled)
+                    .help(projectFilesOnly ? "Premiere, After Effects, Photoshop and audio projects" : (root?.appendingPathComponent(folder).path ?? title))
                 Spacer()
-                TextField(projectFilesOnly ? "Search documents" : "Search this folder", text: $query).textFieldStyle(.roundedBorder).frame(maxWidth: 220)
-                    .accessibilityLabel(projectFilesOnly ? "Search documents" : "Search this folder").help("Filter the names shown in this browser.")
-            }
-            if !managedTemplate && !projectFilesOnly, root != nil {
-                Label("Drop files anywhere below into \(folder.isEmpty ? title : folder). Hold Option to copy.", systemImage: "square.and.arrow.down")
-                    .font(TypeStyle.caption).foregroundStyle(.secondary)
-                    .help("Moves files on the same volume; copies between volumes. Option always copies. Existing names are never replaced. Up to 100 files or folders. Folders move on the same volume; Option-copy of folders is refused.")
             }
             Group {
                 if let failure {
@@ -80,8 +83,11 @@ struct FolderBrowserHost: View {
             HStack {
                 Text(selection.map { ($0 as NSString).lastPathComponent } ?? "Nothing selected").font(TypeStyle.caption).foregroundStyle(.secondary).lineLimit(1)
                 Spacer()
-                Button("Open in Default App") { if let selection { requestOpen(path: selection) } }.disabled(selection == nil || selection == folder)
-                    .buttonStyle(.bordered).help("Open the selected document in its usual app. Template files ask for confirmation.")
+                if !managedTemplate && !projectFilesOnly, root != nil {
+                    Label("Drop files here. Option copies.", systemImage: "square.and.arrow.down")
+                        .font(TypeStyle.caption).foregroundStyle(.secondary)
+                        .help("Moves files on the same volume; copies between volumes. Option always copies. Existing names are never replaced. Up to 100 files or folders. Folders move on the same volume; Option-copy of folders is refused.")
+                }
             }
         }
         .task(id: refreshCount) { resolve() }
@@ -101,7 +107,7 @@ struct FolderBrowserHost: View {
             ForEach(shownDocuments) { item in
                 HStack(spacing: Space.md) {
                     FileArtwork(url: root.appendingPathComponent(item.relativePath))
-                    VStack(alignment: .leading, spacing: Space.xxs) { Text(item.name).lineLimit(1); Text(item.relativePath).font(TypeStyle.caption).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle) }
+                    VStack(alignment: .leading, spacing: Space.xxs) { Text(item.name).lineLimit(1); Text(item.relativePath).font(TypeStyle.caption).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle).help(root.appendingPathComponent(item.relativePath).path) }
                 }.tag(item.relativePath)
                     .modifier(BrowserFileDrag(enabled: !managedTemplate, url: { outgoing(root: root, path: item.relativePath) }))
             }

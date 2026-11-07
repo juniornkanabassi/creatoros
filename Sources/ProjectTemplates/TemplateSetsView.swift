@@ -13,7 +13,7 @@ struct TemplateSetList: View {
                         Text(readiness(set)).font(TypeStyle.caption).foregroundStyle(.secondary)
                     }.padding(.vertical, Space.xs).tag(TemplateSelection.set(set.id))
                 }
-                if m.library.sets.isEmpty { Text("None yet. Create one, or turn a standalone template into one.").font(TypeStyle.callout).foregroundStyle(.secondary) }
+                if m.library.sets.isEmpty && !m.library.templates.isEmpty { Text("Create a set, or turn a standalone template into one.").font(TypeStyle.callout).foregroundStyle(.secondary) }
             }
             if !m.library.unassignedTemplates.isEmpty {
                 Section("Standalone templates") {
@@ -28,14 +28,21 @@ struct TemplateSetList: View {
         }
         .overlay {
             if m.library.sets.isEmpty && m.library.templates.isEmpty {
-                ContentUnavailableView("No templates yet", systemImage: "square.stack.3d.up", description: Text("A template is a folder of folders and starter files, such as a Premiere project, that every new project copies. Import one to begin: a folder or a Post Haste package. CreatorOS keeps its own copy; your original is never edited."))
+                ContentUnavailableView {
+                    Label("No templates yet", systemImage: "square.stack.3d.up")
+                } description: {
+                    Text("Import a folder of starter files or a Post Haste package. CreatorOS keeps its own copy, ready for each new project. Your original stays untouched.")
+                } actions: {
+                    Button("Import Template…") { m.beginImport() }
+                        .help("Choose a template folder or Post Haste package to copy into CreatorOS")
+                }
             }
         }
         .toolbar {
             ToolbarItemGroup(placement: .primaryAction) {
                 Button { m.promptNewSet() } label: { Label("New Template Set", systemImage: "plus") }.help("Create a set of templates for one channel, client or campaign")
                 Button { m.beginImport() } label: { Label("Import Template", systemImage: "square.and.arrow.down").labelStyle(.titleAndIcon) }
-                    .buttonStyle(.borderedProminent).help("Copy a template folder or Post Haste package into CreatorOS. Your original is never changed.")
+                    .help("Copy a template folder or Post Haste package into CreatorOS. Your original is never changed.")
             }
         }
     }
@@ -126,7 +133,7 @@ struct VariantRow: View {
                 }
             }
             Spacer()
-            if let record { Button("Browse Files") { m.browseTemplate(record) }.controlSize(.small).help("See the folders and starter files \(preset.label) projects copy") }
+            if let record { Button("Browse Files") { m.browseTemplate(record) }.help("See the folders and starter files \(preset.label) projects copy") }
             if record == nil { AssignMenu(set: set, format: preset.format) }
             else {
                 Menu("Change") {
@@ -136,7 +143,7 @@ struct VariantRow: View {
                     }
                     Divider()
                     Button("Stop Using for \(preset.label)") { m.unassign(format: preset.format, in: set.id) }
-                }.controlSize(.small).fixedSize().help("Choose different template files for \(preset.label), or stop using these. Files stay in CreatorOS.")
+                }.fixedSize().help("Choose different template files for \(preset.label), or stop using these. Files stay in CreatorOS.")
                     .accessibilityLabel("Change \(preset.label) template files")
             }
         }.padding(.vertical, Space.xs)

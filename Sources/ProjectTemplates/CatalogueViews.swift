@@ -1,4 +1,5 @@
 import SwiftUI
+import AppKit
 import TemplateCore
 
 /// The content column of Projects.
@@ -10,7 +11,7 @@ struct ProjectList: View {
             let duplicates = m.duplicateGroups
             if !duplicates.isEmpty {
                 Button { m.duplicatesPresented = true } label: {
-                    Label("\(duplicates.count) names appear more than once", systemImage: "doc.on.doc").font(TypeStyle.caption)
+                    Label("\(duplicates.count) \(duplicates.count == 1 ? "name appears" : "names appear") more than once", systemImage: "doc.on.doc").font(TypeStyle.caption)
                 }.buttonStyle(.plain).foregroundStyle(.orange).padding(.horizontal, Space.lg).padding(.bottom, Space.sm)
                     .help("Projects registered under the same name in more than one place. Open the list to see which is likely the live one.")
             }
@@ -54,7 +55,7 @@ struct ProjectList: View {
                 }
                 if (m.library.locations ?? []).isEmpty { Text("None saved").font(TypeStyle.caption).foregroundStyle(.secondary) }
             } label: {
-                Text("\(m.filteredProjects.count) projects · \((m.library.locations ?? []).count) saved locations").font(TypeStyle.caption).foregroundStyle(.secondary)
+                Text("\(m.filteredProjects.count) \(m.filteredProjects.count == 1 ? "project" : "projects") · \((m.library.locations ?? []).count) saved \((m.library.locations ?? []).count == 1 ? "location" : "locations")").font(TypeStyle.caption).foregroundStyle(.secondary)
             }.padding(.horizontal, Space.lg).padding(.vertical, Space.sm)
                 .help("Folders and drives you added with Add Existing. Scan one again to pick up new projects.")
         }
@@ -101,11 +102,10 @@ struct ProjectRow: View {
                     if let editor = record.editor { Label(editor, systemImage: "person").font(TypeStyle.caption).foregroundStyle(.secondary).lineLimit(1) }
                 }
                 HStack(spacing: Space.sm) {
-                    Text(record.effectiveDate.formatted(date: .abbreviated, time: .omitted)).font(TypeStyle.caption2).foregroundStyle(.tertiary)
-                    Text(record.path).font(TypeStyle.caption2).foregroundStyle(.tertiary).lineLimit(1).truncationMode(.middle)
+                    Text(record.effectiveDate.formatted(date: .abbreviated, time: .omitted)).font(TypeStyle.caption).foregroundStyle(.secondary)
                 }
             }
-        }.padding(.vertical, Space.xs)
+        }.padding(.vertical, Space.xs).help(record.path)
     }
 }
 
@@ -131,6 +131,10 @@ struct ProjectActions: View {
         Button(pinned ? "Unpin" : "Pin") { m.togglePin(record.id) }.keyboardShortcut("p", modifiers: [.command, .shift]).help("Pinned projects stay at the top of the list")
         Button("Rename Project…") { m.requestRename(record) }.disabled(m.busy).help("Rename the folder and the files named after it, after reviewing every change")
         Button("Open in Finder") { m.open(record) }.keyboardShortcut("o").help("Open the project folder in Finder")
+        Button("Copy Path") {
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(record.path, forType: .string)
+        }.help("Copy this project's full folder path")
         Button("Show in Pipeline") { m.pipelineSelection = record.id; m.page = .pipeline }.keyboardShortcut("p", modifiers: [.command, .option]).help("Select this project on the Pipeline board")
         if showStages { Menu("Move to Stage") { ForEach(m.moveTargets(for: record), id: \.self) { stage in Button(stage) { m.setStage(stage, for: record.id) }.disabled(stage == m.effectiveStage(record)) } } }
         Section("Advanced") {
@@ -171,7 +175,7 @@ struct ProjectInspector: View {
             HStack(spacing: Space.md) {
                 FormatIcon(data: m.library.presets.first { $0.format == record.format }?.icon, size: 40)
                 VStack(alignment: .leading, spacing: Space.xs) {
-                    Text(record.name).font(TypeStyle.title3.weight(.semibold)).textSelection(.enabled).lineLimit(2)
+                    Text(record.name).font(TypeStyle.title3.weight(.semibold)).textSelection(.enabled).lineLimit(2).help(record.path)
                     HStack(spacing: Space.sm) {
                         LocationBadge(location: record.location)
                         if m.relinking.contains(record.id) { ProgressView().controlSize(.mini); Text("Looking for the folder…").font(TypeStyle.callout).foregroundStyle(.secondary) }
@@ -190,10 +194,9 @@ struct ProjectInspector: View {
                 Button { m.togglePin(record.id) } label: { Image(systemName: record.isPinned ? "pin.fill" : "pin") }.help(record.isPinned ? "Unpin (⇧⌘P)" : "Pin to the top of the list (⇧⌘P)")
                     .accessibilityLabel(record.isPinned ? "Unpin" : "Pin")
             }
-            Text(record.path).font(TypeStyle.caption).foregroundStyle(.secondary).lineLimit(2).truncationMode(.middle).textSelection(.enabled)
             if let candidates = m.relinkCandidates[record.id], !candidates.isEmpty {
                 VStack(alignment: .leading, spacing: Space.sm) {
-                    Label("Found \(candidates.count) folders with this name. Choose the right one:", systemImage: "arrow.triangle.2.circlepath").font(TypeStyle.callout)
+                    Label("Found \(candidates.count) \(candidates.count == 1 ? "folder" : "folders") with this name. Choose the right one:", systemImage: "arrow.triangle.2.circlepath").font(TypeStyle.callout)
                     ForEach(candidates, id: \.path) { url in
                         HStack { Text(url.path).font(TypeStyle.caption).lineLimit(1).truncationMode(.middle); Spacer(); Button("Relink") { m.relink(record, to: url) }.controlSize(.small).help("Point this project at this folder") }
                     }
@@ -361,7 +364,7 @@ struct DuplicatesSheet: View {
                                             if m.likelyLive(record, among: group) { Label("Likely live", systemImage: "star.fill").font(TypeStyle.caption.weight(.semibold)).foregroundStyle(.green) }
                                         }
                                         Text(record.path).font(TypeStyle.caption).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle).textSelection(.enabled)
-                                        Text("Folder from " + record.effectiveDate.formatted(date: .abbreviated, time: .omitted)).font(TypeStyle.caption2).foregroundStyle(.tertiary)
+                                        Text("Folder from " + record.effectiveDate.formatted(date: .abbreviated, time: .omitted)).font(TypeStyle.caption).foregroundStyle(.secondary)
                                     }
                                     Spacer()
                                     Button("Show") { m.selectedProject = record.id; m.page = .projects; m.selectProject(); m.duplicatesPresented = false }.controlSize(.small).help("Close this list and select this copy in Projects")
@@ -394,7 +397,7 @@ struct DiscoveryView: View {
             HStack {
                 Button("Cancel") { m.discoveryPresented = false }.keyboardShortcut(.cancelAction).help("Close without adding anything")
                 Spacer()
-                Button("Register \(m.discoverySelection.count) Projects") { m.registerDiscovery() }.buttonStyle(.borderedProminent).disabled(m.discoverySelection.isEmpty)
+                Button("Register \(m.discoverySelection.count) \(m.discoverySelection.count == 1 ? "Project" : "Projects")") { m.registerDiscovery() }.buttonStyle(.borderedProminent).disabled(m.discoverySelection.isEmpty)
                     .help("Add the ticked folders to your project list. Nothing on disk changes.")
             }
         }.padding(Space.xxl).frame(width: 760, height: 560)

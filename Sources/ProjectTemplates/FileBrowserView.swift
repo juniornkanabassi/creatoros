@@ -99,6 +99,7 @@ struct ViewModePicker: View {
 /// so switching views never loses the place.
 struct FileBrowserView: View {
     @EnvironmentObject var m: AppModel
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let dataSource: any FileBrowserDataSource
     let mode: BrowserViewMode
     @Binding var folder: String
@@ -266,7 +267,10 @@ struct FileBrowserView: View {
                     }
                 }
             }
-            .onChange(of: folder) { withAnimation(.easeOut(duration: 0.15)) { proxy.scrollTo(paths.last, anchor: .trailing) } }
+            .onChange(of: folder) {
+                if reduceMotion { proxy.scrollTo(paths.last, anchor: .trailing) }
+                else { withAnimation(.easeOut(duration: 0.15)) { proxy.scrollTo(paths.last, anchor: .trailing) } }
+            }
             .onAppear { proxy.scrollTo(paths.last, anchor: .trailing) }
         }
     }

@@ -7,19 +7,28 @@ private struct SettingsFormSize: ViewModifier {
     @State private var height: CGFloat = 400
 
     func body(content: Content) -> some View {
-        Group {
-            if #available(macOS 15, *) {
-                content.onScrollGeometryChange(for: CGFloat.self) { geometry in
-                    geometry.contentSize.height.rounded(.up)
-                } action: { _, measured in
-                    if measured > 0 { height = min(measured, 640) }
+        VStack(spacing: Space.xs) {
+            Group {
+                if #available(macOS 15, *) {
+                    content.onScrollGeometryChange(for: CGFloat.self) { geometry in
+                        geometry.contentSize.height.rounded(.up)
+                    } action: { _, measured in
+                        if measured > 0 { height = measured }
+                    }
+                } else {
+                    content.background(SettingsContentProbe(height: $height))
                 }
-            } else {
-                content.background(SettingsContentProbe(height: $height))
+            }
+            .frame(height: min(height, 600))
+            .scrollBounceBehavior(.basedOnSize)
+            .scrollIndicators(.visible)
+            .contentMargins(.bottom, Space.md, for: .scrollContent)
+            if height > 600 {
+                Label("Scroll to see all settings", systemImage: "arrow.down")
+                    .font(TypeStyle.caption).foregroundStyle(.secondary)
+                    .padding(.bottom, Space.sm)
             }
         }
-        .frame(height: height)
-        .scrollBounceBehavior(.basedOnSize)
     }
 }
 
@@ -35,7 +44,7 @@ private struct SettingsContentProbe: NSViewRepresentable {
                 return candidate.subviews.lazy.compactMap { scrollView(in: $0) }.first
             }
             guard let scroll = scrollView(in: parent), let document = scroll.documentView else { return }
-            let measured = min(document.frame.height.rounded(.up), 640)
+            let measured = document.frame.height.rounded(.up)
             if measured > 0, abs(height - measured) >= 1 { height = measured }
         }
     }
@@ -62,12 +71,12 @@ struct SettingsView: View {
     @State private var showPipelineAdvanced = false
     @State private var selectedTab = "Formats"
     var body: some View {
-        TabView(selection: $selectedTab) {
-            formatTab.tag("Formats").tabItem { Label("Formats", systemImage: "folder") }
-            namingTab.tag("Naming").tabItem { Label("Naming", systemImage: "textformat") }
-            pipelineTab.tag("Pipeline").tabItem { Label("Pipeline", systemImage: "rectangle.3.group") }
-            locationsTab.tag("Locations").tabItem { Label("Locations", systemImage: "externaldrive") }
-        }.frame(width: 520)
+        Group {
+            if #available(macOS 15, *) { tabs.tabViewStyle(.grouped) }
+            else { tabs }
+        }
+        .frame(width: 520)
+            .modifier(UndoContext())
             .overlay { if GridOverlay.enabled { GridOverlay() } }
             .background(SettingsInitialFocus())
             .onAppear {
@@ -78,6 +87,15 @@ struct SettingsView: View {
             .onChange(of: showNamingAdvanced) { m.defaults.set(showNamingAdvanced, forKey: "disclosure.settingsNaming") }
             .onChange(of: showPipelineAdvanced) { m.defaults.set(showPipelineAdvanced, forKey: "disclosure.settingsPipeline") }
             .onChange(of: selectedTab) { m.defaults.set(selectedTab, forKey: "settings.tab") }
+    }
+
+    private var tabs: some View {
+        TabView(selection: $selectedTab) {
+            formatTab.tag("Formats").tabItem { Label("Formats", systemImage: "folder") }
+            namingTab.tag("Naming").tabItem { Label("Naming", systemImage: "textformat") }
+            pipelineTab.tag("Pipeline").tabItem { Label("Pipeline", systemImage: "rectangle.3.group") }
+            locationsTab.tag("Locations").tabItem { Label("Locations", systemImage: "externaldrive") }
+        }
     }
 
     var formatTab: some View {
@@ -125,16 +143,16 @@ struct SettingsView: View {
                     CustomFieldRow(field: field)
                 }
                 HStack {
-                    TextField("New field", text: $newField, prompt: Text("For example, Sponsor or Client")).onSubmit { m.addCustomField(newField); newField = "" }
+                    TextField("New field", text: $newField, prompt: Text("For example, Sponsor or Client")).onSubmit(addField)
                         .help("Name of an extra field to offer in New Project")
-                    Button("Add") { m.addCustomField(newField); newField = "" }.disabled(newField.trimmingCharacters(in: .whitespaces).isEmpty)
+                    Button("Add", action: addField).disabled(newField.trimmingCharacters(in: .whitespaces).isEmpty)
                         .help("Add this extra field to New Project")
                 }
             } header: { Text("Extra fields") } footer: {
                 Text("Extra fields appear under Advanced in New Project. Tick In folder name to add their value to the folder name.")
             }
             Section {
-                DisclosureGroup("Advanced: names inside the template", isExpanded: $showNamingAdvanced) {
+                DisclosureGroup("Names inside the template", isExpanded: $showNamingAdvanced) {
                     Text("Files that begin with Template, such as Template.prproj, take the full project name. In other file and folder names, [template], the four field tokens and any extra field in brackets are replaced too. An extra field left out of the folder name can still be used this way. File contents are never rewritten.")
                         .font(TypeStyle.callout).foregroundStyle(.secondary)
                 }.accessibilityAction { showNamingAdvanced.toggle() }
@@ -182,8 +200,8 @@ struct SettingsView: View {
     func stageSection(_ kind: PipelineKind, header: String, newPrompt: String, footer: String) -> some View {
         let stages = m.library.stages(for: kind)
         return Section {
-            ForEach(Array(stages.enumerated()), id: \.offset) { index, stage in
-                StageSettingsRow(kind: kind, index: index, stage: stage)
+            ForEach(stages, id: \.self) { stage in
+                StageSettingsRow(kind: kind, stage: stage)
             }
             HStack {
                 TextField("New stage", text: kind == .live ? $newLiveStage : $newStage, prompt: Text(newPrompt)).onSubmit { addStage(kind) }
@@ -193,6 +211,11 @@ struct SettingsView: View {
             }
         } header: { Text(header) } footer: { Text(footer) }
     }
+    private func addField() {
+        do { _ = try m.addField(newField); newField = "" }
+        catch { m.error = error.localizedDescription }
+    }
+
     func addStage(_ kind: PipelineKind) {
         let clean = (kind == .live ? newLiveStage : newStage).trimmingCharacters(in: .whitespaces)
         guard !clean.isEmpty, !m.library.stages(for: kind).contains(clean) else { return }
@@ -223,7 +246,8 @@ struct SettingsView: View {
                 }
                 if m.distinctLocations.isEmpty { Text("Locations appear here once projects are registered.").foregroundStyle(.secondary) }
             } header: { Text("Drives and cloud folders") } footer: {
-                Text("Each location gets a colour badge in the project list. A filled dot means the drive or cloud folder is connected right now; the check runs every twenty seconds and never opens cloud files. Which drives are shown is the Locations filter on Projects and Pipeline: an unticked drive is never read, so a mechanical archive drive can stay unticked on normal days.")
+                Text("Each location gets a colour badge. A filled dot means it is connected. Use the Locations filter to choose which drives are checked.")
+                    .help("Connection checks run every twenty seconds and never open cloud files. Unticked locations are never read, so an archive drive can stay unticked when it is not needed.")
             }
         }.formStyle(.grouped).modifier(SettingsFormSize())
     }
@@ -285,25 +309,46 @@ private struct CustomFieldRow: View {
     @EnvironmentObject var m: AppModel
     let field: CustomField
     @State private var name = ""
+    @State private var removing = false
+    @FocusState private var nameFocused: Bool
     var body: some View {
         HStack {
-            TextField("Name", text: $name).labelsHidden().onSubmit(save).accessibilityLabel("Field name").help("Rename this field, then press Return or Save")
-            Button("Save") { save() }.disabled(name == field.name).help("Save the new name for \(field.name)")
-            Toggle("In folder name", isOn: Binding(get: { field.includeInName }, set: { var f = field; f.includeInName = $0; m.updateCustomField(f) })).toggleStyle(.checkbox)
+            TextField("Name", text: $name).labelsHidden().focused($nameFocused).onSubmit(save)
+                .accessibilityLabel("Field name").help("Rename this field. It saves when you press Return or leave the field.")
+            Toggle("In folder name", isOn: Binding(get: { field.includeInName }, set: { value in
+                guard var latest = m.library.fieldList.first(where: { $0.id == field.id }) else { return }
+                latest.includeInName = value; m.updateCustomField(latest)
+            })).toggleStyle(.checkbox)
                 .help("Add this field's value to the project folder name")
-            Button { m.removeCustomField(field.id) } label: { Image(systemName: "minus.circle") }.buttonStyle(.plain).help("Remove this field")
-                .accessibilityLabel("Remove \(field.name)")
-        }.onAppear { name = field.name }.onChange(of: field.name) { name = field.name }
+            Button {
+                removing = true
+                m.removeCustomField(field.id)
+                Task {
+                    await Task.yield()
+                    if m.library.fieldList.contains(where: { $0.id == field.id }) { removing = false }
+                }
+            } label: { Image(systemName: "minus.circle") }
+                .buttonStyle(.plain).help("Remove this field").accessibilityLabel("Remove \(field.name)")
+        }
+        .onAppear { name = field.name }
+        .onChange(of: field.name) { name = field.name }
+        .onChange(of: nameFocused) { if !nameFocused { Task { await Task.yield(); save() } } }
+        .onDisappear(perform: save)
     }
-    func save() { var f = field; f.name = name; m.updateCustomField(f) }
+    func save() {
+        guard !removing, var latest = m.library.fieldList.first(where: { $0.id == field.id }), name != latest.name else { return }
+        latest.name = name; m.updateCustomField(latest)
+    }
 }
 
 private struct StageSettingsRow: View {
     @EnvironmentObject var m: AppModel
     let kind: PipelineKind
-    let index: Int
     let stage: String
     @State private var name = ""
+    @State private var saving = false
+    @State private var removing = false
+    @FocusState private var nameFocused: Bool
     var stages: [String] { m.library.stages(for: kind) }
     var body: some View {
         HStack {
@@ -315,17 +360,40 @@ private struct StageSettingsRow: View {
                 }
             } label: {
                 Image(nsImage: ColourDot.image(m.stageColour(stage)))
-            }.menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize().help("Colour for \(stage), in the app and on the folder's Finder tag")
+            }.menuStyle(.borderlessButton).fixedSize().help("Choose the colour for \(stage), in the app and on the folder's Finder tag")
                 .accessibilityLabel("Colour for \(stage)")
-            TextField("Stage", text: $name).labelsHidden().onSubmit(save).accessibilityLabel("Stage name").help("Rename this stage, then press Return or Save")
-            Button("Save") { save() }.disabled(name == stage).help("Save the new name for \(stage)")
-            Button { var s = stages; guard s.count > 2, s.indices.contains(index) else { return }; s.remove(at: index); m.setStages(s, for: kind) } label: { Image(systemName: "minus.circle") }
-                .buttonStyle(.plain).disabled(stages.count <= 2)
+            TextField("Stage", text: $name).labelsHidden().focused($nameFocused).onSubmit(save).disabled(saving)
+                .accessibilityLabel("Stage name").help("Rename this stage. It saves when you press Return or leave the field.")
+            if saving { ProgressView().controlSize(.small) }
+            Button {
+                guard stages.count > 2, let index = stages.firstIndex(of: stage) else { return }
+                removing = true
+                var updated = stages; updated.remove(at: index); m.setStages(updated, for: kind)
+                Task {
+                    await Task.yield()
+                    if stages.contains(stage) { removing = false }
+                }
+            } label: { Image(systemName: "minus.circle") }
+                .buttonStyle(.plain).disabled(stages.count <= 2 || saving)
                 .help(stages.count <= 2 ? "A board needs at least two stages" : "Remove \(stage) from this board")
                 .accessibilityLabel("Remove \(stage)")
-        }.onAppear { name = stage }.onChange(of: stage) { name = stage }
+        }
+        .onAppear { name = stage }
+        .onChange(of: stage) { name = stage }
+        .onChange(of: nameFocused) { if !nameFocused { Task { await Task.yield(); save() } } }
+        .onDisappear(perform: save)
     }
-    func save() { guard stages.indices.contains(index), name != stage else { return }; m.renameStage(stage, to: name, on: kind) }
+    func save() {
+        guard !saving, !removing, stages.contains(stage), name != stage else { return }
+        saving = true
+        let entered = name
+        Task {
+            defer { saving = false }
+            guard !removing, stages.contains(stage) else { return }
+            do { _ = try await m.renameStageCore(stage, to: entered, on: kind) }
+            catch { m.error = error.localizedDescription }
+        }
+    }
     func colourValue(_ colour: StageColour) -> Color {
         BadgeColour(rawValue: colour.rawValue)?.colour ?? .secondary
     }

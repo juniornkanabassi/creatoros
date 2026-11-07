@@ -78,7 +78,7 @@ struct FormatButtons: View {
                     }
                 }
                 Text(label).font(TypeStyle.callout.weight(selection == format ? .semibold : .regular)).lineLimit(1).fixedSize()
-            }.padding(.horizontal, Space.xs).padding(.vertical, Space.xs)
+            }.frame(minHeight: 20).padding(.horizontal, Space.xs).padding(.vertical, Space.xs)
         }.buttonStyle(.bordered).tint(selection == format ? .accentColor : .secondary)
             .help(missing ? "\(label) is not set up in this template set yet" : label)
             .accessibilityLabel(label).accessibilityAddTraits(selection == format ? .isSelected : [])
@@ -102,13 +102,11 @@ struct NewProjectSheet: View {
                         Label("Choose a template and format", systemImage: "1.circle")
                         Label("Name the project", systemImage: "2.circle")
                         Label("Create it", systemImage: "3.circle")
-                    }.font(TypeStyle.callout).foregroundStyle(Color.accentColor)
+                    }.font(TypeStyle.callout).foregroundStyle(.secondary)
                         .gridProbe("new-project-steps", area: "new-project-heading")
                 }
                 Spacer()
-                // While copying, Escape belongs to the progress row's Cancel.
-                Button("Close") { m.newProjectPresented = false }.keyboardShortcut(m.busy ? nil : .cancelAction).disabled(m.busy)
-                    .help(m.created == nil ? "Close without creating anything. What you typed stays for next time." : "Close and show the created project in Projects. The next project starts with a clear form.")
+
             }.padding(.horizontal, Space.xl).padding(.vertical, Space.lg)
                 .gridArea("new-project-heading", inset: Space.lg)
             Divider()
@@ -314,7 +312,7 @@ struct CreationPreview: View {
                 }
                 if !m.validation.isEmpty { Label(m.validation, systemImage: "exclamationmark.triangle.fill").font(TypeStyle.callout).foregroundStyle(.orange) }
                 HStack {
-                    Text("\(preview.visible.count) items · \(ByteCountFormatter.string(fromByteCount: preview.bytes, countStyle: .file))").font(TypeStyle.caption.monospacedDigit()).foregroundStyle(.secondary)
+                    Text("\(preview.visible.count) \(preview.visible.count == 1 ? "item" : "items") · \(ByteCountFormatter.string(fromByteCount: preview.bytes, countStyle: .file))").font(TypeStyle.caption.monospacedDigit()).foregroundStyle(.secondary)
                     Spacer()
                     ViewModePicker(surface: .creationPreview)
                 }
@@ -325,7 +323,7 @@ struct CreationPreview: View {
                     .onAppear { m.activate(.creationPreview) }.onDisappear { m.deactivate(.creationPreview) }
                 let renamed = preview.renamedEntries
                 if !renamed.isEmpty {
-                    DisclosureGroup("\(renamed.count) names will be replaced") {
+                    DisclosureGroup("\(renamed.count) \(renamed.count == 1 ? "name" : "names") will be replaced") {
                         ScrollView {
                             VStack(alignment: .leading, spacing: Space.sm) {
                                 ForEach(renamed) { entry in
@@ -373,6 +371,10 @@ struct CreationPreview: View {
             HStack {
                 Text("The original template stays untouched.").font(TypeStyle.caption).foregroundStyle(.secondary)
                 Spacer()
+                // While copying, Escape belongs to the progress row's Cancel.
+                Button(m.created == nil ? "Cancel" : "Done") { m.newProjectPresented = false }
+                    .keyboardShortcut(m.busy ? nil : .cancelAction).disabled(m.busy)
+                    .help(m.created == nil ? "Close without creating anything. What you typed stays for next time." : "Close this sheet. The next project starts with a clear form.")
                 // After creation Next Project is the one accent action; Create stays unavailable until the form is cleared.
                 if m.created == nil {
                     Button("Create Project") { m.create() }.buttonStyle(.borderedProminent).controlSize(.large).disabled(!m.canCreate).keyboardShortcut(.return, modifiers: .command)
