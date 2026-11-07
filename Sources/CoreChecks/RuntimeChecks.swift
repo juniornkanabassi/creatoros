@@ -48,4 +48,14 @@ func runtimeChecks(base: URL) throws {
     try check(disposable.ownsDisposablePreferences && temporaryRuntime.ownsDisposablePreferences && !production.ownsDisposablePreferences
               && !alphaInstall.ownsDisposablePreferences && !alphaChild.ownsDisposablePreferences,
               "only temporary roots own their preferences; production and the alpha install keep theirs")
+    try rejects("invisible launch requires an explicit data root") { _ = try AppRuntime.forInvisibleLaunch(dataRoot: nil) }
+    try rejects("invisible launch refuses the production library") { _ = try AppRuntime.forInvisibleLaunch(dataRoot: AppRuntime.stableRoot) }
+    try rejects("invisible launch refuses the persistent alpha library") { _ = try AppRuntime.forInvisibleLaunch(dataRoot: AppRuntime.alphaRoot) }
+    try rejects("invisible launch refuses a persistent alpha descendant") { _ = try AppRuntime.forInvisibleLaunch(dataRoot: AppRuntime.alphaRoot.appendingPathComponent("Child")) }
+    try rejects("invisible launch refuses a symbolic-link root") { _ = try AppRuntime.forInvisibleLaunch(dataRoot: alias) }
+    try check(try AppRuntime.forInvisibleLaunch(dataRoot: disposable.root).root == disposable.root,
+              "invisible launch accepts an explicit disposable data root")
+    let tempAlias = URL(fileURLWithPath: disposable.root.path.replacingOccurrences(of: "/private/tmp/", with: "/tmp/"))
+    try check(try AppRuntime.forInvisibleLaunch(dataRoot: tempAlias).root == disposable.root,
+              "invisible launch accepts the macOS temporary directory alias")
 }

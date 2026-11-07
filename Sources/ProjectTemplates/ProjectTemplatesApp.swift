@@ -50,11 +50,12 @@ extension NSSplitView { @objc func refuseAutosaveName(_ name: String?) {} }
 
 @main struct ContentTemplateApp: App {
     @Environment(\.openWindow) private var openWindow
-    @StateObject private var model = AppModel()
+    @StateObject private var model: AppModel
     @NSApplicationDelegateAdaptor(CreatorOSDelegate.self) private var delegate
     init() {
         // A check's copy (--agent-screen) hides every window before any exists, so none shows even for a frame.
         AgentScreen.install()
+        _model = StateObject(wrappedValue: AppModel())
         // macOS restores the windows an app had when it quit; after Junior closed the window and quit, that was none,
         // so a relaunch from Spotlight showed nothing. Always open the main window instead; it keeps its own frame below.
         UserDefaults.standard.register(defaults: ["ApplePersistenceIgnoreState": true])

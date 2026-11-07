@@ -1,14 +1,28 @@
 import AppKit
 import SwiftUI
+import TemplateCore
 
 /// `--agent-screen` (every real-app check) and app-hosted XCTest runs: nothing this copy shows can appear on any of
 /// Junior's displays or take focus. Windows are still ordered in, so Accessibility and window lists still see them, but
 /// every one, sheets, alerts and Settings included, is fully transparent and lets clicks through, and the app never
 /// activates or gains a Dock tile. Video Prompter a28a30c, with TestOffscreen's swaps so no window shows for even one frame.
 enum AgentScreen {
-    static let active = CommandLine.arguments.contains("--agent-screen")
-        || ProcessInfo.processInfo.environment["CREATOROS_AGENT_SCREEN"] == "1"
-        || ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
+    static let active: Bool = {
+        let arguments = CommandLine.arguments
+        let requested = arguments.contains("--agent-screen")
+            || ProcessInfo.processInfo.environment["CREATOROS_AGENT_SCREEN"] == "1"
+            || ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
+        guard requested else { return false }
+        let index = arguments.firstIndex(of: "--data-directory")
+        let path = index.flatMap { arguments.indices.contains($0 + 1) ? arguments[$0 + 1] : nil }
+        do {
+            _ = try AppRuntime.forInvisibleLaunch(dataRoot: path.map { URL(fileURLWithPath: $0) })
+        } catch {
+            FileHandle.standardError.write(Data((error.localizedDescription + "\n").utf8))
+            exit(64)
+        }
+        return true
+    }()
     /// From the App's init, first, before any window exists.
     @MainActor static func install() {
         guard active else { return }
@@ -21,6 +35,7 @@ enum AgentScreen {
         swap(NSWindow.self, #selector(NSWindow.makeKeyAndOrderFront(_:)), #selector(NSWindow.agentScreen_makeKeyAndOrderFront(_:)))
         swap(NSApplication.self, NSSelectorFromString("activateIgnoringOtherApps:"), #selector(NSApplication.agentScreen_activate(ignoringOtherApps:)))
         swap(NSApplication.self, NSSelectorFromString("activate"), #selector(NSApplication.agentScreen_activateNow))
+        swap(NSApplication.self, #selector(NSApplication.noResponder(for:)), #selector(NSApplication.agentScreen_noResponder(for:)))
     }
     private static func swap(_ type: AnyClass, _ original: Selector, _ replacement: Selector) {
         guard let old = class_getInstanceMethod(type, original), let new = class_getInstanceMethod(type, replacement) else { return }
@@ -46,6 +61,7 @@ extension NSWindow {
 extension NSApplication {
     @objc func agentScreen_activate(ignoringOtherApps flag: Bool) {}
     @objc func agentScreen_activateNow() {}
+    @objc func agentScreen_noResponder(for selector: Selector) {}
 }
 
 extension NSWorkspace {
@@ -92,7 +108,7 @@ extension NSWorkspace {
 
     /// From the App's init, before any window exists.
     func start() {
-        guard active, timer == nil else { return }
+        guard active || AgentScreen.active, timer == nil else { return }
         NSApplication.shared.setActivationPolicy(.accessory)
         // `open -g` never activates the app, so activation means a person (or --show) wants it.
         activeObserver = NotificationCenter.default.addObserver(forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main) { _ in
@@ -108,7 +124,7 @@ extension NSWorkspace {
     func promote() {
         guard active else { return }
         active = false
-        timer?.invalidate(); timer = nil
+        if !AgentScreen.active { timer?.invalidate(); timer = nil }
         if let activeObserver { NotificationCenter.default.removeObserver(activeObserver) }
         activeObserver = nil
         // An --agent-screen copy goes through every step of becoming the ordinary app except gaining a Dock tile.
@@ -128,8 +144,8 @@ extension NSWorkspace {
     }
     private func quitIfIdle() {
         // The hidden main window counts as nothing on screen, even if SwiftUI ordered it back in at alpha 0.
-        let shown = NSApp.windows.contains { $0.isVisible && !($0 === mainWindow && windowHidden) }
-        guard active, inFlight == 0, !shown, Date().timeIntervalSince(lastUse) >= idleLimit, canQuit() else { return }
+        let shown = !AgentScreen.active && NSApp.windows.contains { $0.isVisible && !($0 === mainWindow && windowHidden) }
+        guard active || AgentScreen.active, inFlight == 0, !shown, Date().timeIntervalSince(lastUse) >= idleLimit, canQuit() else { return }
         NSApp.terminate(nil)
     }
 }

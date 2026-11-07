@@ -43,6 +43,18 @@ public struct AppRuntime: Sendable {
         return try production()
     }
 
+    /// Invisible checks must never own a persistent library, including the alpha library.
+    public static func forInvisibleLaunch(dataRoot: URL?) throws -> AppRuntime {
+        guard let dataRoot else {
+            throw AppFailure("Invisible checks require --data-directory with a dedicated temporary folder.")
+        }
+        let runtime = try isolated(root: dataRoot)
+        guard runtime.ownsDisposablePreferences else {
+            throw AppFailure("Invisible checks require a temporary data folder, not the persistent alpha library.")
+        }
+        return runtime
+    }
+
     /// Retained for test/tool callers: an explicit root always means isolation.
     public init(root: URL = AppRuntime.alphaRoot, stableRoot: URL = AppRuntime.stableRoot) throws {
         try self.init(root: root, stableRoot: stableRoot, scope: .isolated)
