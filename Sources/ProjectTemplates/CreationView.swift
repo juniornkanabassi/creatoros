@@ -147,7 +147,7 @@ struct CreationForm: View {
     @State private var showAdvanced = false
     var body: some View {
         Form {
-            if let origin = m.startingFrom.flatMap({ id in m.library.projects.first { $0.id == id } }) {
+            if let origin = m.draft.startingFrom.flatMap({ id in m.library.projects.first { $0.id == id } }) {
                 Section {
                     HStack {
                         Label("Starting from the idea “\(origin.name)”", systemImage: "lightbulb").font(TypeStyle.callout)
@@ -180,26 +180,26 @@ struct CreationForm: View {
             }
             Section("Format") {
                 FormatButtons(selection: $m.format, showReadiness: m.selectedSet != nil).onChange(of: m.format) { m.changeFormat() }
-                    .disabled(m.startingFrom != nil)
+                    .disabled(m.draft.startingFrom != nil)
             }
             Section {
-                TextField("Project Name", text: $m.title, prompt: Text("Your project title")).onChange(of: m.title) { m.fieldChanged() }
+                TextField("Project Name", text: $m.draft.title, prompt: Text("Your project title")).onChange(of: m.draft.title) { m.fieldChanged() }
                     .accessibilityLabel("Project Name")
                     .help("The title that ends the folder name")
-                TextField("Project Number", text: $m.number, prompt: Text(m.suggestedNumber)).onChange(of: m.number) { m.numberEdited() }
+                TextField("Project Number", text: $m.draft.number, prompt: Text(m.suggestedNumber)).onChange(of: m.draft.number) { m.numberEdited() }
                     .accessibilityLabel("Project Number")
                     .help("Starts the folder name. Filled in automatically; type over it if this project needs a different number.")
             } header: {
                 Text("2 · Name")
             } footer: {
-                Text(m.numberIsAutomatic
+                Text(m.draft.numberIsAutomatic
                      ? "Next \(m.formatLabel) is \(m.suggestedNumber), counted from your \(m.formatLabel) projects. Change it if this one is different."
                      : "Using your own number. Clear the field to go back to the next \(m.formatLabel) number, \(m.suggestedNumber).")
             }
             Section("Destination") {
                 LabeledContent("Folder") {
-                    Text(m.destination.isEmpty ? "Not chosen for \(m.formatLabel) yet" : m.destination)
-                        .foregroundStyle(m.destination.isEmpty ? .secondary : .primary).lineLimit(2).truncationMode(.middle).textSelection(.enabled)
+                    Text(m.draft.destination.isEmpty ? "Not chosen for \(m.formatLabel) yet" : m.draft.destination)
+                        .foregroundStyle(m.draft.destination.isEmpty ? .secondary : .primary).lineLimit(2).truncationMode(.middle).textSelection(.enabled)
                 }
                 Button("Choose…") { m.chooseDestination() }.help("Choose where \(m.formatLabel) projects are created")
             }
@@ -207,16 +207,16 @@ struct CreationForm: View {
                 DisclosureGroup("Advanced", isExpanded: userAdvanced) {
                     Text("Optional campaign and extra fields for the folder name, and plain folders for drives that cannot hold icons.")
                         .font(TypeStyle.caption).foregroundStyle(.secondary)
-                    TextField("Campaign", text: $m.campaign, prompt: Text("Optional")).onChange(of: m.campaign) { m.fieldChanged() }
+                    TextField("Campaign", text: $m.draft.campaign, prompt: Text("Optional")).onChange(of: m.draft.campaign) { m.fieldChanged() }
                         .accessibilityLabel("Campaign")
                         .help("Optional. When filled in, it goes in the folder name before the project name.")
                     ForEach(m.library.fieldList) { field in
-                        TextField(field.name, text: Binding(get: { m.extraValues[field.id] ?? "" }, set: { m.extraValues[field.id] = $0 }), prompt: Text(field.includeInName ? "Optional, goes in the folder name" : "Optional"))
-                            .onChange(of: m.extraValues[field.id]) { m.fieldChanged() }
+                        TextField(field.name, text: Binding(get: { m.draft.extraValues[field.id] ?? "" }, set: { m.draft.extraValues[field.id] = $0 }), prompt: Text(field.includeInName ? "Optional, goes in the folder name" : "Optional"))
+                            .onChange(of: m.draft.extraValues[field.id]) { m.fieldChanged() }
                             .accessibilityLabel(field.name)
                             .help(field.includeInName ? "Optional. When filled in, it goes in the folder name." : "Optional. Used only where a template file name asks for it.")
                     }
-                    Toggle("Plain folders (no icons)", isOn: $m.plainFolders)
+                    Toggle("Plain folders (no icons)", isOn: $m.draft.plainFolders)
                         .help("Creates the project with Finder's plain folders instead of the template's folder icons, for LucidLink and other drives that cannot hold them. The preview shows the result. Restore Folder Icons in Projects puts the icons back later.")
                 }.accessibilityAction { userAdvanced.wrappedValue.toggle() }
             }
@@ -224,8 +224,8 @@ struct CreationForm: View {
             // Opens by itself when it already holds a value, so nothing that goes into the name is hidden.
             // That automatic opening stays local; only the user's own toggles are remembered.
             .onAppear {
-                showAdvanced = m.defaults.bool(forKey: "disclosure.creationAdvanced") || !m.campaign.isEmpty || m.plainFolders
-                    || m.extraValues.values.contains { !$0.isEmpty }
+                showAdvanced = m.defaults.bool(forKey: "disclosure.creationAdvanced") || !m.draft.campaign.isEmpty || m.draft.plainFolders
+                    || m.draft.extraValues.values.contains { !$0.isEmpty }
             }
     }
     private var userAdvanced: Binding<Bool> {
@@ -296,11 +296,11 @@ struct CreationPreview: View {
     var body: some View {
         VStack(alignment: .leading, spacing: Space.lg) {
             HStack(spacing: Space.lg) {
-                FormatIcon(data: m.preset.icon, size: 52, plain: m.plainFolders)
+                FormatIcon(data: m.preset.icon, size: 52, plain: m.draft.plainFolders)
                 VStack(alignment: .leading, spacing: Space.xs) {
-                    Text(m.plainFolders ? "PROJECT PREVIEW · PLAIN FOLDERS" : "PROJECT PREVIEW").font(TypeStyle.caption.weight(.semibold)).foregroundStyle(.secondary)
+                    Text(m.draft.plainFolders ? "PROJECT PREVIEW · PLAIN FOLDERS" : "PROJECT PREVIEW").font(TypeStyle.caption.weight(.semibold)).foregroundStyle(.secondary)
                     Text(m.preview?.outerFolderName ?? "No preview yet").font(TypeStyle.title3.weight(.semibold)).textSelection(.enabled).lineLimit(2)
-                    Text(m.destination.isEmpty ? "Choose a destination for \(m.formatLabel) projects." : m.destination + "/" + (m.preview?.outerFolderName ?? ""))
+                    Text(m.draft.destination.isEmpty ? "Choose a destination for \(m.formatLabel) projects." : m.draft.destination + "/" + (m.preview?.outerFolderName ?? ""))
                         .font(TypeStyle.caption).foregroundStyle(.secondary).lineLimit(2).truncationMode(.middle).textSelection(.enabled)
                 }
                 Spacer()
@@ -318,8 +318,8 @@ struct CreationPreview: View {
                     Spacer()
                     ViewModePicker(surface: .creationPreview)
                 }
-                FileBrowserView(dataSource: PreviewDataSource(rendering: preview, plain: m.plainFolders), mode: m.viewMode(.creationPreview), folder: $folder, selection: $selection,
-                                reloadKey: preview.entries.hashValue &+ (m.plainFolders ? 1 : 0))
+                FileBrowserView(dataSource: PreviewDataSource(rendering: preview, plain: m.draft.plainFolders), mode: m.viewMode(.creationPreview), folder: $folder, selection: $selection,
+                                reloadKey: preview.entries.hashValue &+ (m.draft.plainFolders ? 1 : 0))
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .background(.background, in: RoundedRectangle(cornerRadius: Radius.md))
                     .onAppear { m.activate(.creationPreview) }.onDisappear { m.deactivate(.creationPreview) }
@@ -379,7 +379,7 @@ struct CreationPreview: View {
                         .help(m.canCreate ? "Copy the template into the destination as shown in the preview (⌘↩)" : "Fill in the fields on the left and choose a destination to create the project")
                 }
             }
-            if m.startingFrom.flatMap({ id in m.library.projects.first { $0.id == id } })?.ideaWorkspace != nil {
+            if m.draft.startingFrom.flatMap({ id in m.library.projects.first { $0.id == id } })?.ideaWorkspace != nil {
                 Text("This project's source is the existing idea workspace. Media names may change; Premiere Pro, OBS or Watchtower references may need relinking. The old workspace is kept until you explicitly put it in the Bin.").font(TypeStyle.caption).foregroundStyle(.secondary)
             }
         }.padding(Space.xl)

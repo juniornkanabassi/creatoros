@@ -82,16 +82,16 @@ extension AppModel {
     func startPlanned(_ record: ProjectRecord) {
         invalidateStructure(record.id)
         format = record.format
-        title = record.isPlanned ? record.name : record.title
-        campaign = record.campaign ?? ""
-        startingFrom = record.id
+        draft.title = record.isPlanned ? record.name : record.title
+        draft.campaign = record.campaign ?? ""
+        draft.startingFrom = record.id
         created = nil
         newProjectPresented = true
         changeFormat()
     }
     func forgetStartingIdea() {
-        if let id = startingFrom { invalidateStructure(id) }
-        startingFrom = nil
+        if let id = draft.startingFrom { invalidateStructure(id) }
+        draft.startingFrom = nil
         preview = nil; plan = nil
         refresh()
     }

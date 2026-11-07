@@ -165,7 +165,7 @@ extension AppModel {
 
     func controlCreate(_ params: [String: Any]) async throws -> [String: Any] {
         try requireIdle()
-        guard !newProjectPresented, renamePrompt == nil, !importPresented, startingFrom == nil else { throw ControlFailure(code: "form_in_use", message: "Close the app's project form first.") }
+        guard !newProjectPresented, renamePrompt == nil, !importPresented, draft.startingFrom == nil else { throw ControlFailure(code: "form_in_use", message: "Close the app's project form first.") }
         let dryRun = params["dryRun"] as? Bool == true
         var origin: ProjectRecord?
         if let reference = params["fromIdea"] as? String {
@@ -175,16 +175,16 @@ extension AppModel {
             origin = idea
         }
         guard let requestedFormat = origin?.format ?? params["format"] as? String, Library.formats.contains(requestedFormat) else { throw ControlFailure(code: "invalid_params", message: "Use Long, Short, Podcast or Livestream.") }
-        let saved = (format, selection, number, numberIsAutomatic, title, campaign, extraValues, destination, plainFolders)
+        // The GUI form is set aside whole and put back afterwards, so a command never leaves its values in the form.
+        let saved = (format: format, selection: selection, draft: draft)
         defer {
-            format = saved.0; selection = saved.1; number = saved.2; numberIsAutomatic = saved.3
-            if numberIsAutomatic { number = suggestedNumber }
-            title = saved.4; campaign = saved.5; extraValues = saved.6; destination = saved.7; plainFolders = saved.8
-            startingFrom = nil
+            format = saved.format; selection = saved.selection; draft = saved.draft
+            draft.followSuggestion(suggestedNumber)
+            draft.startingFrom = nil
             refresh()
         }
-        format = requestedFormat; changeFormat(); extraValues = [:]
-        if let origin { invalidateStructure(origin.id); startingFrom = origin.id; created = nil }
+        format = requestedFormat; changeFormat(); draft.extraValues = [:]
+        if let origin { invalidateStructure(origin.id); draft.startingFrom = origin.id; created = nil }
         if let template = params["template"] as? String {
             let sets = library.sets.filter { $0.id.uuidString.lowercased() == template.lowercased() || $0.name == template }
             let templates = library.templates.filter { $0.id.uuidString.lowercased() == template.lowercased() || $0.name == template }
@@ -192,20 +192,21 @@ extension AppModel {
             selection = sets.first.map { .set($0.id) } ?? .legacy(templates[0].id)
         }
         guard payload != nil || origin?.ideaWorkspace != nil else { throw ControlFailure(code: "template_not_ready", message: "Set up a template for this format in the GUI.") }
-        title = params["title"] as? String ?? origin.map { $0.name } ?? ""
-        campaign = params["campaign"] as? String ?? origin?.campaign ?? ""
-        numberIsAutomatic = params["number"] == nil; number = params["number"] as? String ?? suggestedNumber
+        draft.title = params["title"] as? String ?? origin.map { $0.name } ?? ""
+        draft.campaign = params["campaign"] as? String ?? origin?.campaign ?? ""
+        draft.numberIsAutomatic = params["number"] == nil; draft.number = params["number"] as? String ?? suggestedNumber
         for (name, value) in params["extra"] as? [String: String] ?? [:] {
             guard let field = library.fieldList.first(where: { Naming.key($0.name) == Naming.key(name) }) else {
                 throw ControlFailure(code: "invalid_params", message: "There is no custom field called ‘\(name)’. Fields: " + library.fieldList.map(\.name).joined(separator: ", "))
             }
-            extraValues[field.id] = value
+            draft.extraValues[field.id] = value
         }
         // A one-off destination for this project only; the format's saved destination is not touched, so another caller's
         // create cannot see it.
-        if let override = params["destination"] as? String { destination = try controlURL(override, directory: true, writable: true).path }
-        if let plain = params["plainFolders"] as? Bool { plainFolders = plain }
+        if let override = params["destination"] as? String { draft.destination = try controlURL(override, directory: true, writable: true).path }
+        if let plain = params["plainFolders"] as? Bool { draft.plainFolders = plain }
         do { _ = try fields.finalName() } catch { throw ControlFailure(code: "invalid_params", message: error.localizedDescription) }
+        let destination = draft.destination
         guard !destination.isEmpty else { throw ControlFailure(code: "no_destination", message: "Choose a destination for this format in the GUI, or pass --destination.") }
         guard !hiddenLocations.contains(ProjectLocation(path: destination).key) else { throw ControlFailure(code: "location_hidden", message: "Tick the destination's location in the GUI first.") }
         busy = true
@@ -215,7 +216,7 @@ extension AppModel {
         if dryRun {
             let name = preview?.outerFolderName ?? ""
             var reply: [String: Any] = ["dryRun": true, "ready": canCreate, "folderName": name, "destination": destination, "path": destination + "/" + name,
-                                        "plainFolders": plainFolders, "validation": validation, "fromIdea": origin?.id.uuidString as Any? ?? NSNull(),
+                                        "plainFolders": draft.plainFolders, "validation": validation, "fromIdea": origin?.id.uuidString as Any? ?? NSNull(),
                                         "template": payload?.id.uuidString as Any? ?? NSNull()]
             if let preview {
                 reply["missingFields"] = preview.missingFields; reply["issues"] = preview.issues

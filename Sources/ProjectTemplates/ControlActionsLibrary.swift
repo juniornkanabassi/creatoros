@@ -66,7 +66,7 @@ extension AppModel {
         let changesFormSources: Set<String> = ["stage.set", "stage.rename", "field.add", "field.update", "field.remove", "format.set-destination", "format.set-icon",
                                               "template.import", "template.remove", "set.create", "set.rename", "set.assign", "set.unassign", "set.remove"]
         if changesFormSources.contains(action), !dryRun {
-            try requireNoSheet(newProjectPresented || importPresented || renamePrompt != nil || startingFrom != nil, "project form, rename or import window")
+            try requireNoSheet(newProjectPresented || importPresented || renamePrompt != nil || draft.startingFrom != nil, "project form, rename or import window")
         }
         if !dryRun, let sheet = conflictingSheet(action) { throw ControlFailure(code: "form_in_use", message: "Close the app's \(sheet) first.") }
         switch action {
@@ -184,7 +184,7 @@ extension AppModel {
             return fieldSummary(library.fieldList.first { $0.id == field.id } ?? field)
         case "field.remove":
             let field = try lookupField(params["field"] as! String)
-            if dryRun { return ["dryRun": true, "field": fieldSummary(field), "creationFormValue": extraValues[field.id] as Any? ?? NSNull(), "recordsUnchanged": true] }
+            if dryRun { return ["dryRun": true, "field": fieldSummary(field), "creationFormValue": draft.extraValues[field.id] as Any? ?? NSNull(), "recordsUnchanged": true] }
             try requireNoSheet(newProjectPresented, "project form")
             try deleteField(field.id)
             try await durable()

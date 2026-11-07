@@ -21,7 +21,7 @@ extension AppModel {
     /// The report for the project in the New Project form, without showing it.
     func prospectiveCompatibility() -> CompatibilityReport? {
         guard let plan, let preview else { return nil }
-        return Compatibility.scan(plan: plainFolders ? plan.withoutIconFiles : plan, outerName: preview.outerFolderName)
+        return Compatibility.scan(plan: draft.plainFolders ? plan.withoutIconFiles : plan, outerName: preview.outerFolderName)
     }
     func checkProspectiveCompatibility() {
         guard let report = prospectiveCompatibility() else { return }

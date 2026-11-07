@@ -120,12 +120,8 @@ enum BadgeColour: String, CaseIterable, Identifiable {
     @Published var page: Page { didSet { defaults.set(page.rawValue, forKey: "page") } }
     @Published var selection: TemplateSelection? { didSet { defaults.set(selection?.stored, forKey: "selection") } }
     @Published var format: String { didSet { defaults.set(format, forKey: "format") } }
-    @Published var number = ""
-    @Published var numberIsAutomatic = true
-    @Published var campaign = ""
-    @Published var title = ""
-    @Published var extraValues: [UUID: String] = [:]
-    @Published var destination = "" { didSet { updatePlainFolders() } }
+    /// The New Project form: what has been typed and where it goes. Bind its fields with `$model.draft.title` and so on.
+    @Published var draft = ProjectDraft()
     @Published var preview: PreviewRendering?
     @Published var plan: CopyPlan?
     @Published var validation = ""
@@ -135,7 +131,6 @@ enum BadgeColour: String, CaseIterable, Identifiable {
     @Published var status = ""
     @Published var error: String?
     @Published var created: URL?
-    @Published var startingFrom: UUID?
     @Published var importSource: URL?
     @Published var importName = ""
     @Published var importMode: ImportMode = .full
@@ -170,8 +165,6 @@ enum BadgeColour: String, CaseIterable, Identifiable {
     @Published var pipelineSelection: UUID?
     @Published var pipelineKind: PipelineKind { didSet { defaults.set(pipelineKind.rawValue, forKey: "pipelineKind"); if !pipelineKind.includes(format: formatFilter) { formatFilter = "All formats" } } }
     @Published var tagging = false
-    /// New Project: copy without folder icons, for a destination such as LucidLink that cannot hold them.
-    @Published var plainFolders = false
     @Published var newIdeaPresented = false
     @Published var compatibilityReport: CompatibilityReport?
     @Published var compatibilityPresented = false
@@ -264,17 +257,13 @@ enum BadgeColour: String, CaseIterable, Identifiable {
         catch { storeUsable = false; self.error = "Library could not be read. It has not been changed. \(error.localizedDescription)" }
         if !Library.formats.contains(format) { format = "Short" }
         if !selectionIsValid { selection = defaultSelection }
-        destination = preset.destination
-        updatePlainFolders()
-        number = suggestedNumber
+        draft.destination = preset.destination
+        draft.number = suggestedNumber
     }
 
     // MARK: Selection and resolution
 
-    var fields: ProjectFields {
-        .init(number: number, format: format, campaign: campaign, title: title,
-              extras: library.fieldList.map { ExtraValue(name: $0.name, value: extraValues[$0.id] ?? "", includeInName: $0.includeInName) })
-    }
+    var fields: ProjectFields { draft.fields(format: format, fieldList: library.fieldList) }
     var preset: Preset { library.presets.first { $0.format == format } ?? Preset(format) }
     var formatLabel: String { preset.label }
     func label(for format: String) -> String { library.presets.first { $0.format == format }?.label ?? format }
@@ -311,17 +300,12 @@ enum BadgeColour: String, CaseIterable, Identifiable {
         case nil: false
         }
     }
-    var canCreate: Bool { !busy && storeUsable && created == nil && plan != nil && preview?.isExecutable == true && !destination.isEmpty }
+    var canCreate: Bool { !busy && storeUsable && created == nil && plan != nil && preview?.isExecutable == true && !draft.destination.isEmpty }
 
     // MARK: Numbering
 
     var suggestedNumber: String { Numbering.next(for: format, in: library.projects) }
-    func numberEdited() {
-        if number.isEmpty { number = suggestedNumber }
-        numberIsAutomatic = number == suggestedNumber
-        fieldChanged()
-    }
-    private func applySuggestedNumber() { if numberIsAutomatic || number.isEmpty { number = suggestedNumber; numberIsAutomatic = true } }
+    func numberEdited() { draft.numberEdited(suggested: suggestedNumber); fieldChanged() }
 
     // MARK: Persistence
 
@@ -382,7 +366,7 @@ enum BadgeColour: String, CaseIterable, Identifiable {
         var next = library; try change(&next)
         try runtime.validate(next)
         library = next
-        if numberIsAutomatic && created == nil { number = suggestedNumber }
+        if created == nil { draft.followSuggestion(suggestedNumber) }
         scheduleSave()
     }
     private var pendingSave: Library?
@@ -408,7 +392,7 @@ enum BadgeColour: String, CaseIterable, Identifiable {
             throw error
         }
         library = next
-        if numberIsAutomatic && created == nil { number = suggestedNumber }
+        if created == nil { draft.followSuggestion(suggestedNumber) }
     }
     private func scheduleSave() {
         pendingSave = library
@@ -458,24 +442,20 @@ enum BadgeColour: String, CaseIterable, Identifiable {
                 lib.presets[index].destination = url.path; lib.presets[index].destinationBookmark = bookmark
             }
         }
-        if target == format { destination = url.path }
+        if target == format { draft.destination = url.path }
     }
-    func updatePlainFolders() { plainFolders = ProjectLocation(path: destination).label == "LucidLink" }
     func changeFormat() {
         created = nil; editingIcon = false
-        destination = preset.destination
+        draft.destination = preset.destination
         if let bookmark = preset.destinationBookmark {
             do {
                 var stale = false
                 let url = try URL(resolvingBookmarkData: bookmark, options: [.withoutUI, .withoutMounting], relativeTo: nil, bookmarkDataIsStale: &stale)
                 guard !stale else { throw AppFailure("Choose the destination again to refresh its bookmark.") }
-                destination = url.path
-            } catch { destination = ""; self.error = "Destination is unavailable. Choose it again. \(error.localizedDescription)" }
+                draft.destination = url.path
+            } catch { draft.destination = ""; self.error = "Destination is unavailable. Choose it again. \(error.localizedDescription)" }
         }
-        updatePlainFolders()
-        // Each format starts with its own sequence; a manual override applies to that form only.
-        numberIsAutomatic = true
-        applySuggestedNumber()
+        draft.restartNumbering(suggested: suggestedNumber)
         refresh()
     }
     func changeSelection() { created = nil; refresh() }
@@ -491,7 +471,7 @@ enum BadgeColour: String, CaseIterable, Identifiable {
     func refresh() {
         revision += 1; let version = revision
         refreshTask?.cancel(); scanCancellation.cancel()
-        let workspaceRecord = startingFrom.flatMap { id in library.projects.first { $0.id == id && $0.ideaWorkspace != nil } }
+        let workspaceRecord = draft.startingFrom.flatMap { id in library.projects.first { $0.id == id && $0.ideaWorkspace != nil } }
         guard payload != nil || workspaceRecord != nil else {
             preview = nil; plan = nil
             switch variantState {
@@ -666,13 +646,13 @@ enum BadgeColour: String, CaseIterable, Identifiable {
 
     func create(onFinish: ((Result<ProjectRecord, Error>) -> Void)? = nil) {
         guard canCreate, let plan, let preview else { onFinish?(.failure(AppFailure("Project cannot be created from the current form."))); return }
-        let destination = URL(fileURLWithPath: destination); let name = preview.outerFolderName
+        let destination = URL(fileURLWithPath: draft.destination); let name = preview.outerFolderName
         let icon = preset.icon; let format = format; let payloadID = payload?.id
-        let campaignAtCreation = campaign
+        let campaignAtCreation = draft.campaign
         let fromSheet = newProjectPresented
-        let origin = startingFrom.flatMap { id in library.projects.first { $0.id == id } }
+        let origin = draft.startingFrom.flatMap { id in library.projects.first { $0.id == id } }
         let fields = fields; let runtime = runtime
-        let plain = plainFolders
+        let plain = draft.plainFolders
         created = nil
         run(plain ? "Creating project with plain folders" : "Creating project", cancelNote: "Nothing was created or registered.") { token, progress in
             try runtime.requireWritable(destination)
@@ -717,7 +697,7 @@ enum BadgeColour: String, CaseIterable, Identifiable {
                 self.search = ""
                 self.selectedProject = record.id; self.page = .projects; self.selectProject()
                 // The idea is now this project, so a kept-open sheet must not still claim to start from it.
-                if self.startingFrom == origin?.id { self.startingFrom = nil }
+                if self.draft.startingFrom == origin?.id { self.draft.startingFrom = nil }
                 if !fromSheet || !self.newProjectPresented || record.ideaWorkspace != nil {
                     self.newProjectPresented = false
                     self.nextProject()
@@ -737,8 +717,7 @@ enum BadgeColour: String, CaseIterable, Identifiable {
     }
     /// Clears the form for the next project, moving the number on.
     func nextProject() {
-        created = nil; title = ""; campaign = ""; extraValues = [:]; startingFrom = nil
-        numberIsAutomatic = true; number = suggestedNumber
+        created = nil; draft.clearForNext(suggested: suggestedNumber)
         refresh()
     }
     /// Runs one long operation with visible progress. `failure` always hears about a refusal or a stop, so callers outside the
@@ -1119,7 +1098,7 @@ enum BadgeColour: String, CaseIterable, Identifiable {
     }
     func removeCustomField(_ id: UUID) { attempt { try deleteField(id) } }
     func deleteField(_ id: UUID) throws {
-        try mutate { lib in lib.customFields = lib.fieldList.filter { $0.id != id } }; extraValues[id] = nil; refresh()
+        try mutate { lib in lib.customFields = lib.fieldList.filter { $0.id != id } }; draft.extraValues[id] = nil; refresh()
     }
 
     // MARK: Zoom

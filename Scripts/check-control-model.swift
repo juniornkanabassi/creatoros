@@ -1,4 +1,6 @@
 import Foundation
+import Combine
+import SwiftUI
 import TemplateCore
 
 @main struct ControlModelCheck {
@@ -6,12 +8,44 @@ import TemplateCore
         let model = AppModel()
         defer { model.runtime.removeDisposablePreferences() }
         precondition(model.runtime.isIsolated && model.storeUsable)
-        model.destination = "/Volumes/Fixture/Fixture/Projects"
-        precondition(model.plainFolders)
-        model.library.presets[model.library.presets.firstIndex { $0.format == model.format }!].destination = model.destination
-        model.plainFolders = false
+        // The New Project form is one published value: a field edit through a SwiftUI binding notifies once, keeps the
+        // LucidLink rule, stays out of defaults and the library, and the number rules still follow library changes.
+        do {
+            let original = model.draft
+            let domainBefore = model.defaults.persistentDomain(forName: model.runtime.defaultsSuite) ?? [:]
+            let libraryBefore = try? Data(contentsOf: model.store.file)
+            var notifications = 0
+            let watcher = model.objectWillChange.sink { notifications += 1 }
+            let bindings = ObservedObject(wrappedValue: model).projectedValue
+            bindings.draft.title.wrappedValue = "Bound title"
+            precondition(model.draft.title == "Bound title" && model.fields.title == "Bound title" && notifications == 1)
+            bindings.draft.destination.wrappedValue = "/Volumes/Bound/Bound/Projects"
+            precondition(model.draft.plainFolders && notifications == 2)
+            bindings.draft.extraValues.wrappedValue[UUID()] = "Extra"
+            precondition(model.draft.extraValues.values.contains("Extra") && notifications == 3)
+            watcher.cancel()
+            precondition(NSDictionary(dictionary: model.defaults.persistentDomain(forName: model.runtime.defaultsSuite) ?? [:]).isEqual(to: domainBefore))
+            precondition((try? Data(contentsOf: model.store.file)) == libraryBefore)
+            model.draft.number = "042"; model.numberEdited()
+            try model.mutate { _ in }
+            precondition(model.draft.number == "042" && !model.draft.numberIsAutomatic)
+            model.draft.number = ""; model.numberEdited()
+            model.draft.number = "stale"
+            try model.mutate { _ in }
+            precondition(model.draft.number == model.suggestedNumber && model.draft.numberIsAutomatic)
+            await model.saveTaskForWorkspace()
+            model.format = "Long"
+            precondition(model.defaults.string(forKey: "format") == "Long")
+            model.format = "Short"; model.draft = original; model.changeFormat()
+            precondition(model.defaults.string(forKey: "format") == "Short" && model.draft.title.isEmpty && model.draft.extraValues.isEmpty)
+            print("PASS 1 draft check: one notification per bound edit, LucidLink rule through a binding, nothing persisted, numbering follows the library")
+        }
+        model.draft.destination = "/Volumes/Fixture/Fixture/Projects"
+        precondition(model.draft.plainFolders)
+        model.library.presets[model.library.presets.firstIndex { $0.format == model.format }!].destination = model.draft.destination
+        model.draft.plainFolders = false
         model.changeFormat()
-        precondition(model.plainFolders)
+        precondition(model.draft.plainFolders)
         let destination = model.runtime.root.appendingPathComponent("Projects/Short")
         try FileManager.default.createDirectory(at: destination, withIntermediateDirectories: true)
         model.library.presets[model.library.presets.firstIndex { $0.format == "Short" }!].destination = destination.path
@@ -24,14 +58,14 @@ import TemplateCore
         model.selection = .legacy(id)
         let extra = CustomField(name: "Sponsor")
         model.library.customFields = [extra]
-        model.extraValues = [extra.id: "Cancelled form"]
-        model.plainFolders = true
+        model.draft.extraValues = [extra.id: "Cancelled form"]
+        model.draft.plainFolders = true
         let result = try await model.controlAction("project.create", ["format": "Short", "title": "Clean"])
         precondition(result["name"] as? String == "001 — Short — Clean")
         precondition(FileManager.default.fileExists(atPath: (result["path"] as! String) + "/Icon\r"))
-        precondition(model.extraValues[extra.id] == "Cancelled form" && model.plainFolders)
+        precondition(model.draft.extraValues[extra.id] == "Cancelled form" && model.draft.plainFolders)
         model.format = "Short"; model.changeFormat()
-        precondition(!model.plainFolders)
+        precondition(!model.draft.plainFolders)
         let ref = result["id"] as! String
         let record = model.library.projects.first { $0.id.uuidString == ref }!
         let stage = model.effectiveStage(record)
@@ -44,44 +78,44 @@ import TemplateCore
         precondition(model.search.isEmpty && model.formatFilter == "All formats" && model.excludedStages == ["Editing"])
         print("PASS 9 control model checks: destination and format share Plain folders; CLI clears extras and restores form; open preserves unrelated and saved filters")
         model.newProjectPresented = true
-        model.extraValues = [:]; model.title = "Sheet completion"; model.fieldChanged()
+        model.draft.extraValues = [:]; model.draft.title = "Sheet completion"; model.fieldChanged()
         await model.refreshTask?.value
         let created: ProjectRecord = try await withCheckedThrowingContinuation { done in model.create { done.resume(with: $0) } }
         while model.busy { await Task.yield() }; for task in model.tagTasks.values { _ = await task.value }
         precondition(model.newProjectPresented && model.created?.path == created.path && !model.canCreate)
-        precondition(model.title == "Sheet completion" && model.selectedProject == created.id)
+        precondition(model.draft.title == "Sheet completion" && model.selectedProject == created.id)
         let saved = try Data(contentsOf: model.store.file)
         model.nextProject()
         await model.refreshTask?.value
-        precondition(model.newProjectPresented && model.created == nil && model.title.isEmpty && model.number == "003")
+        precondition(model.newProjectPresented && model.created == nil && model.draft.title.isEmpty && model.draft.number == "003")
         let afterReset = try Data(contentsOf: model.store.file)
         precondition(afterReset == saved)
-        model.newProjectPresented = false; model.title = "Background completion"; model.fieldChanged()
+        model.newProjectPresented = false; model.draft.title = "Background completion"; model.fieldChanged()
         await model.refreshTask?.value
         let _: ProjectRecord = try await withCheckedThrowingContinuation { done in
             model.create { done.resume(with: $0) }
             model.newProjectPresented = true
         }
         while model.busy { await Task.yield() }; for task in model.tagTasks.values { _ = await task.value }
-        precondition(model.created == nil && model.title.isEmpty && model.number == "004")
+        precondition(model.created == nil && model.draft.title.isEmpty && model.draft.number == "004")
         print("PASS 1 sheet completion check: saved project remains visible; Next Project resets only the form; background creation still resets if a sheet opens during its copy")
         var idea = ProjectRecord(planned: "Promoted idea", format: "Short", stage: "Idea", campaign: "Kept")
         idea.notes = "Kept notes"
         try await model.commitDurably { $0.projects.append(idea) }
         model.startPlanned(idea)
         await model.refreshTask?.value
-        precondition(model.startingFrom == idea.id && model.newProjectPresented)
+        precondition(model.draft.startingFrom == idea.id && model.newProjectPresented)
         let promoted: ProjectRecord = try await withCheckedThrowingContinuation { done in model.create { done.resume(with: $0) } }
         while model.busy { await Task.yield() }; for task in model.tagTasks.values { _ = await task.value }
-        precondition(model.newProjectPresented && model.created?.path == promoted.path && model.startingFrom == nil)
+        precondition(model.newProjectPresented && model.created?.path == promoted.path && model.draft.startingFrom == nil)
         precondition(promoted.id == idea.id && !promoted.isPlanned && promoted.notes == "Kept notes" && promoted.campaign == "Kept")
         precondition(model.library.projects.filter { $0.id == idea.id }.count == 1 && model.workspaceCleanup == nil)
         model.nextProject()
-        model.title = "After idea"; model.fieldChanged()
+        model.draft.title = "After idea"; model.fieldChanged()
         await model.refreshTask?.value
         let ordinary: ProjectRecord = try await withCheckedThrowingContinuation { done in model.create { done.resume(with: $0) } }
         while model.busy { await Task.yield() }; for task in model.tagTasks.values { _ = await task.value }
-        precondition(ordinary.id != idea.id && ordinary.campaign == nil && model.startingFrom == nil)
+        precondition(ordinary.id != idea.id && ordinary.campaign == nil && model.draft.startingFrom == nil)
         precondition(model.library.projects.first { $0.id == idea.id }?.path == promoted.path)
         print("PASS 1 idea promotion check: kept-open sheet clears the idea link; identity and metadata kept; Next Project is ordinary creation")
         // A caller meeting an open GUI sheet is refused with form_in_use and nothing changes.
@@ -209,10 +243,10 @@ import TemplateCore
             ("template.import", ["path": "/x", "name": "y", "mode": "full"]), ("field.add", ["name": "y"]), ("field.update", ["field": "x", "name": "y"]),
             ("field.remove", ["field": "x"]), ("stage.set", ["board": "recordings", "stages": ["A", "B"]]), ("format.set-icon", ["format": "Short", "image": "/x"]),
             ("format.set-destination", ["format": "Long", "path": "/x"])]
-        for opener in [{ model.newProjectPresented = true }, { model.importPresented = true }, { model.renamePrompt = target }, { model.startingFrom = UUID() }] as [() -> Void] {
+        for opener in [{ model.newProjectPresented = true }, { model.importPresented = true }, { model.renamePrompt = target }, { model.draft.startingFrom = UUID() }] as [() -> Void] {
             opener()
             for (action, params) in guarded { await expect(action, params, "form_in_use") }
-            model.newProjectPresented = false; model.importPresented = false; model.renamePrompt = nil; model.startingFrom = nil
+            model.newProjectPresented = false; model.importPresented = false; model.renamePrompt = nil; model.draft.startingFrom = nil
         }
         model.newProjectPresented = true
         let dryRefusal = await refusal("set.remove", ["set": "x", "dryRun": true])

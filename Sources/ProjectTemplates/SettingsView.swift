@@ -83,7 +83,7 @@ struct SettingsView: View {
     var formatTab: some View {
         Form {
             Section {
-                Picker("Content Format", selection: $m.format) { ForEach(m.library.presets) { Text($0.label).tag($0.format) } }.onChange(of: m.format) { m.changeFormat() }.disabled(m.startingFrom != nil)
+                Picker("Content Format", selection: $m.format) { ForEach(m.library.presets) { Text($0.label).tag($0.format) } }.onChange(of: m.format) { m.changeFormat() }.disabled(m.draft.startingFrom != nil)
                     .help("The format whose icon, destination and next number are shown below")
                 LabeledContent("Folder icon") {
                     HStack(spacing: Space.md) {
@@ -102,7 +102,7 @@ struct SettingsView: View {
                 }
                 LabeledContent("Destination") {
                     HStack {
-                        Text(m.destination.isEmpty ? "Not chosen" : m.destination).lineLimit(2).truncationMode(.middle).textSelection(.enabled)
+                        Text(m.draft.destination.isEmpty ? "Not chosen" : m.draft.destination).lineLimit(2).truncationMode(.middle).textSelection(.enabled)
                         Button("Choose…") { m.chooseDestination() }.help("Choose where \(m.formatLabel) projects are created")
                     }
                 }
