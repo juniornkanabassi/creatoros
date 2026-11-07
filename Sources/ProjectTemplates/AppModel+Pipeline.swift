@@ -90,7 +90,7 @@ extension AppModel {
     func removeProject(_ id: UUID) {
         if let record = library.projects.first(where: { $0.id == id }), record.ideaWorkspace != nil {
             if record.isPlanned { requestBinIdea(record) }
-            else { fail("This project still links to its old idea folder. Decide what to do with that folder first.", action: ("Review…", { [weak self] in self?.workspaceCleanup = record })) }
+            else { fail("This project still links to its old idea folder. Decide what to do with that folder first.", action: ("Review…", { [weak self] in self?.error = nil; self?.workspaceCleanup = record })) }
             return
         }
         guard let index = library.projects.firstIndex(where: { $0.id == id }) else { return }

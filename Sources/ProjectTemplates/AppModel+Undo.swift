@@ -30,6 +30,7 @@ extension AppModel {
 
     /// Recover each window's rejected actions as one group, so a later retry cannot erase an earlier redo.
     func retryUndo() {
+        pendingUndos.removeAll { $0.manager == nil }
         var groups: [(manager: UndoManager, entries: [PendingUndo])] = []
         for pending in pendingUndos {
             guard let manager = pending.manager else { continue }

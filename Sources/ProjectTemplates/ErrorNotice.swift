@@ -5,7 +5,8 @@ struct ErrorNotice: View {
     @EnvironmentObject var m: AppModel
 
     var body: some View {
-        if let message = m.error, m.storeUsable {
+        // While an undo waits for the writer, the notice stays up with Retry Undo even after the error itself is dismissed.
+        if let message = m.error ?? (m.canRetryUndo ? m.pendingUndoMessage : nil), m.storeUsable {
             HStack(alignment: .top, spacing: Space.sm) {
                 Image(systemName: "exclamationmark.triangle").foregroundStyle(.orange)
                     .accessibilityHidden(true)
@@ -19,9 +20,11 @@ struct ErrorNotice: View {
                         .disabled(m.busy || m.writeLocked)
                         .help("Retry the undo after the current change finishes")
                 }
-                Button { m.error = nil } label: { Image(systemName: "xmark").frame(minWidth: 28, minHeight: 28).contentShape(Rectangle()) }
-                    .buttonStyle(.plain).help("Dismiss this message")
-                    .accessibilityLabel("Dismiss error message")
+                if m.error != nil {
+                    Button { m.error = nil } label: { Image(systemName: "xmark").frame(minWidth: 28, minHeight: 28).contentShape(Rectangle()) }
+                        .buttonStyle(.plain).help("Dismiss this message")
+                        .accessibilityLabel("Dismiss error message")
+                }
             }
             .padding(Space.md)
             .frame(maxWidth: .infinity, alignment: .leading)

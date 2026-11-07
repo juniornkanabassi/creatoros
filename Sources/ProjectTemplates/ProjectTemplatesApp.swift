@@ -339,7 +339,7 @@ struct MainView: View {
     private func workArea<Content: View>(minimumWidth: CGFloat, @ViewBuilder _ page: @escaping () -> Content) -> some View {
         ZoomedInterface(scale: m.uiScale, minimumWidth: minimumWidth) {
             VStack(spacing: 0) {
-                if m.error != nil && m.storeUsable { ErrorNotice().gridProbe("error-notice", area: "work-area", edge: nil) }
+                if (m.error != nil || m.canRetryUndo) && m.storeUsable { ErrorNotice().gridProbe("error-notice", area: "work-area", edge: nil) }
                 if m.busy || !m.status.isEmpty {
                     HStack(spacing: Space.md) {
                         if m.busy { ProgressView(value: m.fraction).frame(width: 160) }

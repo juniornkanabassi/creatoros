@@ -268,6 +268,7 @@ import TemplateCore
     /// A finished status line is read out by VoiceOver and stays in the work area for a few seconds. Progress lines end in "…".
     private var settledStatus = ""
     private func settleStatus() {
+        if status.isEmpty { settledStatus = "" }
         guard !busy, !status.isEmpty, !status.hasSuffix("…"), status != settledStatus else { return }
         let message = status
         settledStatus = message
