@@ -61,10 +61,10 @@ final class StubWorker: URLProtocol {
             switch path {
             case "/v1/devices/enrol": return (200, #"{"deviceId":"mac-1","token":"token-abc"}"#)
             case "/v1/status": return (200, #"{"serverTime":"\#(now)","platforms":[{"platform":"youtube","state":"\#(ytState)","account":"Fixture Channel","lastGoodReadAt":"\#(now)","lastAttemptAt":"\#(now)","lastError":null,"readIntervalMinutes":15,"gaps":[]}],"deletions":[{"platform":"youtube","at":"\#(deletionAt)"}]}"#)
-            case "/v1/summary", "/v1/refresh": return (200, #"{"serverTime":"\#(now)","youtube":{"state":"\#(ytState)","channelTitle":"Fixture Channel","subscriberCount":4810,"subscriberCountHidden":false,"countsReadAt":"\#(now)","window":{"startDate":"\#(ymd(30))","endDate":"\#(ymd(3))","partial":false,"views":1234,"estimatedMinutesWatched":5678,"subscribersGained":90,"subscribersLost":4,"readAt":"\#(now)"},"newestVideo":null}}"#)
+            case "/v1/summary", "/v1/refresh": return (200, #"{"serverTime":"\#(now)","youtube":{"state":"\#(ytState)","channelTitle":"Fixture Channel","subscriberCount":4810,"subscriberCountHidden":false,"countsReadAt":"\#(now)","window":{"startDate":"\#(ymd(30))","endDate":"\#(ymd(3))","partial":false,"views":1234,"estimatedMinutesWatched":5678,"subscribersGained":90,"subscribersLost":4,"readAt":"\#(now)"},"newestVideo":null,"connectionId":"conn-1"}}"#)
             case "/v1/history":
                 let rows = (3..<28).map { #"{"date":"\#(ymd($0))","views":\#($0 * 10),"estimatedMinutesWatched":\#($0 * 60),"subscribersGained":\#($0),"subscribersLost":1}"# }
-                return (200, #"{"platform":"youtube","readAt":"\#(now)","rows":[\#(rows.joined(separator: ","))],"lastReportedDate":"\#(ymd(3))"}"#)
+                return (200, #"{"platform":"youtube","readAt":"\#(now)","rows":[\#(rows.joined(separator: ","))],"lastReportedDate":"\#(ymd(3))","connectionId":"conn-1"}"#)
             case "/v1/devices": return (200, #"{"devices":[{"id":"mac-1","name":"This Mac","kind":"mac","createdAt":"\#(now)","lastSeenAt":null,"current":true},{"id":"phone-1","name":"iPhone","kind":"iphone","createdAt":"\#(now)","lastSeenAt":null,"current":false}]}"#)
             case "/v1/devices/pair": return (200, #"{"code":"PAIR-1234","expiresAt":"\#(now)"}"#)
             case "/v1/youtube/connect": return (200, #"{"authUrl":"https://accounts.google.com/o/oauth2/v2/auth?state=x"}"#)
@@ -111,7 +111,7 @@ final class StubWorker: URLProtocol {
             guard request.url!.path == "/v1/history" else { return plain(request) }
             let days = Int(URLComponents(url: request.url!, resolvingAgainstBaseURL: false)!.queryItems!.first { $0.name == "days" }!.value!)!
             let rows = (0..<(days / 7)).map { #"{"date":"\#(ymd($0 + 3))","views":\#(days),"estimatedMinutesWatched":1,"subscribersGained":1,"subscribersLost":0}"# }
-            return (200, #"{"platform":"youtube","readAt":"\#(now)","rows":[\#(rows.joined(separator: ","))],"lastReportedDate":"\#(ymd(3))"}"#)
+            return (200, #"{"platform":"youtube","readAt":"\#(now)","rows":[\#(rows.joined(separator: ","))],"lastReportedDate":"\#(ymd(3))","connectionId":"conn-1"}"#)
         }
         StubWorker.delay = 0.2
         async let week = model.controlAction("socials.history", ["days": 7])
@@ -135,6 +135,18 @@ final class StubWorker: URLProtocol {
         StubWorker.handler = connectedHandler
         ytState = "connected"; deletionAt = "2000-01-01T00:00:00Z"
         try await s.sync()
+
+        // A reconnect lands between the history and summary reads: A's rows arrive with B's summary.
+        let beforeRace = StubWorker.handler
+        StubWorker.handler = { request in
+            let (status, body) = beforeRace(request)
+            return request.url!.path == "/v1/summary" ? (status, body.replacingOccurrences(of: "conn-1", with: "conn-2")) : (status, body)
+        }
+        try await s.sync()
+        pass(s.youtube?.connectionId == "conn-2" && s.snapshot.history.isEmpty, "a history from the previous connection is not attached to the new one")
+        StubWorker.handler = beforeRace
+        try await s.sync()
+        pass(s.snapshot.history[s.range]?.connectionId == "conn-1", "history from the summary's own connection is kept")
 
         // Problem states.
         ytState = "needsReconnect"

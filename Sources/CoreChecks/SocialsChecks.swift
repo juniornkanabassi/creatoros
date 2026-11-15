@@ -15,11 +15,12 @@ func socialsChecks(base: URL) throws {
      "subscriberCountHidden":false,"countsReadAt":"2026-11-15T15:45:00Z",
      "window":{"startDate":"2026-10-16","endDate":"2026-11-12","partial":false,"views":1234,"estimatedMinutesWatched":5678,
                "subscribersGained":90,"subscribersLost":4,"readAt":"2026-11-15T06:15:00.250Z"},
-     "newestVideo":{"id":"abc","title":"A video","publishedAt":"2026-11-10T18:00:00Z","viewCount":321,"url":"https://www.youtube.com/watch?v=abc"}}}
+     "newestVideo":{"id":"abc","title":"A video","publishedAt":"2026-11-10T18:00:00Z","viewCount":321,"url":"https://www.youtube.com/watch?v=abc"},
+     "connectionId":"conn-a"}}
     """.utf8)
     let history = Data("""
     {"platform":"youtube","readAt":null,"rows":[{"date":"2026-11-01","views":1,"estimatedMinutesWatched":2,"subscribersGained":3,"subscribersLost":0}],
-     "lastReportedDate":"2026-11-12"}
+     "lastReportedDate":"2026-11-12","connectionId":"conn-a"}
     """.utf8)
     let s = try SocialsJSON.decoder.decode(SocialsStatus.self, from: status)
     let yt = s.platforms[0]
@@ -83,6 +84,7 @@ func socialsChecks(base: URL) throws {
         .replacingOccurrences(of: "2026-11-01T09:00:00Z", with: readAt.addingTimeInterval(60).formatted(.iso8601)).utf8))
     let otherChannel = try SocialsJSON.decoder.decode(SocialsSummary.self, from: Data(String(decoding: summary, as: UTF8.self)
         .replacingOccurrences(of: "Junior Nkana Bassi", with: "Another Channel")
+        .replacingOccurrences(of: "conn-a", with: "conn-b")
         .replacingOccurrences(of: "2026-11-15T15:45:00Z", with: readAt.addingTimeInterval(3600).formatted(.iso8601)).utf8))
     var reconnected = other7
     reconnected.merge(status: laterStatus, summary: otherChannel, history: nil, contact: now)
@@ -94,6 +96,22 @@ func socialsChecks(base: URL) throws {
     var same = other7
     same.merge(status: s, summary: sum, history: (28, h), contact: now)
     try check(same.history.keys.sorted() == [7, 28], "Socials merge keeps other cached ranges for the same channel")
+    try check(sum.youtube?.connectionId == "conn-a" && h.connectionId == "conn-a", "Socials decodes connectionId on summary and history")
+    try check(otherChannel.youtube?.connectionId == "conn-b" && SocialsJSON.decodedLegacy().youtube?.connectionId == nil, "Socials still decodes payloads without connectionId")
+    // A history read in parallel with a reconnect belongs to the old connection: it must not attach to the new one.
+    var raced = SocialsSnapshot()
+    raced.merge(status: s, summary: otherChannel, history: (28, h), contact: now)
+    try check(raced.summary?.youtube?.connectionId == "conn-b" && raced.history.isEmpty, "Socials drops a history from connection A that arrives with connection B's summary")
+    var sameTitleNewID = other7
+    let reconnectSameChannel = try SocialsJSON.decoder.decode(SocialsSummary.self, from: Data(String(decoding: summary, as: UTF8.self)
+        .replacingOccurrences(of: "conn-a", with: "conn-c").utf8))
+    sameTitleNewID.merge(status: s, summary: reconnectSameChannel, history: nil, contact: now)
+    try check(sameTitleNewID.history.isEmpty, "Socials treats a new connectionId as a new connection even with the same channel title")
+    var legacy = SocialsSnapshot(summary: try SocialsJSON.decodedLegacy())
+    let legacyHistory = try SocialsJSON.decoder.decode(SocialsHistory.self, from: Data(#"{"platform":"youtube","readAt":null,"rows":[],"lastReportedDate":null}"#.utf8))
+    legacy.history[7] = legacyHistory
+    legacy.merge(status: nil, summary: try SocialsJSON.decodedLegacy(), history: (28, legacyHistory), contact: now)
+    try check(legacy.history.keys.sorted() == [7, 28], "Socials without ids falls back to the channel title and keeps history for the same channel")
     var disconnected = other7
     disconnected.merge(status: s, summary: try SocialsSummary.decodedNull(), history: nil, contact: now)
     try check(disconnected.history.isEmpty && disconnected.summary?.youtube == nil, "Socials merge drops cached history when YouTube disconnects")
@@ -123,6 +141,13 @@ func socialsChecks(base: URL) throws {
 /// Deletions arrive only from the Worker, so they are built the way the app receives them.
 private func deletions(_ platform: String, _ at: Date) throws -> [SocialsStatus.Deletion] {
     try SocialsJSON.decoder.decode([SocialsStatus.Deletion].self, from: Data("[{\"platform\":\"\(platform)\",\"at\":\"\(at.formatted(.iso8601))\"}]".utf8))
+}
+
+private extension SocialsJSON {
+    /// A summary as a Worker from before connectionId wrote it.
+    static func decodedLegacy() throws -> SocialsSummary {
+        try decoder.decode(SocialsSummary.self, from: Data(#"{"serverTime":"2026-11-15T16:00:00Z","youtube":{"state":"connected","channelTitle":"Old","subscriberCount":1,"subscriberCountHidden":false,"countsReadAt":"2026-11-15T16:00:00Z","window":null,"newestVideo":null}}"#.utf8))
+    }
 }
 
 private extension SocialsSummary {

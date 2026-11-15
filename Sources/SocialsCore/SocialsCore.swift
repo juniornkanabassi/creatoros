@@ -24,12 +24,14 @@ public struct YouTubeSummary: Codable, Equatable, Sendable {
     public var countsReadAt: Date?
     public var window: AnalyticsWindow?
     public var newestVideo: Video?
+    /// Changes on every (re)connect. Optional so payloads from before it existed still decode.
+    public var connectionId: String?
 
     public init(state: PlatformState, channelTitle: String, subscriberCount: Int?, subscriberCountHidden: Bool = false,
-                countsReadAt: Date?, window: AnalyticsWindow?, newestVideo: Video?) {
+                countsReadAt: Date?, window: AnalyticsWindow?, newestVideo: Video?, connectionId: String? = nil) {
         self.state = state; self.channelTitle = channelTitle; self.subscriberCount = subscriberCount
         self.subscriberCountHidden = subscriberCountHidden; self.countsReadAt = countsReadAt
-        self.window = window; self.newestVideo = newestVideo
+        self.window = window; self.newestVideo = newestVideo; self.connectionId = connectionId
     }
 }
 
@@ -97,6 +99,8 @@ public struct SocialsHistory: Codable, Equatable, Sendable {
     public var readAt: Date?
     public var rows: [Row]
     public var lastReportedDate: String?
+    /// The connection these rows belong to; nil when nothing is connected or the Worker predates it.
+    public var connectionId: String?
 }
 
 public struct SocialsDevice: Codable, Equatable, Sendable, Identifiable {
@@ -273,19 +277,32 @@ public struct SocialsSnapshot: Codable, Equatable, Sendable {
         if summary != nil, summary?.youtube == nil { history = [:] }
     }
 
-    /// Brings one read from the Worker into this copy. Deletions are judged against the copy held before the read (a fresh
-    /// summary always looks newer than them) and again against the new figures' own read times. A change of connection
-    /// (YouTube disconnected, or a different channel) drops every cached history range, so one channel's history never
-    /// shows under another's. Pass nil for anything not read.
+    /// Brings one read from the Worker into this copy. Public: the Mac app and the iPhone companion both call it.
+    ///
+    /// - Deletions are judged against the copy held before the read (a fresh summary always looks newer than them) and
+    ///   again against the new figures' own read times.
+    /// - A change of connection drops every cached history range: YouTube disconnected, or a different `connectionId`
+    ///   (falling back to the channel title only when either side has no id, for payloads from before ids existed).
+    /// - A history is kept only when its `connectionId` equals the current summary's. A history read in parallel with a
+    ///   reconnect can belong to the old connection; it is dropped without failing the read.
+    /// Pass nil for anything not read.
     public mutating func merge(status: SocialsStatus?, summary: SocialsSummary?, history new: (days: Int, history: SocialsHistory)?, contact: Date) {
         if let status { apply(deletions: status.deletions) }
-        let before = self.summary?.youtube?.channelTitle ?? self.status?.platforms.first { $0.platform == "youtube" }?.account
+        let old = self.summary?.youtube
+        let oldTitle = old?.channelTitle ?? self.status?.platforms.first { $0.platform == "youtube" }?.account
         let state = status?.platforms.first { $0.platform == "youtube" }?.state
-        let after = summary.map { $0.youtube?.channelTitle } ?? before
-        if state == .disconnected || (summary != nil && summary?.youtube == nil) || after != before { history = [:] }
+        if state == .disconnected { history = [:] }
+        if let summary {
+            if let fresh = summary.youtube {
+                let changed = if let a = old?.connectionId, let b = fresh.connectionId { a != b } else { oldTitle != fresh.channelTitle }
+                if changed { history = [:] }
+            } else {
+                history = [:]
+            }
+            self.summary = summary
+        }
         if let status { self.status = status }
-        if let summary { self.summary = summary }
-        if let new { history[new.days] = new.history }
+        if let new, new.history.connectionId == self.summary?.youtube?.connectionId { history[new.days] = new.history }
         // Figures in the new read that were themselves read before a deletion go too.
         if let status { apply(deletions: status.deletions) }
         // No YouTube, no history: rows read alongside a disconnected summary are not kept either.

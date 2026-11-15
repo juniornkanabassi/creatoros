@@ -747,12 +747,12 @@ try:
             now = iso()
             summary = {'serverTime': now, 'youtube': {'state': 'connected', 'channelTitle': 'Fixture Channel', 'subscriberCount': 4810, 'subscriberCountHidden': False, 'countsReadAt': now,
                        'window': {'startDate': ymd(30), 'endDate': ymd(3), 'partial': False, 'views': 1234, 'estimatedMinutesWatched': 5678, 'subscribersGained': 90, 'subscribersLost': 4, 'readAt': now},
-                       'newestVideo': {'id': 'v1', 'title': 'Fixture video', 'publishedAt': now, 'viewCount': 12, 'url': 'https://www.youtube.com/watch?v=v1'}}}
+                       'newestVideo': {'id': 'v1', 'title': 'Fixture video', 'publishedAt': now, 'viewCount': 12, 'url': 'https://www.youtube.com/watch?v=v1'}, 'connectionId': 'conn-1'}}
             routes = {
                 '/v1/devices/enrol': {'deviceId': 'mac-1', 'token': 'fake-token'},
                 '/v1/status': {'serverTime': now, 'platforms': [{'platform': 'youtube', 'state': 'connected', 'account': 'Fixture Channel', 'lastGoodReadAt': now, 'lastAttemptAt': now, 'lastError': None, 'readIntervalMinutes': 15, 'gaps': []}], 'deletions': []},
                 '/v1/summary': summary, '/v1/refresh': summary,
-                '/v1/history': {'platform': 'youtube', 'readAt': now, 'rows': [{'date': ymd(b), 'views': b, 'estimatedMinutesWatched': b, 'subscribersGained': 1, 'subscribersLost': 0} for b in range(3, 7)], 'lastReportedDate': ymd(3)},
+                '/v1/history': {'platform': 'youtube', 'readAt': now, 'rows': [{'date': ymd(b), 'views': b, 'estimatedMinutesWatched': b, 'subscribersGained': 1, 'subscribersLost': 0} for b in range(3, 7)], 'lastReportedDate': ymd(3), 'connectionId': 'conn-1'},
                 '/v1/devices': {'devices': [{'id': 'mac-1', 'name': 'Mac', 'kind': 'mac', 'createdAt': now, 'lastSeenAt': now, 'current': True}, {'id': 'phone-1', 'name': 'iPhone', 'kind': 'iphone', 'createdAt': now, 'lastSeenAt': None, 'current': False}]},
                 '/v1/devices/pair': {'code': 'PAIR-1', 'expiresAt': iso(1)},
                 '/v1/youtube/connect': {'authUrl': 'https://accounts.google.com/o/oauth2/v2/auth?state=fake'},
