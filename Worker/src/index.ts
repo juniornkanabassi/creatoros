@@ -64,7 +64,7 @@ async function revoke({ env, url }: Ctx): Promise<Response> {
 
 interface Row { read_at: string; payload: string }
 const latest = async (env: Env, kind: string) => {
-  const r = await one<Row>(env, "SELECT read_at, payload FROM readings WHERE platform='youtube' AND kind=? AND ok=1 ORDER BY read_at DESC LIMIT 1", kind);
+  const r = await one<Row>(env, "SELECT read_at, payload FROM readings WHERE platform='youtube' AND kind=? AND ok=1 AND connection_id=(SELECT connection_id FROM accounts WHERE platform='youtube') ORDER BY read_at DESC LIMIT 1", kind);
   return r && { readAt: r.read_at, ...JSON.parse(r.payload) };
 };
 
@@ -125,7 +125,7 @@ async function history({ env, url }: Ctx): Promise<Response> {
 async function connect({ env, request, device }: Ctx): Promise<Response> {
   const state = randomToken();
   const verifier = randomToken();
-  await run(env, "INSERT INTO oauth_states (state, device_id, verifier, expires_at) VALUES (?, ?, ?, ?)", state, device.id, verifier, at(10 * 60_000));
+  await run(env, "INSERT INTO oauth_states (state, device_id, verifier, expires_at, platform) VALUES (?, ?, ?, ?, 'youtube')", state, device.id, verifier, at(10 * 60_000));
   const authUrl = "https://accounts.google.com/o/oauth2/v2/auth?" + new URLSearchParams({
     client_id: env.GOOGLE_CLIENT_ID,
     redirect_uri: `${new URL(request.url).origin}/v1/youtube/callback`,
@@ -143,8 +143,8 @@ async function connect({ env, request, device }: Ctx): Promise<Response> {
 async function callback({ env, request, url, exec }: Ctx): Promise<Response> {
   const fail = (msg: string, status = 400) => page("YouTube not connected", `<h1>YouTube was not connected</h1><p>${msg}</p>`, status);
   const state = url.searchParams.get("state");
-  // Single use: the state row is gone the moment it is looked up.
-  const row = state && (await one<{ device_id: string; verifier: string }>(env, "DELETE FROM oauth_states WHERE state=? AND expires_at>? RETURNING device_id, verifier", state, at()));
+  // Single use: claiming marks the row used. It stays until the account is written, so a delete in between (which clears states) stops the write.
+  const row = state && (await one<{ device_id: string; verifier: string }>(env, "UPDATE oauth_states SET used_at=?1 WHERE state=?2 AND used_at IS NULL AND expires_at>?1 RETURNING device_id, verifier", at(), state));
   if (!row || !(await one(env, "SELECT 1 FROM devices WHERE id=? AND revoked_at IS NULL", row.device_id))) {
     return fail("This sign-in link has expired or was already used. Start again from the app.");
   }
@@ -165,15 +165,19 @@ async function callback({ env, request, url, exec }: Ctx): Promise<Response> {
   const t: { access_token?: string; refresh_token?: string; expires_in?: number } = r.ok ? await r.json() : {};
   if (!t.access_token || !t.refresh_token) return fail("Google did not return the access the app needs. Start again from the app.", 502);
 
-  // A fresh start: readings from a previous (possibly different) channel are dropped, and the first read repopulates them.
-  await env.DB.batch([
-    env.DB.prepare("DELETE FROM readings WHERE platform='youtube'"),
-    env.DB.prepare(`INSERT INTO accounts (platform, refresh_token_enc, access_token_enc, access_expires_at, state, connected_at)
-      VALUES ('youtube', ?1, ?2, ?3, 'connected', ?4)
+  // A fresh start with a new generation id: readings from a previous (possibly different) channel are dropped and any
+  // read still in flight for the old generation can no longer write. All of it is conditional on the state row
+  // surviving, so a delete-all that ran while Google was answering wins.
+  const [, written] = await env.DB.batch([
+    env.DB.prepare("DELETE FROM readings WHERE platform='youtube' AND EXISTS (SELECT 1 FROM oauth_states WHERE state=?)").bind(state),
+    env.DB.prepare(`INSERT INTO accounts (platform, refresh_token_enc, access_token_enc, access_expires_at, state, connected_at, connection_id)
+      SELECT 'youtube', ?1, ?2, ?3, 'connected', ?4, ?5 WHERE EXISTS (SELECT 1 FROM oauth_states WHERE state=?6)
       ON CONFLICT(platform) DO UPDATE SET refresh_token_enc=?1, access_token_enc=?2, access_expires_at=?3, state='connected',
-        connected_at=?4, account_title=NULL, first_failure_at=NULL, last_good_read_at=NULL, last_attempt_at=NULL, last_error=NULL`)
-      .bind(await seal(env, t.refresh_token), await seal(env, t.access_token), at((t.expires_in ?? 3600) * 1000), at()),
+        connected_at=?4, connection_id=?5, account_title=NULL, account_title_at=NULL, first_failure_at=NULL, last_good_read_at=NULL, last_attempt_at=NULL, last_error=NULL`)
+      .bind(await seal(env, t.refresh_token), await seal(env, t.access_token), at((t.expires_in ?? 3600) * 1000), at(), crypto.randomUUID(), state),
+    env.DB.prepare("DELETE FROM oauth_states WHERE state=?").bind(state),
   ]);
+  if (!written.meta.changes) return fail("The data was deleted while you were signing in. Start again from the app.", 409);
   exec.waitUntil(readYouTube(env));
   return page("YouTube connected", "<h1>YouTube connected.</h1><p>You can close this tab.</p>");
 }
@@ -240,6 +244,8 @@ async function cron(env: Env) {
     env.DB.prepare("DELETE FROM oauth_states WHERE expires_at<?").bind(at()),
     env.DB.prepare("DELETE FROM enrol_codes WHERE expires_at<?").bind(ago(DAY)),
   ]);
+  // Channel titles are non-statistics: cleared 30 days after they were last read, even if the token still renews.
+  await run(env, "UPDATE accounts SET account_title=NULL, account_title_at=NULL WHERE account_title_at<?", ago(30 * DAY));
   const stale = await one(env, "SELECT 1 FROM accounts WHERE platform='youtube' AND first_failure_at<?", ago(30 * DAY));
   if (stale) await wipe(env, "youtube", false);
   await readYouTube(env);

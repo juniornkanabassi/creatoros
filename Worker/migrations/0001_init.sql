@@ -20,7 +20,9 @@ CREATE TABLE oauth_states (
   state TEXT PRIMARY KEY,
   device_id TEXT NOT NULL,
   verifier TEXT NOT NULL,
-  expires_at TEXT NOT NULL
+  expires_at TEXT NOT NULL,
+  platform TEXT NOT NULL,
+  used_at TEXT
 );
 
 CREATE TABLE accounts (
@@ -30,6 +32,9 @@ CREATE TABLE accounts (
   access_expires_at TEXT,
   state TEXT NOT NULL CHECK (state IN ('connected', 'needsReconnect')),
   account_title TEXT,
+  account_title_at TEXT,
+  -- Generation id, new at every connect. Reads write only while their generation is still the stored one.
+  connection_id TEXT NOT NULL,
   connected_at TEXT NOT NULL,
   first_failure_at TEXT,
   last_good_read_at TEXT,
@@ -43,7 +48,8 @@ CREATE TABLE readings (
   kind TEXT NOT NULL CHECK (kind IN ('counts', 'analytics')),
   read_at TEXT NOT NULL,
   ok INTEGER NOT NULL,
-  payload TEXT NOT NULL
+  payload TEXT NOT NULL,
+  connection_id TEXT NOT NULL
 );
 CREATE INDEX readings_lookup ON readings (platform, kind, ok, read_at);
 

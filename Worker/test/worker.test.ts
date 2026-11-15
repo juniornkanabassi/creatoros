@@ -10,7 +10,7 @@ const SECRETS = ["RT1", "AT1", "AT2", "test-client-secret"];
 
 interface Call { url: URL; body: URLSearchParams; auth: string | null }
 let calls: Call[];
-let google: { refresh: "ok" | "invalid_grant"; channels: number; dailyRows: number };
+let google: { refresh: "ok" | "invalid_grant"; channels: number; dailyRows: number; title: string; onExchange?: () => Promise<void>; onChannels?: () => Promise<void> };
 
 const ymd = (d: Date) => d.toISOString().slice(0, 10);
 const LAST_DAY = "2026-11-12";
@@ -19,20 +19,21 @@ const dailyRows = (n: number) =>
 const HEADERS = (dim: boolean) => [...(dim ? [{ name: "day" }] : []), ...["views", "estimatedMinutesWatched", "subscribersGained", "subscribersLost"].map((name) => ({ name }))];
 const reply = (data: unknown, status = 200) => new Response(JSON.stringify(data), { status });
 
-function fakeGoogle(input: string | URL | Request, init?: RequestInit) {
+async function fakeGoogle(input: string | URL | Request, init?: RequestInit) {
   const url = new URL(typeof input === "string" ? input : input instanceof URL ? input.href : input.url);
   const headers = new Headers(init?.headers);
   calls.push({ url, body: new URLSearchParams(init?.body as URLSearchParams | undefined), auth: headers.get("authorization") });
   const grant = calls.at(-1)!.body.get("grant_type");
   switch (url.origin + url.pathname) {
     case "https://oauth2.googleapis.com/token":
+      if (grant === "authorization_code") await google.onExchange?.();
       if (grant === "authorization_code") return reply({ access_token: "AT1", refresh_token: "RT1", expires_in: 3600 });
       return google.refresh === "ok" ? reply({ access_token: "AT2", expires_in: 3600 }) : reply({ error: "invalid_grant", error_description: "Token revoked" }, 400);
     case "https://oauth2.googleapis.com/revoke":
       return reply({});
     case "https://www.googleapis.com/youtube/v3/channels":
       if (google.channels !== 200) return reply({ error: { message: "nope" } }, google.channels);
-      return reply({ items: [{ snippet: { title: "Junior Nkana Bassi" }, statistics: { subscriberCount: "4810", hiddenSubscriberCount: false }, contentDetails: { relatedPlaylists: { uploads: "UU1" } } }] });
+      return reply(await channelsBody());
     case "https://www.googleapis.com/youtube/v3/playlistItems":
       return reply({ items: [{ contentDetails: { videoId: "vid1" } }] });
     case "https://www.googleapis.com/youtube/v3/videos":
@@ -44,6 +45,15 @@ function fakeGoogle(input: string | URL | Request, init?: RequestInit) {
         : reply({ columnHeaders: HEADERS(false), rows: [[1234, 5678, 90, 4]] });
   }
   return reply({}, 404);
+}
+
+// The title is fixed when the request arrives, so a hook that changes it models a read still holding the old channel's answer.
+async function channelsBody() {
+  const title = google.title;
+  const hook = google.onChannels;
+  google.onChannels = undefined;
+  await hook?.();
+  return { items: [{ snippet: { title }, statistics: { subscriberCount: "4810", hiddenSubscriberCount: false }, contentDetails: { relatedPlaylists: { uploads: "UU1" } } }] };
 }
 
 // ---- Helpers ----
@@ -92,7 +102,7 @@ beforeAll(() => applyD1Migrations(e.DB, e.TEST_MIGRATIONS));
 beforeEach(async () => {
   await e.DB.batch(["devices", "enrol_codes", "oauth_states", "accounts", "readings", "deletions", "meta"].map((t) => e.DB.prepare(`DELETE FROM ${t}`)));
   calls = [];
-  google = { refresh: "ok", channels: 200, dailyRows: 30 };
+  google = { refresh: "ok", channels: 200, dailyRows: 30, title: "Junior Nkana Bassi" };
   vi.stubGlobal("fetch", vi.fn(fakeGoogle));
 });
 afterEach(() => vi.unstubAllGlobals());
@@ -300,7 +310,7 @@ it("delete-all wipes every platform but keeps devices enrolled", async () => {
 it("the cron trims old readings and purges YouTube data 30 days after the first failure", async () => {
   const { token } = await connected();
   const old = new Date(Date.now() - 101 * 86_400_000).toISOString();
-  await e.DB.prepare("INSERT INTO readings (platform, kind, read_at, ok, payload) VALUES ('youtube', 'counts', ?, 1, '{}')").bind(old).run();
+  await e.DB.prepare("INSERT INTO readings (platform, kind, read_at, ok, payload, connection_id) VALUES ('youtube', 'counts', ?, 1, '{}', 'x')").bind(old).run();
 
   const run = async () => {
     const ctx = createExecutionContext();
@@ -316,6 +326,68 @@ it("the cron trims old readings and purges YouTube data 30 days after the first 
   expect((await get("/v1/summary", token)).youtube).toBeNull();
   expect((await get("/v1/status", token)).deletions).toHaveLength(1);
   expect(calls.some((c) => c.url.pathname === "/revoke")).toBe(false); // the token was already dead
+});
+
+// ---- Generations and title age ----
+
+const count = async (table: string) => (await e.DB.prepare(`SELECT COUNT(*) AS n FROM ${table}`).first<{ n: number }>())!.n;
+
+it("a read that finishes after disconnect cannot bring the data back", async () => {
+  const { token } = await connected();
+  await e.DB.prepare("DELETE FROM meta").run();
+  google.onChannels = async () => void (await post("/v1/youtube/disconnect", token));
+  expect((await post("/v1/refresh", token)).status).toBe(200);
+  expect(await count("readings")).toBe(0);
+  expect(await count("accounts")).toBe(0);
+  expect((await get("/v1/summary", token)).youtube).toBeNull();
+});
+
+it("delete-all stops a consent already under way from creating the account", async () => {
+  const { token } = await enrolDevice();
+  const c = await connect(token);
+  google.onExchange = async () => void (await post("/v1/delete-all", token));
+  const res = await c.callback();
+  expect(res.status).toBe(409);
+  expect(await count("accounts")).toBe(0);
+  expect(await count("oauth_states")).toBe(0);
+  expect((await get("/v1/summary", token)).youtube).toBeNull();
+});
+
+it("a read for the previous channel cannot overwrite a newly connected one", async () => {
+  const { token } = await connected();
+  await e.DB.prepare("DELETE FROM meta").run();
+  google.onChannels = async () => {
+    google.title = "New channel";
+    const again = await connect(token);
+    expect((await again.callback()).status).toBe(200); // its own first read runs here
+  };
+  expect((await post("/v1/refresh", token)).status).toBe(200);
+
+  const s = (await get("/v1/summary", token)).youtube;
+  expect(s.channelTitle).toBe("New channel");
+  const ids = (await e.DB.prepare("SELECT DISTINCT connection_id FROM readings").all()).results;
+  const acc = await e.DB.prepare("SELECT connection_id FROM accounts").first<{ connection_id: string }>();
+  expect(ids).toEqual([{ connection_id: acc!.connection_id }]);
+});
+
+it("summary (and history, which shares the lookup) serve only the current generation's readings", async () => {
+  const { token } = await connected();
+  await e.DB.prepare("INSERT INTO readings (platform, kind, read_at, ok, payload, connection_id) VALUES ('youtube', 'counts', ?, 1, ?, 'old')")
+    .bind(new Date(Date.now() + 1000).toISOString(), JSON.stringify({ subscriberCount: 1, hidden: false, newestVideo: null })).run();
+  expect((await get("/v1/summary", token)).youtube.subscriberCount).toBe(4810);
+});
+
+it("the cron clears a channel title 30 days after it was read, even while the token works", async () => {
+  const { token } = await connected();
+  expect((await get("/v1/status", token)).platforms[0].account).toBe("Junior Nkana Bassi");
+  await e.DB.prepare("UPDATE accounts SET account_title_at=?").bind(new Date(Date.now() - 31 * 86_400_000).toISOString()).run();
+  google.channels = 403; // renewal works, channel reads keep failing
+  const ctx = createExecutionContext();
+  await worker.scheduled(createScheduledController(), e, ctx);
+  await waitOnExecutionContext(ctx);
+
+  expect((await get("/v1/summary", token)).youtube.channelTitle).toBe("");
+  expect((await get("/v1/status", token)).platforms[0].account).toBeNull();
 });
 
 it("serves a public privacy policy", async () => {

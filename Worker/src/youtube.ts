@@ -7,6 +7,7 @@ const ANALYTICS_API = "https://youtubeanalytics.googleapis.com/v2/reports";
 const METRICS = "views,estimatedMinutesWatched,subscribersGained,subscribersLost";
 
 export interface Account {
+  connection_id: string;
   refresh_token_enc: string;
   access_token_enc: string | null;
   access_expires_at: string | null;
@@ -17,6 +18,9 @@ export interface Account {
 // Failure messages are stored and served, so they carry a status or a fixed word, never a body or header.
 class ReadError extends Error {}
 class Reconnect extends Error {}
+
+// A write applies only while this connection generation is still the stored one.
+const MINE = "platform='youtube' AND connection_id=?";
 
 type Json = any; // Google responses are read field by field below.
 
@@ -52,17 +56,17 @@ async function accessToken(env: Env, acc: Account) {
     throw e?.error === "invalid_grant" ? new Reconnect() : new ReadError(`http ${r.status}`);
   }
   const j: Json = await r.json();
-  await env.DB.prepare("UPDATE accounts SET access_token_enc=?, access_expires_at=? WHERE platform='youtube'")
-    .bind(await seal(env, j.access_token), at(j.expires_in * 1000))
+  await env.DB.prepare(`UPDATE accounts SET access_token_enc=?, access_expires_at=? WHERE ${MINE}`)
+    .bind(await seal(env, j.access_token), at(j.expires_in * 1000), acc.connection_id)
     .run();
   return j.access_token as string;
 }
 
-async function fetchCounts(env: Env, token: string) {
+async function fetchCounts(env: Env, token: string, cid: string) {
   const ch = (await api(`${DATA_API}/channels?part=snippet,statistics,contentDetails&mine=true`, token)).items?.[0];
   if (!ch) throw new ReadError("no channel");
   const hidden = ch.statistics?.hiddenSubscriberCount === true;
-  await env.DB.prepare("UPDATE accounts SET account_title=? WHERE platform='youtube'").bind(ch.snippet?.title ?? null).run();
+  await env.DB.prepare(`UPDATE accounts SET account_title=?, account_title_at=? WHERE ${MINE}`).bind(ch.snippet?.title ?? null, at(), cid).run();
 
   let newestVideo = null;
   const uploads = ch.contentDetails?.relatedPlaylists?.uploads;
@@ -99,14 +103,14 @@ async function fetchAnalytics(token: string) {
   return { rows, window: window ?? null };
 }
 
-async function analyticsDue(env: Env) {
-  const last = await env.DB.prepare("SELECT read_at FROM readings WHERE platform='youtube' AND kind='analytics' AND ok=1 ORDER BY read_at DESC LIMIT 1").first<{ read_at: string }>();
+async function analyticsDue(env: Env, cid: string) {
+  const last = await env.DB.prepare("SELECT read_at FROM readings WHERE platform='youtube' AND connection_id=? AND kind='analytics' AND ok=1 ORDER BY read_at DESC LIMIT 1").bind(cid).first<{ read_at: string }>();
   const sixToday = at().slice(0, 10) + "T06:00:00.000Z";
   return !last || (at() >= sixToday && last.read_at < sixToday);
 }
 
 // One reading row per step, ok or not. The stored error is a status or a fixed word only.
-async function step(env: Env, kind: "counts" | "analytics", fn: () => Promise<unknown>) {
+async function step(env: Env, cid: string, kind: "counts" | "analytics", fn: () => Promise<unknown>) {
   const now = at();
   let ok = 1, payload: unknown, error: string | null = null;
   try {
@@ -116,14 +120,16 @@ async function step(env: Env, kind: "counts" | "analytics", fn: () => Promise<un
     error = e instanceof Reconnect ? "invalid_grant" : e instanceof ReadError ? e.message : "read failed";
     payload = { error };
     if (e instanceof Reconnect) {
-      await env.DB.prepare("UPDATE accounts SET state='needsReconnect', first_failure_at=COALESCE(first_failure_at, ?) WHERE platform='youtube'").bind(now).run();
+      await env.DB.prepare(`UPDATE accounts SET state='needsReconnect', first_failure_at=COALESCE(first_failure_at, ?) WHERE ${MINE}`).bind(now, cid).run();
     }
   }
   await env.DB.batch([
-    env.DB.prepare("INSERT INTO readings (platform, kind, read_at, ok, payload) VALUES ('youtube', ?, ?, ?, ?)").bind(kind, now, ok, JSON.stringify(payload)),
+    // Both statements are no-ops if the account was deleted or reconnected since this read began.
+    env.DB.prepare(`INSERT INTO readings (platform, kind, read_at, ok, payload, connection_id)
+      SELECT 'youtube', ?, ?, ?, ?, connection_id FROM accounts WHERE ${MINE}`).bind(kind, now, ok, JSON.stringify(payload), cid),
     ok
-      ? env.DB.prepare("UPDATE accounts SET last_good_read_at=?, last_error=NULL WHERE platform='youtube'").bind(now)
-      : env.DB.prepare("UPDATE accounts SET last_error=? WHERE platform='youtube'").bind(error),
+      ? env.DB.prepare(`UPDATE accounts SET last_good_read_at=?, last_error=NULL WHERE ${MINE}`).bind(now, cid)
+      : env.DB.prepare(`UPDATE accounts SET last_error=? WHERE ${MINE}`).bind(error, cid),
   ]);
   return !!ok;
 }
@@ -132,13 +138,14 @@ async function step(env: Env, kind: "counts" | "analytics", fn: () => Promise<un
 export async function readYouTube(env: Env) {
   const acc = await env.DB.prepare("SELECT * FROM accounts WHERE platform='youtube' AND state='connected'").first<Account>();
   if (!acc) return;
-  await env.DB.prepare("UPDATE accounts SET last_attempt_at=? WHERE platform='youtube'").bind(at()).run();
+  const cid = acc.connection_id;
+  await env.DB.prepare(`UPDATE accounts SET last_attempt_at=? WHERE ${MINE}`).bind(at(), cid).run();
   let token = "";
-  const counted = await step(env, "counts", async () => {
+  const counted = await step(env, cid, "counts", async () => {
     token = await accessToken(env, acc);
-    return fetchCounts(env, token);
+    return fetchCounts(env, token, cid);
   });
-  if (counted && (await analyticsDue(env))) await step(env, "analytics", () => fetchAnalytics(token));
+  if (counted && (await analyticsDue(env, cid))) await step(env, cid, "analytics", () => fetchAnalytics(token));
 }
 
 // Disconnect, delete-all and the 30-day purge: tokens and every stored row go at once, and a deletions row tells devices.
@@ -152,6 +159,7 @@ export async function wipe(env: Env, platform: string, revoke = true) {
   await env.DB.batch([
     env.DB.prepare("DELETE FROM accounts WHERE platform=?").bind(platform),
     env.DB.prepare("DELETE FROM readings WHERE platform=?").bind(platform),
+    env.DB.prepare("DELETE FROM oauth_states WHERE platform=?").bind(platform), // a consent already under way cannot complete
     env.DB.prepare("INSERT INTO deletions (platform, at) VALUES (?, ?)").bind(platform, at()),
   ]);
 }
