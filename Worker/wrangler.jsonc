@@ -10,7 +10,7 @@
     {
       "binding": "DB",
       "database_name": "social-stats",
-      "database_id": "REPLACE_AT_DEPLOY",
+      "database_id": "ff92fdc7-2a5e-4fc8-a00e-437eaff6607d",
       "migrations_dir": "migrations"
     }
   ],
