@@ -71,6 +71,33 @@ func socialsChecks(base: URL) throws {
     other.apply(deletions: try deletions("instagram", readAt.addingTimeInterval(60)))
     try check(other == kept, "Socials ignores another platform's deletion")
 
+    // A disconnected summary arrives with a fresh serverTime: its cached history must still go.
+    var gone = kept
+    gone.summary = try SocialsJSON.decoder.decode(SocialsSummary.self, from: Data(#"{"serverTime":"2030-01-01T00:00:00Z","youtube":null}"#.utf8))
+    gone.apply(deletions: try deletions("youtube", readAt.addingTimeInterval(60)))
+    try check(gone.history.isEmpty, "Socials drops cached history when YouTube is gone, whatever the summary's time")
+    // merge judges deletions against the copy held before the read, and a new channel never inherits old history.
+    var other7 = kept
+    other7.history[7] = h
+    let laterStatus = try SocialsJSON.decoder.decode(SocialsStatus.self, from: Data(String(decoding: status, as: UTF8.self)
+        .replacingOccurrences(of: "2026-11-01T09:00:00Z", with: readAt.addingTimeInterval(60).formatted(.iso8601)).utf8))
+    let otherChannel = try SocialsJSON.decoder.decode(SocialsSummary.self, from: Data(String(decoding: summary, as: UTF8.self)
+        .replacingOccurrences(of: "Junior Nkana Bassi", with: "Another Channel")
+        .replacingOccurrences(of: "2026-11-15T15:45:00Z", with: readAt.addingTimeInterval(3600).formatted(.iso8601)).utf8))
+    var reconnected = other7
+    reconnected.merge(status: laterStatus, summary: otherChannel, history: nil, contact: now)
+    try check(reconnected.summary?.youtube?.channelTitle == "Another Channel" && reconnected.history.isEmpty && reconnected.lastContact == now,
+              "Socials merge drops every cached range when a deletion predates the read and another channel connects")
+    var otherSameDeletionOld = other7
+    otherSameDeletionOld.merge(status: s, summary: otherChannel, history: nil, contact: now)
+    try check(otherSameDeletionOld.history.isEmpty, "Socials merge drops cached history when the channel changes")
+    var same = other7
+    same.merge(status: s, summary: sum, history: (28, h), contact: now)
+    try check(same.history.keys.sorted() == [7, 28], "Socials merge keeps other cached ranges for the same channel")
+    var disconnected = other7
+    disconnected.merge(status: s, summary: try SocialsSummary.decodedNull(), history: nil, contact: now)
+    try check(disconnected.history.isEmpty && disconnected.summary?.youtube == nil, "Socials merge drops cached history when YouTube disconnects")
+
     // The file credential store used by isolated runs: private permissions, delete forgets.
     let store = FileCredentialStore(directory: directory)
     try store.write("token-1\n")
@@ -96,6 +123,12 @@ func socialsChecks(base: URL) throws {
 /// Deletions arrive only from the Worker, so they are built the way the app receives them.
 private func deletions(_ platform: String, _ at: Date) throws -> [SocialsStatus.Deletion] {
     try SocialsJSON.decoder.decode([SocialsStatus.Deletion].self, from: Data("[{\"platform\":\"\(platform)\",\"at\":\"\(at.formatted(.iso8601))\"}]".utf8))
+}
+
+private extension SocialsSummary {
+    static func decodedNull() throws -> SocialsSummary {
+        try SocialsJSON.decoder.decode(SocialsSummary.self, from: Data(#"{"serverTime":"2030-01-01T00:00:00Z","youtube":null}"#.utf8))
+    }
 }
 
 private extension JSONDecoder {

@@ -258,7 +258,7 @@ Commands do not activate CreatorOS or Finder unless `--show` is given. `status` 
 | `compat check` | `compat_check` | Check names for LucidLink; --copy-to makes a corrected copy (--dry-run returns the rename proposal) | `creatoros compat check --project 001 --format Short --copy-to /Volumes/Drive/Out` |
 | `socials status` | `socials_status` | Socials set-up and YouTube connection state, last contact and read coverage (works before set-up) | `creatoros socials status` |
 | `socials summary` | `socials_summary` | YouTube figures as the API returns them, with read times; falls back to the cache when the server is unreachable (`reachable: false`), refuses with `data_expired` after 7 days without contact | `creatoros socials summary` |
-| `socials history` | `socials_history` | Daily views, watch time, subscribers gained and lost for 7, 28 or 90 days; also sets the range the GUI shows | `creatoros socials history --days 28` |
+| `socials history` | `socials_history` | Daily views, watch time, subscribers gained and lost for 7, 28 or 90 days; the GUI's own range is not changed | `creatoros socials history --days 28` |
 | `socials refresh` | `socials_refresh` | Ask the server to read YouTube now (at most once a minute, else `rate_limited`) | `creatoros socials refresh` |
 | `socials setup` | `socials_setup` | Enrol this Mac with the server address (https only) and its one-time or pairing code | `creatoros socials setup --url https://social-stats.example.workers.dev --code 123456` |
 | `socials connect` | `socials_connect` | Return the Google consent address; `--open` opens it in the browser | `creatoros socials connect --open` |

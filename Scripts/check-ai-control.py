@@ -775,7 +775,7 @@ try:
         check((root / 'Socials' / 'socials-device-token').read_text() == 'fake-token' and (root / 'Socials' / 'socials-cache.json').is_file(), 'socials keeps its credential and cache in the disposable data root')
         check(command('socials', 'summary')['summary']['youtube']['subscriberCount'] == 4810, 'socials summary returns the figures as the API returned them')
         check(len(command('socials', 'history', '--days', '7')['history']['rows']) == 4, 'socials history --days 7')
-        check(subprocess.check_output(['/usr/bin/defaults', 'read', suite, 'socials.range'], text=True).strip() == '7', 'socials history sets the range the GUI shows')
+        check(subprocess.run(['/usr/bin/defaults', 'read', suite, 'socials.range'], capture_output=True, text=True).stdout.strip() in ('', '28'), 'socials history leaves the GUI range alone')
         check(error('socials', 'history', '--days', '30')['code'] == 'invalid_params', 'socials history refuses other ranges')
         check(command('socials', 'connect')['authUrl'].startswith('https://accounts.google.com') , 'socials connect returns the consent address and opens nothing')
         check(command('socials', 'pair')['code'] == 'PAIR-1' and len(command('socials', 'devices')['devices']) == 2, 'socials pair and devices')

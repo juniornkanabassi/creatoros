@@ -85,7 +85,7 @@ final class StubWorker: URLProtocol {
         pass(s.notYetReportedStart() == Calendar.current.date(byAdding: .day, value: -2, to: today), "days after the last reported date are 'not yet reported'")
         pass(SocialsMetric.watchTime.value(days.last { $0.row != nil }!.row!) == 3 && SocialsMetric.lost.value(days.last { $0.row != nil }!.row!) == 1, "chart values are the returned columns (watch time in hours)")
         let history = try await model.controlAction("socials.history", ["days": 7])
-        pass(s.range == 7 && (history["history"] as? [String: Any])?["rows"] != nil, "history --days 7 reads that range and the GUI follows it")
+        pass(s.range == 28 && history["days"] as? Int == 7 && s.snapshot.history[7] != nil, "history --days 7 reads that range and leaves the GUI's range alone")
         pass(await code("socials.history", ["days": 30]) == "invalid_params", "history refuses a range other than 7, 28 or 90")
         let summary = try await model.controlAction("socials.summary", [:])
         let yt = ((summary["summary"] as? [String: Any])?["youtube"] as? [String: Any])
@@ -104,6 +104,37 @@ final class StubWorker: URLProtocol {
         pass(pair["code"] as? String == "PAIR-1234" && s.pairing?.code == "PAIR-1234", "pair shows the code in the GUI too")
         let revoked = try await model.controlAction("socials.revoke", ["device": "phone-1", "confirm": true])
         pass(revoked["thisMac"] as? Bool == false && s.configured && !s.devices.contains { $0.id == "phone-1" }, "revoking another device keeps this Mac set up")
+
+        // Two history callers at once each get their own range back.
+        let plain = StubWorker.handler
+        StubWorker.handler = { request in
+            guard request.url!.path == "/v1/history" else { return plain(request) }
+            let days = Int(URLComponents(url: request.url!, resolvingAgainstBaseURL: false)!.queryItems!.first { $0.name == "days" }!.value!)!
+            let rows = (0..<(days / 7)).map { #"{"date":"\#(ymd($0 + 3))","views":\#(days),"estimatedMinutesWatched":1,"subscribersGained":1,"subscribersLost":0}"# }
+            return (200, #"{"platform":"youtube","readAt":"\#(now)","rows":[\#(rows.joined(separator: ","))],"lastReportedDate":"\#(ymd(3))"}"#)
+        }
+        StubWorker.delay = 0.2
+        async let week = model.controlAction("socials.history", ["days": 7])
+        async let quarter = model.controlAction("socials.history", ["days": 90])
+        let (w, q) = try await (week, quarter)
+        StubWorker.delay = 0
+        func rowsOf(_ reply: [String: Any]) -> Int { ((reply["history"] as? [String: Any])?["rows"] as? [Any])?.count ?? -1 }
+        pass(w["days"] as? Int == 7 && rowsOf(w) == 1 && q["days"] as? Int == 90 && rowsOf(q) == 12 && s.range == 28,
+             "concurrent history --days 7 and --days 90 each return their own range and leave the GUI's range alone")
+        StubWorker.handler = plain
+
+        // Disconnected elsewhere: the deletion is newer than the old copy, the new summary has no YouTube.
+        try await s.sync()
+        precondition(!s.snapshot.history.isEmpty)
+        ytState = "disconnected"
+        deletionAt = Date().addingTimeInterval(1).formatted(.iso8601)
+        let connectedHandler = StubWorker.handler
+        StubWorker.handler = { $0.url!.path == "/v1/summary" ? (200, #"{"serverTime":"\#(Date().addingTimeInterval(60).formatted(.iso8601))","youtube":null}"#) : connectedHandler($0) }
+        try await s.sync()
+        pass(s.youtube == nil && s.snapshot.history.isEmpty && s.phase() == .connect, "a disconnect seen in sync leaves no cached history behind")
+        StubWorker.handler = connectedHandler
+        ytState = "connected"; deletionAt = "2000-01-01T00:00:00Z"
+        try await s.sync()
 
         // Problem states.
         ytState = "needsReconnect"

@@ -61,10 +61,11 @@ objects=("${expected_objects[@]}")
 if (( ${#legacy_objects} )); then socials_objects=("$build_dir"/SocialsCore.build/*.o(N))
 else socials_objects=("$module_dir"/SocialsCore.o(N)); fi
 (( ${#socials_objects} )) || { print -u2 "No SocialsCore objects under $build_dir; rebuild first"; exit 1; }
-for object in "${socials_objects[@]}"; do
-    for source in Sources/SocialsCore/*.swift(N); do
-        [[ $source -nt $object ]] && { print -u2 "SocialsCore source is newer than its build output; rebuild first: $source"; exit 1; }
-    done
+# A comment-only edit leaves the object untouched but rewrites the module's docs, so the newest of either counts as built.
+built=("${socials_objects[@]}" "$module_dir"/SocialsCore.swift*(N) "$module_dir"/SocialsCore.swiftmodule/*(N))
+newest=$(ls -t "${built[@]}" | head -1)
+for source in Sources/SocialsCore/*.swift(N); do
+    [[ $source -nt $newest ]] && { print -u2 "SocialsCore source is newer than its build output; rebuild first: $source"; exit 1; }
 done
 objects+=("${socials_objects[@]}")
 print "TemplateCore objects: ${objects[1]:h}"

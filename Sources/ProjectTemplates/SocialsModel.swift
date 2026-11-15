@@ -199,20 +199,17 @@ struct SocialsDay: Identifiable, Equatable {
     private func save() { try? cache.save(snapshot) }
 
     /// Reads status, summary and the chosen range's history together. Used on appear, every 15 minutes and by the reads.
-    func sync() async throws {
+    /// `days` is the history range to read: the GUI's range unless a caller (the history command) asks for its own.
+    func sync(days requested: Int? = nil) async throws {
         guard configured else { throw SocialsError.notConfigured }
-        let client = try client(), days = range, started = epoch
+        let client = try client(), days = requested ?? range, started = epoch
         do {
             async let status = client.status()
             async let summary = client.summary()
             async let history = client.history(days: days)
             let (s, sum, h) = try await (status, summary, history)
             guard started == epoch else { return }
-            snapshot.status = s
-            snapshot.summary = sum
-            snapshot.history[days] = h
-            snapshot.apply(deletions: s.deletions)
-            snapshot.lastContact = Date()
+            snapshot.merge(status: s, summary: sum, history: (days, h), contact: Date())
             unreachable = false
             save()
         } catch {
@@ -222,9 +219,9 @@ struct SocialsDay: Identifiable, Equatable {
     }
 
     /// For the read commands: answers from the cache when the server cannot be reached, but a revoked device says so.
-    func syncForRead() async throws {
+    func syncForRead(days: Int? = nil) async throws {
         guard configured else { return }
-        do { try await sync() } catch SocialsError.unauthorized { throw SocialsError.unauthorized } catch {}
+        do { try await sync(days: days) } catch SocialsError.unauthorized { throw SocialsError.unauthorized } catch {}
     }
 
     /// The quiet background refresh: errors only show in the page's own lines.
@@ -267,8 +264,7 @@ struct SocialsDay: Identifiable, Equatable {
     func refreshNow() async throws {
         try await run("refreshing") {
             let summary = try await client().refresh()
-            snapshot.summary = summary
-            snapshot.lastContact = Date()
+            snapshot.merge(status: nil, summary: summary, history: nil, contact: Date())
             message = nil
             save()
         }
@@ -343,12 +339,11 @@ extension AppModel {
                 try await s.syncForRead()
                 return try s.controlFigures(["summary": s.json(s.snapshot.summary)])
             case "socials.history":
-                if let days = params["days"] as? Int {
-                    guard SocialsModel.ranges.contains(days) else { throw ControlFailure(code: "invalid_params", message: "Use --days 7, 28 or 90.") }
-                    s.range = days
-                }
-                try await s.syncForRead()
-                return try s.controlFigures(["history": s.json(s.snapshot.history[s.range])])
+                // The caller's own range, kept local: concurrent callers never share it and the GUI's range stays put.
+                let days = params["days"] as? Int ?? s.range
+                guard SocialsModel.ranges.contains(days) else { throw ControlFailure(code: "invalid_params", message: "Use --days 7, 28 or 90.") }
+                try await s.syncForRead(days: days)
+                return try s.controlFigures(["days": days, "history": s.json(s.snapshot.history[days])])
             case "socials.refresh":
                 try await s.refreshNow()
                 return try s.controlFigures(["summary": s.json(s.snapshot.summary)])

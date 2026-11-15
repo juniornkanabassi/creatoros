@@ -262,6 +262,7 @@ public struct SocialsSnapshot: Codable, Equatable, Sendable {
     }
 
     /// Drops any platform the Worker has deleted since this copy was read.
+    /// With no YouTube in the summary, no cached history may outlive it either.
     public mutating func apply(deletions: [SocialsStatus.Deletion]) {
         for d in deletions where d.platform == "youtube" {
             if let read = summary?.youtube?.countsReadAt ?? summary?.serverTime, read <= d.at {
@@ -269,6 +270,27 @@ public struct SocialsSnapshot: Codable, Equatable, Sendable {
                 history = [:]
             }
         }
+        if summary != nil, summary?.youtube == nil { history = [:] }
+    }
+
+    /// Brings one read from the Worker into this copy. Deletions are judged against the copy held before the read (a fresh
+    /// summary always looks newer than them) and again against the new figures' own read times. A change of connection
+    /// (YouTube disconnected, or a different channel) drops every cached history range, so one channel's history never
+    /// shows under another's. Pass nil for anything not read.
+    public mutating func merge(status: SocialsStatus?, summary: SocialsSummary?, history new: (days: Int, history: SocialsHistory)?, contact: Date) {
+        if let status { apply(deletions: status.deletions) }
+        let before = self.summary?.youtube?.channelTitle ?? self.status?.platforms.first { $0.platform == "youtube" }?.account
+        let state = status?.platforms.first { $0.platform == "youtube" }?.state
+        let after = summary.map { $0.youtube?.channelTitle } ?? before
+        if state == .disconnected || (summary != nil && summary?.youtube == nil) || after != before { history = [:] }
+        if let status { self.status = status }
+        if let summary { self.summary = summary }
+        if let new { history[new.days] = new.history }
+        // Figures in the new read that were themselves read before a deletion go too.
+        if let status { apply(deletions: status.deletions) }
+        // No YouTube, no history: rows read alongside a disconnected summary are not kept either.
+        if self.summary != nil, self.summary?.youtube == nil { history = [:] }
+        lastContact = contact
     }
 }
 
