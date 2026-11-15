@@ -1,0 +1,18 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "social-stats",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-11-01",
+  "account_id": "714ffda22481bfeb894c70f72e444b8c",
+  "workers_dev": true,
+  "triggers": { "crons": ["*/15 * * * *"] },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "social-stats",
+      "database_id": "REPLACE_AT_DEPLOY",
+      "migrations_dir": "migrations"
+    }
+  ],
+  "observability": { "enabled": true }
+}
