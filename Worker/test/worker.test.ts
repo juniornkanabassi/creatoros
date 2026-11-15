@@ -58,7 +58,7 @@ async function channelsBody() {
 
 // ---- Helpers ----
 
-async function req(path: string, opts: { method?: string; body?: unknown; token?: string } = {}) {
+async function req(path: string, opts: { method?: string; body?: unknown; token?: string; env?: Env } = {}) {
   const ctx = createExecutionContext();
   const res = await worker.fetch(
     new Request(`https://social.test${path}`, {
@@ -66,11 +66,29 @@ async function req(path: string, opts: { method?: string; body?: unknown; token?
       headers: { ...(opts.token ? { authorization: `Bearer ${opts.token}` } : {}), "content-type": "application/json" },
       body: opts.body ? JSON.stringify(opts.body) : undefined,
     }) as Request<unknown, IncomingRequestCfProperties>,
-    e,
+    opts.env ?? e,
     ctx,
   );
   await waitOnExecutionContext(ctx);
   return res;
+}
+
+// An env whose readings lookups wait until `before` has run, so a reconnect can land between the account read and the readings read.
+function envWithHookBeforeReadings(before: () => Promise<void>): Env {
+  let gate: Promise<void> | undefined;
+  const wrap = (stmt: D1PreparedStatement, sql: string): D1PreparedStatement =>
+    new Proxy(stmt, {
+      get(t, p) {
+        if (p === "bind") return (...a: unknown[]) => wrap(t.bind(...a), sql);
+        if (p === "first" && sql.includes("FROM readings")) return async (...a: unknown[]) => ((gate ??= before()), await gate, (t.first as Function)(...a));
+        const v = Reflect.get(t, p);
+        return typeof v === "function" ? v.bind(t) : v;
+      },
+    });
+  const db = new Proxy(e.DB, {
+    get: (t, p) => (p === "prepare" ? (sql: string) => wrap(t.prepare(sql), sql) : typeof Reflect.get(t, p) === "function" ? Reflect.get(t, p).bind(t) : Reflect.get(t, p)),
+  });
+  return { ...e, DB: db } as Env;
 }
 const post = (path: string, token: string, body?: unknown) => req(path, { method: "POST", token, body });
 const get = async (path: string, token: string) => (await req(path, { token })).json<any>();
@@ -388,6 +406,39 @@ it("the cron clears a channel title 30 days after it was read, even while the to
 
   expect((await get("/v1/summary", token)).youtube.channelTitle).toBe("");
   expect((await get("/v1/status", token)).platforms[0].account).toBeNull();
+});
+
+it("summary and history carry the connection id, and history is null-id when nothing is connected", async () => {
+  const { token } = await connected();
+  const acc = await e.DB.prepare("SELECT connection_id FROM accounts").first<{ connection_id: string }>();
+  expect((await get("/v1/summary", token)).youtube.connectionId).toBe(acc!.connection_id);
+  expect((await get("/v1/history?platform=youtube&days=7", token)).connectionId).toBe(acc!.connection_id);
+
+  await post("/v1/youtube/disconnect", token);
+  const h = await get("/v1/history?platform=youtube&days=7", token);
+  expect(h).toMatchObject({ connectionId: null, readAt: null, rows: [], lastReportedDate: null });
+});
+
+it("a reconnect between the account read and the readings read cannot mix two connections", async () => {
+  const { token } = await connected();
+  const old = await e.DB.prepare("SELECT connection_id FROM accounts").first<{ connection_id: string }>();
+  const reconnect = async () => {
+    google.title = "New channel";
+    expect(((await (await connect(token)).callback()).status)).toBe(200);
+  };
+
+  // Summary: the old account row (old title, old id) must not be paired with the new connection's figures.
+  const summary = (await (await req("/v1/summary", { token, env: envWithHookBeforeReadings(reconnect) })).json<any>()).youtube;
+  expect(summary.connectionId).toBe(old!.connection_id);
+  expect(summary.channelTitle).toBe("Junior Nkana Bassi");
+  expect(summary.subscriberCount).toBeNull();
+  expect(summary.window).toBeNull();
+
+  // History: same, through a second reconnect.
+  const second = await e.DB.prepare("SELECT connection_id FROM accounts").first<{ connection_id: string }>();
+  const history = await (await req("/v1/history?platform=youtube&days=28", { token, env: envWithHookBeforeReadings(reconnect) })).json<any>();
+  expect(history.connectionId).toBe(second!.connection_id);
+  expect(history.rows).toEqual([]);
 });
 
 it("serves a public privacy policy", async () => {

@@ -63,17 +63,19 @@ async function revoke({ env, url }: Ctx): Promise<Response> {
 }
 
 interface Row { read_at: string; payload: string }
-const latest = async (env: Env, kind: string) => {
-  const r = await one<Row>(env, "SELECT read_at, payload FROM readings WHERE platform='youtube' AND kind=? AND ok=1 AND connection_id=(SELECT connection_id FROM accounts WHERE platform='youtube') ORDER BY read_at DESC LIMIT 1", kind);
+// Every lookup is pinned to one connection id, read once by the caller, so a reconnect in between cannot mix generations.
+const latest = async (env: Env, kind: string, cid: string) => {
+  const r = await one<Row>(env, "SELECT read_at, payload FROM readings WHERE platform='youtube' AND kind=? AND ok=1 AND connection_id=? ORDER BY read_at DESC LIMIT 1", kind, cid);
   return r && { readAt: r.read_at, ...JSON.parse(r.payload) };
 };
 
 async function buildSummary(env: Env) {
-  const acc = await one<{ state: string; account_title: string | null }>(env, "SELECT state, account_title FROM accounts WHERE platform='youtube'");
+  const acc = await one<{ state: string; account_title: string | null; connection_id: string }>(env, "SELECT state, account_title, connection_id FROM accounts WHERE platform='youtube'");
   let youtube = null;
   if (acc) {
-    const [counts, analytics] = await Promise.all([latest(env, "counts"), latest(env, "analytics")]);
+    const [counts, analytics] = await Promise.all([latest(env, "counts", acc.connection_id), latest(env, "analytics", acc.connection_id)]);
     youtube = {
+      connectionId: acc.connection_id,
       state: acc.state,
       channelTitle: acc.account_title ?? "",
       subscriberCount: counts?.subscriberCount ?? null,
@@ -117,9 +119,10 @@ async function history({ env, url }: Ctx): Promise<Response> {
   if (url.searchParams.get("platform") !== "youtube" || ![7, 28, 90].includes(days)) {
     throw new ApiError(400, "bad_request", "Expected platform=youtube and days=7, 28 or 90.");
   }
-  const a = await latest(env, "analytics");
+  const acc = await one<{ connection_id: string }>(env, "SELECT connection_id FROM accounts WHERE platform='youtube'");
+  const a = acc && (await latest(env, "analytics", acc.connection_id));
   const rows: { date: string }[] = (a?.rows ?? []).slice(-days);
-  return json({ platform: "youtube", readAt: a?.readAt ?? null, rows, lastReportedDate: a?.rows?.at(-1)?.date ?? null });
+  return json({ platform: "youtube", connectionId: acc?.connection_id ?? null, readAt: a?.readAt ?? null, rows, lastReportedDate: a?.rows?.at(-1)?.date ?? null });
 }
 
 async function connect({ env, request, device }: Ctx): Promise<Response> {

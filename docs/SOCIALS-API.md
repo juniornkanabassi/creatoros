@@ -52,6 +52,7 @@ Errors are `{"error": "<code>", "message": "<human text>"}` with a 4xx/5xx statu
   "serverTime": "…",
   "youtube": null | {
     "state": "connected" | "needsReconnect",
+    "connectionId": "uuid",           // changes on every (re)connect; devices drop data from another connection
     "channelTitle": "…",
     "subscriberCount": 4810,          // as YouTube returns it (rounded to 3 significant figures)
     "subscriberCountHidden": false,
@@ -70,6 +71,7 @@ Errors are `{"error": "<code>", "message": "<human text>"}` with a 4xx/5xx statu
 // History
 {
   "platform": "youtube",
+  "connectionId": "uuid" | null,     // the connection these rows belong to; null when nothing is connected
   "readAt": "…" | null,
   "rows": [{"date": "2026-11-01", "views": 1, "estimatedMinutesWatched": 2, "subscribersGained": 3, "subscribersLost": 0}],
   "lastReportedDate": "2026-11-12" | null   // days after this have no YouTube data yet ("not yet reported")
@@ -92,4 +94,6 @@ Cron every 15 minutes: renew the Google access token (this is also the 30-day "s
 - Cache file per data root, separate from `library.json`, with each figure's read time.
 - No successful contact for 7 days: show "Offline, data expired", hide figures. 30 days: delete the cache file.
 - `401`: wipe the cache and the credential.
+- History is kept only when its `connectionId` matches the summary's; a changed `connectionId` drops all cached history.
+- The Worker builds each summary and history from one connection: it reads the account's `connectionId` once and constrains every lookup to it.
 - A `deletions` entry newer than the cached copy: drop that platform from the cache.
