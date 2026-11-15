@@ -15,16 +15,8 @@ struct SocialsProvider: TimelineProvider {
 
     func getTimeline(in context: Context, completion: @escaping @Sendable (Timeline<SocialsEntry>) -> Void) {
         Task {
-            let cache = Companion.cache
-            var snapshot = cache.load()
-            var hasToken = Companion.credentials.read() != nil
-            if let client = Companion.client() {
-                do {
-                    snapshot = try await SocialsSync.withTimeout(12) { try await SocialsSync.run(client: client, cache: cache, force: false) }
-                } catch SocialsError.unauthorized {
-                    Companion.wipe(); snapshot = SocialsSnapshot(); hasToken = false
-                } catch {} // keep the cache; the view shows expiry on its own
-            }
+            let (snapshot, hasToken) = await SocialsSync.timelineSnapshot(client: Companion.client(), cache: Companion.cache,
+                                                                          credentials: Companion.credentials)
             let now = Date()
             // No maximum delay is promised: iOS decides when the reload really happens.
             completion(Timeline(entries: SocialsEntry.entries(snapshot: snapshot, hasToken: hasToken, now: now),

@@ -41,8 +41,12 @@ final class CompanionTests: XCTestCase {
         return (SocialsCache(directory: dir), creds, dir)
     }
 
-    private func client(whileRequesting hook: @escaping @Sendable () -> Void) -> SocialsClient {
+    private func client(summaryConnection: String = "conn-A", historyConnection: String = "conn-A", status: Int = 200,
+                        whileRequesting hook: @escaping @Sendable () -> Void) -> SocialsClient {
         StubProtocol.hook = hook
+        StubProtocol.summaryConnection = summaryConnection
+        StubProtocol.historyConnection = historyConnection
+        StubProtocol.status = status
         let config = URLSessionConfiguration.ephemeral
         config.protocolClasses = [StubProtocol.self]
         return SocialsClient(baseURL: URL(string: "https://worker.test")!, token: "token", session: URLSession(configuration: config))
@@ -53,6 +57,58 @@ final class CompanionTests: XCTestCase {
         let snap = try await SocialsSync.run(client: client {}, cache: cache, force: false, credentials: creds)
         XCTAssertNotNil(snap.summary)
         XCTAssertNotNil(cache.load().lastContact)
+        XCTAssertNotNil(cache.load().history[28])
+    }
+
+    func testHistoryFromAnotherConnectionIsNotKept() async throws {
+        let (cache, creds, _) = try sandbox()
+        let snap = try await SocialsSync.run(client: client(summaryConnection: "conn-B", historyConnection: "conn-A") {}, cache: cache, force: false, credentials: creds)
+        XCTAssertEqual(snap.summary?.youtube?.connectionId, "conn-B")
+        XCTAssertTrue(snap.history.isEmpty)
+        XCTAssertTrue(cache.load().history.isEmpty)
+    }
+
+    func testReconnectDropsTheOldChannelsHistory() async throws {
+        let (cache, creds, _) = try sandbox()
+        _ = try await SocialsSync.run(client: client {}, cache: cache, force: false, credentials: creds)
+        XCTAssertNotNil(cache.load().history[28])
+        let snap = try await SocialsSync.run(client: client(summaryConnection: "conn-B", historyConnection: "conn-B") {}, cache: cache, force: false, credentials: creds)
+        XCTAssertEqual(snap.history[28]?.connectionId, "conn-B")
+    }
+
+    // A late result must not show figures that a wipe has since removed.
+
+    func testFailedWidgetReadDoesNotPublishTheStaleCache() async throws {
+        let (cache, creds, _) = try sandbox()
+        _ = try await SocialsSync.run(client: client {}, cache: cache, force: false, credentials: creds) // old copy on disk
+        // The widget loads its snapshot, the app clears data, then the widget's request fails.
+        let failing = client(status: 500) { Companion.clearCache(cache) }
+        let shown = await SocialsSync.timelineSnapshot(client: failing, cache: cache, credentials: creds)
+        XCTAssertNil(shown.snapshot.summary)
+        XCTAssertTrue(shown.hasToken)
+    }
+
+    func testFailedWidgetReadStillShowsTheCacheWhenNothingWasWiped() async throws {
+        let (cache, creds, _) = try sandbox()
+        _ = try await SocialsSync.run(client: client {}, cache: cache, force: false, credentials: creds)
+        let shown = await SocialsSync.timelineSnapshot(client: client(status: 500) {}, cache: cache, credentials: creds)
+        XCTAssertNotNil(shown.snapshot.summary)
+    }
+
+    func testResultCommittedBeforeAWipeIsNotDisplayedAfterIt() async throws {
+        let (cache, creds, _) = try sandbox()
+        let generation = Companion.generation(cache)
+        let fresh = try await SocialsSync.run(client: client {}, cache: cache, force: false, credentials: creds) // commit succeeds
+        XCTAssertNotNil(fresh.summary)
+        Companion.clearCache(cache) // the wipe lands before the UI assigns the result
+        let shown = Companion.visible(fresh, generation: generation, cache: cache, credentials: creds)
+        XCTAssertNil(shown.snapshot.summary)
+        // Unchanged generation and a token: the result is shown as it is.
+        let ok = Companion.visible(fresh, generation: Companion.generation(cache), cache: cache, credentials: creds)
+        XCTAssertNotNil(ok.snapshot.summary)
+        // A removed token also hides it.
+        creds.delete()
+        XCTAssertFalse(Companion.visible(fresh, generation: Companion.generation(cache), cache: cache, credentials: creds).hasToken)
     }
 
     func testClearDataDuringSyncIsNotUndone() async throws {
@@ -116,6 +172,9 @@ final class CompanionTests: XCTestCase {
 /// Answers every Worker route from the fixture, running `hook` first (where a test wipes the device mid-request).
 final class StubProtocol: URLProtocol, @unchecked Sendable {
     nonisolated(unsafe) static var hook: @Sendable () -> Void = {}
+    nonisolated(unsafe) static var summaryConnection = "conn-A"
+    nonisolated(unsafe) static var historyConnection = "conn-A"
+    nonisolated(unsafe) static var status = 200
 
     override class func canInit(with request: URLRequest) -> Bool { true }
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
@@ -123,14 +182,14 @@ final class StubProtocol: URLProtocol, @unchecked Sendable {
 
     override func startLoading() {
         Self.hook()
-        let snap = SocialsFixture.snapshot()
+        let snap = SocialsFixture.snapshot(connection: Self.summaryConnection)
         let path = request.url?.path ?? ""
         let body: Data? = switch path {
         case "/v1/status": try? SocialsJSON.encoder.encode(snap.status)
-        case "/v1/history": try? SocialsJSON.encoder.encode(snap.history[28])
+        case "/v1/history": try? SocialsJSON.encoder.encode(SocialsFixture.snapshot(connection: Self.historyConnection).history[28])
         default: try? SocialsJSON.encoder.encode(snap.summary)
         }
-        let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
+        let response = HTTPURLResponse(url: request.url!, statusCode: Self.status, httpVersion: nil, headerFields: nil)!
         client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
         client?.urlProtocol(self, didLoad: body ?? Data())
         client?.urlProtocolDidFinishLoading(self)

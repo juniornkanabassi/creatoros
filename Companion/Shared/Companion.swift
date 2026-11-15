@@ -64,6 +64,15 @@ enum Companion {
         if error != nil { body() } // coordination failed: do the work anyway rather than leave a wipe undone
     }
 
+    /// What to put on screen. A result is shown only if no wipe has happened since `generation` was read and the token
+    /// still exists; otherwise (or with no result) the cache is read from disk again, which a wipe will have emptied.
+    static func visible(_ snapshot: SocialsSnapshot?, generation: Int, cache: SocialsCache,
+                        credentials: SocialsCredentialStore) -> (snapshot: SocialsSnapshot, hasToken: Bool) {
+        let hasToken = credentials.read() != nil
+        if let snapshot, hasToken, Companion.generation(cache) == generation { return (snapshot, true) }
+        return (cache.load(), hasToken)
+    }
+
     /// Loads the cache, lets `change` edit it, and saves, but only if no wipe has happened since `generation` was read
     /// and the device still has its token. Returns the cache as it now stands.
     static func commit(cache: SocialsCache, generation: Int, credentials: SocialsCredentialStore,
@@ -108,12 +117,23 @@ enum SocialsSync {
         async let history = client.history(days: 28)
         let (s, st, h) = try await (summary, status, history)
         return try Companion.commit(cache: cache, generation: generation, credentials: credentials) { snap in
-            snap.summary = s
-            snap.status = st
-            snap.history[28] = h
-            snap.lastContact = Date()
-            snap.apply(deletions: st.deletions)
+            snap.merge(status: st, summary: s, history: (28, h), contact: Date())
         }
+    }
+
+    /// What the widget publishes: a fresh read when there is one, otherwise whatever the cache holds on disk now.
+    static func timelineSnapshot(client: SocialsClient?, cache: SocialsCache, credentials: SocialsCredentialStore,
+                                 timeout: Double = 12) async -> (snapshot: SocialsSnapshot, hasToken: Bool) {
+        let generation = Companion.generation(cache)
+        var fresh: SocialsSnapshot?
+        if let client {
+            do {
+                fresh = try await withTimeout(timeout) { try await run(client: client, cache: cache, force: false, credentials: credentials) }
+            } catch SocialsError.unauthorized {
+                Companion.wipe(cache: cache, credentials: credentials)
+            } catch {} // keep what is on disk; the view shows expiry on its own
+        }
+        return Companion.visible(fresh, generation: generation, cache: cache, credentials: credentials)
     }
 
     static func withTimeout<T: Sendable>(_ seconds: Double, _ op: @escaping @Sendable () async throws -> T) async throws -> T {

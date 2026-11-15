@@ -48,8 +48,10 @@ final class AppModel {
     func sync(force: Bool) async {
         guard let client = Companion.client() else { return }
         busy = true; defer { busy = false }
+        let generation = Companion.generation(Companion.cache)
         do {
-            snapshot = try await SocialsSync.run(client: client, cache: Companion.cache, force: force)
+            let fresh = try await SocialsSync.run(client: client, cache: Companion.cache, force: force)
+            (snapshot, hasToken) = Companion.visible(fresh, generation: generation, cache: Companion.cache, credentials: Companion.credentials)
             message = nil
             WidgetCenter.shared.reloadAllTimelines()
         } catch SocialsError.unauthorized {
