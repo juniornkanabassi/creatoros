@@ -18,6 +18,67 @@ final class CompanionTests: XCTestCase {
         XCTAssertEqual(SocialsDisplayState.select(hasToken: true, snapshot: none, now: now), .notConnected)
     }
 
+    // MARK: Expiry entry (widget)
+
+    func testTimelineHasAnExpiredEntryAtSevenDays() {
+        let snap = SocialsFixture.snapshot()
+        let entries = SocialsEntry.entries(snapshot: snap, hasToken: true, now: now)
+        XCTAssertEqual(entries.count, 2)
+        XCTAssertEqual(SocialsDisplayState.select(hasToken: true, snapshot: snap, now: entries[0].date), .normal)
+        XCTAssertEqual(SocialsDisplayState.select(hasToken: true, snapshot: snap, now: entries[1].date), .expired)
+        XCTAssertEqual(entries[1].date, SocialsFixture.read.addingTimeInterval(7 * 86_400 + 1))
+        // Already expired, or never contacted: nothing later to schedule.
+        XCTAssertEqual(SocialsEntry.entries(snapshot: snap, hasToken: true, now: now.addingTimeInterval(8 * 86_400)).count, 1)
+        XCTAssertEqual(SocialsEntry.entries(snapshot: SocialsSnapshot(), hasToken: true, now: now).count, 1)
+    }
+
+    // MARK: Wipes beat reads in flight
+
+    private func sandbox() throws -> (SocialsCache, FileCredentialStore, URL) {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("companion-\(UUID().uuidString)")
+        let creds = FileCredentialStore(directory: dir)
+        try creds.write("token")
+        return (SocialsCache(directory: dir), creds, dir)
+    }
+
+    private func client(whileRequesting hook: @escaping @Sendable () -> Void) -> SocialsClient {
+        StubProtocol.hook = hook
+        let config = URLSessionConfiguration.ephemeral
+        config.protocolClasses = [StubProtocol.self]
+        return SocialsClient(baseURL: URL(string: "https://worker.test")!, token: "token", session: URLSession(configuration: config))
+    }
+
+    func testSyncSavesWhenNothingWasWiped() async throws {
+        let (cache, creds, _) = try sandbox()
+        let snap = try await SocialsSync.run(client: client {}, cache: cache, force: false, credentials: creds)
+        XCTAssertNotNil(snap.summary)
+        XCTAssertNotNil(cache.load().lastContact)
+    }
+
+    func testClearDataDuringSyncIsNotUndone() async throws {
+        let (cache, creds, _) = try sandbox()
+        let snap = try await SocialsSync.run(client: client { Companion.clearCache(cache) }, cache: cache, force: false, credentials: creds)
+        XCTAssertNil(snap.summary)
+        XCTAssertNil(cache.load().summary)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: cache.fileURL.path))
+    }
+
+    func testRemoveDeviceDuringSyncIsNotUndone() async throws {
+        let (cache, creds, _) = try sandbox()
+        _ = try await SocialsSync.run(client: client {}, cache: cache, force: false, credentials: creds) // an old copy exists
+        let snap = try await SocialsSync.run(client: client { Companion.wipe(cache: cache, credentials: creds) }, cache: cache, force: true, credentials: creds)
+        XCTAssertNil(snap.summary)
+        XCTAssertNil(cache.load().summary)
+        XCTAssertNil(creds.read())
+    }
+
+    func testMissingTokenBlocksTheSave() async throws {
+        let (cache, creds, _) = try sandbox()
+        let snap = try await SocialsSync.run(client: client { creds.delete() }, cache: cache, force: false, credentials: creds)
+        XCTAssertNil(snap.summary)
+        XCTAssertNil(cache.load().summary)
+    }
+
     // MARK: Renders
 
     @MainActor
@@ -49,5 +110,29 @@ final class CompanionTests: XCTestCase {
             let png = try XCTUnwrap(renderer.uiImage?.pngData(), "no image for \(name)")
             try png.write(to: dir.appendingPathComponent("widget-\(name).png"))
         }
+    }
+}
+
+/// Answers every Worker route from the fixture, running `hook` first (where a test wipes the device mid-request).
+final class StubProtocol: URLProtocol, @unchecked Sendable {
+    nonisolated(unsafe) static var hook: @Sendable () -> Void = {}
+
+    override class func canInit(with request: URLRequest) -> Bool { true }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+    override func stopLoading() {}
+
+    override func startLoading() {
+        Self.hook()
+        let snap = SocialsFixture.snapshot()
+        let path = request.url?.path ?? ""
+        let body: Data? = switch path {
+        case "/v1/status": try? SocialsJSON.encoder.encode(snap.status)
+        case "/v1/history": try? SocialsJSON.encoder.encode(snap.history[28])
+        default: try? SocialsJSON.encoder.encode(snap.summary)
+        }
+        let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
+        client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+        client?.urlProtocol(self, didLoad: body ?? Data())
+        client?.urlProtocolDidFinishLoading(self)
     }
 }

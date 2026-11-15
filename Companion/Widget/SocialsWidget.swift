@@ -2,12 +2,6 @@ import AppIntents
 import SwiftUI
 import WidgetKit
 
-struct SocialsEntry: TimelineEntry {
-    let date: Date
-    let snapshot: SocialsSnapshot
-    let hasToken: Bool
-}
-
 struct SocialsProvider: TimelineProvider {
     func placeholder(in context: Context) -> SocialsEntry {
         SocialsEntry(date: Date(), snapshot: SocialsFixture.snapshot(), hasToken: true)
@@ -33,7 +27,7 @@ struct SocialsProvider: TimelineProvider {
             }
             let now = Date()
             // No maximum delay is promised: iOS decides when the reload really happens.
-            completion(Timeline(entries: [SocialsEntry(date: now, snapshot: snapshot, hasToken: hasToken)],
+            completion(Timeline(entries: SocialsEntry.entries(snapshot: snapshot, hasToken: hasToken, now: now),
                                 policy: .after(now.addingTimeInterval(30 * 60))))
         }
     }

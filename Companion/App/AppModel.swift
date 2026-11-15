@@ -59,7 +59,7 @@ final class AppModel {
     }
 
     func clearData() {
-        Companion.cache.clear(); snapshot = SocialsSnapshot()
+        Companion.clearCache(); snapshot = SocialsSnapshot()
         WidgetCenter.shared.reloadAllTimelines()
     }
 
