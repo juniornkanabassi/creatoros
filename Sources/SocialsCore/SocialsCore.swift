@@ -123,7 +123,12 @@ public enum SocialsJSON {
 
     public static let encoder: JSONEncoder = {
         let e = JSONEncoder()
-        e.dateEncodingStrategy = .iso8601
+        e.dateEncodingStrategy = .custom { date, encoder in
+            let f = ISO8601DateFormatter()
+            f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+            var c = encoder.singleValueContainer()
+            try c.encode(f.string(from: date))
+        }
         e.outputFormatting = [.sortedKeys]
         return e
     }()

@@ -728,6 +728,84 @@ try:
     deep_doc = pathlib.Path(alpha['path']) / '01 Documents' / 'Plan.md'; deep_doc.parent.mkdir(exist_ok=True); deep_doc.write_text('The zebra crossing moment\n')
     check(command('project', 'list', '--search', 'zebra')['total'] == 0 and command('project', 'list', '--search', 'zebra', '--deep')['total'] == 1, 'project list --deep finds text inside documents')
 
+    # -- Socials against a fake Worker on this Mac, serving docs/SOCIALS-API.md shapes -----------------------------------------
+    import http.server, threading, datetime
+    socials_before = digest()
+    def iso(delta_days=0):
+        return (datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(days=delta_days)).strftime('%Y-%m-%dT%H:%M:%SZ')
+    def ymd(back):
+        return (datetime.date.today() - datetime.timedelta(days=back)).isoformat()
+    worker_log = []
+    class FakeWorker(http.server.BaseHTTPRequestHandler):
+        def log_message(self, *a): pass
+        def answer(self):
+            path = self.path.split('?')[0]
+            worker_log.append(self.command + ' ' + path)
+            if path != '/v1/devices/enrol' and self.headers.get('Authorization') != 'Bearer fake-token':
+                return 401, {'error': 'unauthorized'}
+            if path == '/v1/refresh': time.sleep(0.5)
+            now = iso()
+            summary = {'serverTime': now, 'youtube': {'state': 'connected', 'channelTitle': 'Fixture Channel', 'subscriberCount': 4810, 'subscriberCountHidden': False, 'countsReadAt': now,
+                       'window': {'startDate': ymd(30), 'endDate': ymd(3), 'partial': False, 'views': 1234, 'estimatedMinutesWatched': 5678, 'subscribersGained': 90, 'subscribersLost': 4, 'readAt': now},
+                       'newestVideo': {'id': 'v1', 'title': 'Fixture video', 'publishedAt': now, 'viewCount': 12, 'url': 'https://www.youtube.com/watch?v=v1'}}}
+            routes = {
+                '/v1/devices/enrol': {'deviceId': 'mac-1', 'token': 'fake-token'},
+                '/v1/status': {'serverTime': now, 'platforms': [{'platform': 'youtube', 'state': 'connected', 'account': 'Fixture Channel', 'lastGoodReadAt': now, 'lastAttemptAt': now, 'lastError': None, 'readIntervalMinutes': 15, 'gaps': []}], 'deletions': []},
+                '/v1/summary': summary, '/v1/refresh': summary,
+                '/v1/history': {'platform': 'youtube', 'readAt': now, 'rows': [{'date': ymd(b), 'views': b, 'estimatedMinutesWatched': b, 'subscribersGained': 1, 'subscribersLost': 0} for b in range(3, 7)], 'lastReportedDate': ymd(3)},
+                '/v1/devices': {'devices': [{'id': 'mac-1', 'name': 'Mac', 'kind': 'mac', 'createdAt': now, 'lastSeenAt': now, 'current': True}, {'id': 'phone-1', 'name': 'iPhone', 'kind': 'iphone', 'createdAt': now, 'lastSeenAt': None, 'current': False}]},
+                '/v1/devices/pair': {'code': 'PAIR-1', 'expiresAt': iso(1)},
+                '/v1/youtube/connect': {'authUrl': 'https://accounts.google.com/o/oauth2/v2/auth?state=fake'},
+            }
+            return 200, routes.get(path, {'ok': True})
+        def reply(self):
+            code_, body_ = self.answer()
+            data = json.dumps(body_).encode()
+            self.send_response(code_); self.send_header('Content-Type', 'application/json'); self.send_header('Content-Length', str(len(data))); self.end_headers(); self.wfile.write(data)
+        do_GET = do_POST = reply
+    fake = http.server.ThreadingHTTPServer(('127.0.0.1', 0), FakeWorker)
+    threading.Thread(target=fake.serve_forever, daemon=True).start()
+    fake_url = 'http://127.0.0.1:%d' % fake.server_address[1]
+    try:
+        check(command('socials', 'status')['state'] == 'notSetUp' and not worker_log, 'socials status before set-up answers without contacting a server')
+        check(error('socials', 'summary')['code'] == 'not_configured', 'socials summary before set-up is not_configured')
+        check(error('socials', 'setup', '--url', 'http://example.com', '--code', 'x')['code'] == 'invalid_params', 'socials setup refuses a plain http server address')
+        set_up = command('socials', 'setup', '--url', fake_url, '--code', 'one-time')
+        check(set_up['configured'] and set_up['state'] == 'connected', 'socials setup enrols with the one-time code and reads YouTube')
+        check((root / 'Socials' / 'socials-device-token').read_text() == 'fake-token' and (root / 'Socials' / 'socials-cache.json').is_file(), 'socials keeps its credential and cache in the disposable data root')
+        check(command('socials', 'summary')['summary']['youtube']['subscriberCount'] == 4810, 'socials summary returns the figures as the API returned them')
+        check(len(command('socials', 'history', '--days', '7')['history']['rows']) == 4, 'socials history --days 7')
+        check(subprocess.check_output(['/usr/bin/defaults', 'read', suite, 'socials.range'], text=True).strip() == '7', 'socials history sets the range the GUI shows')
+        check(error('socials', 'history', '--days', '30')['code'] == 'invalid_params', 'socials history refuses other ranges')
+        check(command('socials', 'connect')['authUrl'].startswith('https://accounts.google.com') , 'socials connect returns the consent address and opens nothing')
+        check(command('socials', 'pair')['code'] == 'PAIR-1' and len(command('socials', 'devices')['devices']) == 2, 'socials pair and devices')
+        for words in (('disconnect',), ('clear-local',), ('delete-all',), ('revoke', 'phone-1')):
+            check(error('socials', *words)['code'] == 'confirmation_required', 'socials %s needs --confirm' % words[0])
+        def socials_call(args):
+            res = subprocess.run([str(cli), 'socials', *args, '--json', '--data-directory', str(root)], capture_output=True, text=True, timeout=60)
+            return res.returncode, json.loads(res.stdout)
+        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
+            refreshes = list(pool.map(socials_call, [['refresh'], ['refresh']]))
+        check(any(c == 0 for c, _ in refreshes) and all(c == 0 or b['error']['code'] == 'busy' for c, b in refreshes), 'two concurrent socials refreshes: one runs, the other gets busy')
+        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
+            reads = list(pool.map(socials_call, [['summary'], ['status']]))
+        check(all(c == 0 for c, _ in reads), 'two concurrent socials reads both answer (reads take no writer token)')
+        check(mcp_call('socials_summary', {})['summary']['youtube']['channelTitle'] == 'Fixture Channel', 'MCP socials_summary through the shim')
+        check(mcp_call('socials_history', {'days': 28})['history'] is not None, 'MCP socials_history passes an integer')
+        check(command('socials', 'revoke', 'phone-1', '--confirm')['thisMac'] is False, 'socials revoke of another device keeps this Mac set up')
+        check(command('socials', 'delete-all', '--confirm')['configured'], 'socials delete-all with --confirm keeps this Mac enrolled')
+        check(command('socials', 'disconnect', '--confirm')['configured'], 'socials disconnect with --confirm')
+        cleared = command('socials', 'clear-local', '--confirm')
+        check(not cleared['configured'] and not (root / 'Socials' / 'socials-device-token').exists() and not (root / 'Socials' / 'socials-cache.json').exists(), 'socials clear-local forgets this Mac and revokes it on the server')
+        check('POST /v1/devices/mac-1/revoke' in worker_log, 'socials clear-local asked the server to revoke this Mac')
+        command('socials', 'setup', '--url', fake_url, '--code', 'again')
+        # Revoking this Mac itself: its Socials data goes at once.
+        subprocess.run([str(cli), 'socials', 'revoke', 'mac-1', '--confirm', '--json', '--data-directory', str(root)], capture_output=True, text=True, timeout=30)
+        check(command('socials', 'status')['state'] == 'notSetUp' and not (root / 'Socials' / 'socials-cache.json').exists(), 'revoking this Mac clears its Socials data')
+        check(digest() == socials_before, 'no socials command touched library.json')
+    finally:
+        fake.shutdown()
+
     # Block only this synthetic library's durable save: disk rename must roll back.
     before = command('project','status',ref)
     selected_before = command('status')['selectedProject']

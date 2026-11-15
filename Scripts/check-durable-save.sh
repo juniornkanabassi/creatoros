@@ -57,6 +57,16 @@ for ((i = 1; i <= ${#sources}; i++)); do
     fi
 done
 objects=("${expected_objects[@]}")
+# The app sources import SocialsCore too: link its objects from the same build.
+if (( ${#legacy_objects} )); then socials_objects=("$build_dir"/SocialsCore.build/*.o(N))
+else socials_objects=("$module_dir"/SocialsCore.o(N)); fi
+(( ${#socials_objects} )) || { print -u2 "No SocialsCore objects under $build_dir; rebuild first"; exit 1; }
+for object in "${socials_objects[@]}"; do
+    for source in Sources/SocialsCore/*.swift(N); do
+        [[ $source -nt $object ]] && { print -u2 "SocialsCore source is newer than its build output; rebuild first: $source"; exit 1; }
+    done
+done
+objects+=("${socials_objects[@]}")
 print "TemplateCore objects: ${objects[1]:h}"
 print "TemplateCore module: $module_file"
 # The app sources import Sparkle (Updates.swift), so the harness links the framework SwiftPM built beside them.

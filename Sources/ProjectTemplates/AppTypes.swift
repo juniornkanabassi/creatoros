@@ -2,15 +2,20 @@ import SwiftUI
 import AppKit
 import TemplateCore
 
-/// The three places in the app. New Project is a sheet over any of them, opened with Command-N.
+/// The places in the app. New Project is a sheet over any of them, opened with Command-N.
 enum Page: String, CaseIterable, Identifiable {
-    case projects = "Projects", pipeline = "Pipeline", templates = "Templates"
+    case projects = "Projects", pipeline = "Pipeline", socials = "Socials", templates = "Templates"
     var id: String { rawValue }
+    /// Go menu: ⇧⌘1–3 stay where they were before Socials joined, so Socials takes ⇧⌘4.
+    var shortcut: Character {
+        switch self { case .projects: "1"; case .pipeline: "2"; case .templates: "3"; case .socials: "4" }
+    }
     var systemImage: String {
         switch self {
         case .pipeline: "rectangle.3.group"
         case .projects: "externaldrive"
         case .templates: "square.stack.3d.up"
+        case .socials: "chart.bar.xaxis"
         }
     }
     var hint: String {
@@ -18,6 +23,7 @@ enum Page: String, CaseIterable, Identifiable {
         case .pipeline: "Move recordings and streams through their stages"
         case .projects: "Browse every project, wherever it lives"
         case .templates: "Template sets and the folders each format copies"
+        case .socials: "Your YouTube figures, as YouTube reports them"
         }
     }
 }

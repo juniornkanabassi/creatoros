@@ -156,8 +156,8 @@ extension NSSplitView { @objc func refuseAutosaveName(_ name: String?) {} }
                 } else { Button("No Project Selected") {}.disabled(true) }
             }
             CommandMenu("Go") {
-                ForEach(Array(Page.allCases.enumerated()), id: \.element) { index, page in
-                    Button(page.rawValue) { model.page = page }.keyboardShortcut(KeyEquivalent(Character("\(index + 1)")), modifiers: [.command, .shift])
+                ForEach(Page.allCases) { page in
+                    Button(page.rawValue) { model.page = page }.keyboardShortcut(KeyEquivalent(page.shortcut), modifiers: [.command, .shift])
                 }
             }
             UpdateCommands()
@@ -288,6 +288,12 @@ struct MainView: View {
                                 .inspectorColumnWidth(min: 300, ideal: 340, max: 480)
                         }
                         .modifier(PipelinePageChrome())
+                }
+            } else if m.page == .socials {
+                // Socials is a dashboard like the board: the whole width, no list column.
+                NavigationSplitView { sidebar } detail: {
+                    workArea(minimumWidth: 720) { SocialsPage(s: m.socials) }
+                        .modifier(SocialsPageChrome(s: m.socials))
                 }
             } else {
                 NavigationSplitView { sidebar } content: {

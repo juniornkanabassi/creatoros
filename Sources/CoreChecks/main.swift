@@ -182,6 +182,7 @@ do {
     try browserGridChecks()
     try relinkChecks(base: base)
     try draftChecks()
+    try socialsChecks(base: base)
     let args = ProcessInfo.processInfo.arguments
     if let index = args.firstIndex(of: "--master"), args.indices.contains(index + 1) {
         let master = URL(fileURLWithPath: args[index + 1]).resolvingSymlinksInPath()

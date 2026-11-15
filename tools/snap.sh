@@ -27,7 +27,8 @@ surfaces = ['projects', 'pipeline', 'pipeline-live', 'templates',
             'settings-formats', 'settings-naming', 'settings-pipeline', 'settings-finder', 'settings-locations',
             'about', 'new-project', 'browser-icon', 'browser-list', 'browser-column', 'projects-error',
             'projects-empty', 'pipeline-empty', 'pipeline-live-empty', 'templates-empty',
-            'pipeline-project-details', 'pipeline-idea-details', 'pipeline-live-details']
+            'pipeline-project-details', 'pipeline-idea-details', 'pipeline-live-details',
+            'socials', 'socials-reconnect', 'socials-setup']
 for name in surfaces:
     images = []
     for mode in ('light', 'dark'):

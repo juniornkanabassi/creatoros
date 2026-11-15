@@ -1,6 +1,7 @@
 import AppKit
 import SwiftUI
 import TemplateCore
+import SocialsCore
 
 /// Off-screen content captures only. These do not certify window compositing, focus or native gestures.
 @main struct SnapshotChecks {
@@ -16,6 +17,7 @@ import TemplateCore
         try model.runtime.requireWritable(model.runtime.root)
         try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
         let fixture = try await seed(model)
+        let socials = try seedSocials(model)
         var captures = 0
         let probeOwner = UUID()
         GridProbes.shared.update(.init(kind: .probe, name: "previous-capture", area: "previous", edge: nil,
@@ -94,6 +96,17 @@ import TemplateCore
             for page in Page.allCases {
                 model.page = page
                 model.pipelineKind = .recordings
+                if page == .socials {
+                    // Connected, lapsed and not set up, from a fixture cache and file credential in the scratch root.
+                    model.socials.load(socials.connected, configured: true)
+                    try await capture("socials", MainView(), size: CGSize(width: 1280, height: 820), scheme: scheme)
+                    model.socials.load(socials.lapsed, configured: true)
+                    try await capture("socials-reconnect", MainView(), size: CGSize(width: 1280, height: 820), scheme: scheme)
+                    model.socials.load(SocialsSnapshot(), configured: false)
+                    try await capture("socials-setup", MainView(), size: CGSize(width: 1280, height: 820), scheme: scheme)
+                    model.socials.load(socials.connected, configured: true)
+                    continue
+                }
                 try await capture(page.rawValue.lowercased(), MainView(), size: CGSize(width: 1280, height: 820), scheme: scheme)
                 if page == .pipeline {
                     model.pipelineKind = .live
@@ -144,7 +157,7 @@ import TemplateCore
             model.selectedProject = nil
             model.selection = nil
             model.templatesSelection = nil
-            for page in Page.allCases {
+            for page in Page.allCases where page != .socials {  // Socials has no library data; its states are captured above
                 model.page = page
                 model.pipelineKind = .recordings
                 try await capture(page.rawValue.lowercased() + "-empty", MainView(), size: CGSize(width: 1280, height: 820), scheme: scheme)
@@ -165,6 +178,36 @@ import TemplateCore
         checkNoWindows()
         print("RESULT \(captures) off-screen light/dark content snapshots passed; no visible windows. Compositor appearance and gestures still require a live visual check.")
         print("SNAPSHOTS \(output.path)")
+    }
+
+    /// A Socials cache and file credential written into the scratch root before Socials first loads, then two states of it.
+    @MainActor private static func seedSocials(_ model: AppModel) throws -> (connected: SocialsSnapshot, lapsed: SocialsSnapshot) {
+        let directory = model.runtime.root.appendingPathComponent("Socials")
+        try FileCredentialStore(directory: directory).write("snapshot-token")
+        let calendar = Calendar.current
+        let today = calendar.startOfDay(for: Date())
+        func ymd(_ back: Int) -> String { SocialsModel.ymd(calendar.date(byAdding: .day, value: -back, to: today)!) }
+        let now = Date()
+        let read = now.formatted(.iso8601)
+        func json<T: Decodable>(_ text: String) throws -> T { try SocialsJSON.decoder.decode(T.self, from: Data(text.utf8)) }
+        // Deterministic, plausible daily figures; the last 3 days are not reported yet.
+        let rows = (3..<28).map { back -> String in
+            let views = 900 + (back * 37) % 400 + (back % 7 == 2 ? 1400 : 0)
+            return #"{"date":"\#(ymd(back))","views":\#(views),"estimatedMinutesWatched":\#(views * 3),"subscribersGained":\#(4 + back % 9),"subscribersLost":\#(back % 3)}"#
+        }
+        func status(_ state: String) -> String {
+            #"{"serverTime":"\#(read)","platforms":[{"platform":"youtube","state":"\#(state)","account":"Junior Nkana Bassi","lastGoodReadAt":"\#(read)","lastAttemptAt":"\#(read)","lastError":null,"readIntervalMinutes":15,"gaps":[{"from":"\#(now.addingTimeInterval(-2 * 86_400).formatted(.iso8601))","to":"\#(now.addingTimeInterval(-2 * 86_400 + 2700).formatted(.iso8601))"}]}],"deletions":[]}"#
+        }
+        func summary(_ state: String) -> String {
+            #"{"serverTime":"\#(read)","youtube":{"state":"\#(state)","channelTitle":"Junior Nkana Bassi","subscriberCount":4810,"subscriberCountHidden":false,"countsReadAt":"\#(read)","window":{"startDate":"\#(ymd(30))","endDate":"\#(ymd(3))","partial":false,"views":34120,"estimatedMinutesWatched":102360,"subscribersGained":201,"subscribersLost":27,"readAt":"\#(read)"},"newestVideo":{"id":"fixture","title":"Why is Yamal a better Champions League player than Doué?","publishedAt":"\#(now.addingTimeInterval(-3 * 86_400).formatted(.iso8601))","viewCount":12840,"url":"https://www.youtube.com/watch?v=fixture"}}}"#
+        }
+        let history: SocialsHistory = try json(#"{"platform":"youtube","readAt":"\#(read)","rows":[\#(rows.joined(separator: ","))],"lastReportedDate":"\#(ymd(3))"}"#)
+        let connected = SocialsSnapshot(summary: try json(summary("connected")), status: try json(status("connected")), history: [28: history], lastContact: now)
+        let lapsed = SocialsSnapshot(summary: try json(summary("needsReconnect")), status: try json(status("needsReconnect")), history: [28: history], lastContact: now)
+        try SocialsCache(directory: directory).save(connected)
+        model.socials.range = 28
+        precondition(model.socials.configured && model.socials.snapshot.summary?.youtube != nil, "Socials fixture did not load from the scratch root")
+        return (connected, lapsed)
     }
 
     @MainActor private static func seed(_ model: AppModel) async throws -> URL {

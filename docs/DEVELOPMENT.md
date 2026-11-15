@@ -2,11 +2,15 @@
 
 This is the technical reference for CreatorOS: building and checking it, how the source is laid out, what each feature does in detail, and the full command line and MCP reference. The public overview is in the [README](../README.md).
 
-Native SwiftUI/AppKit Mac app that creates correctly named project folders from reusable content templates and tracks them through the content pipeline. The source is CreatorOS 1.7.0. Since 1.5.0 there is a `creatoros` command and MCP tool for every GUI action (see AI control). Examples below use my own install folder, `/Applications/JuniorOS Apps/`. Builds do not install, tag or push.
+Native SwiftUI/AppKit Mac app that creates correctly named project folders from reusable content templates and tracks them through the content pipeline. The source is CreatorOS 1.8.0. Since 1.5.0 there is a `creatoros` command and MCP tool for every GUI action (see AI control). Examples below use my own install folder, `/Applications/JuniorOS Apps/`. Builds do not install, tag or push.
 
 CreatorOS's bundle identifier is `com.juniornkanabassi.CreatorOS`, chosen before its first public release. Builds before then used `local.projecttemplates.mac`; on its first production launch the renamed app copies that domain's preferences across once and leaves the old domain untouched. It keeps the `~/Library/Application Support/Project Templates/` data root, so templates, bookmarks and catalogue data continue without a copy or merge. The internal executable remains `ProjectTemplates`; that is not a user-facing product name. Explicit `--data-directory` launches and ContentTool remain isolated from the everyday library. A build carrying the old alpha identifier or α channel also selects isolation, never production data.
 
 Read `../00 Project State/ARCHITECTURE-ESSENTIALS.md` before changing code. The full design is `../00 Project State/ARCHITECTURE.md` and the product statement is `../00 Project State/PRD.md`.
+
+## 1.8.0 Socials (YouTube)
+
+A Socials page beside Pipeline, optional and off until set up, shows YouTube figures from the `social-stats` Worker (`docs/SOCIALS-API.md`) through `SocialsCore`. Only figures the API returns are shown: no sums, net subscribers, change today, growth or targets (YouTube policy III.E.4). `SocialsModel` owns the state and actions the GUI and the `socials` commands share; it never touches `library.json`. The cache is `<data root>/Socials/socials-cache.json`; the device token is in the Keychain for the everyday app and in `<data root>/Socials/socials-device-token` (0600) for any isolated `--data-directory` run, so checks never touch the real Keychain. The server address, range and chart figure are interface state in UserDefaults. The page reads on appear, every 15 minutes while shown and when the app becomes active; snapshot mode (`APP_SNAPSHOT`) never fetches. A 401 wipes the cache and credential; an unreachable server keeps the cached figures with a quiet line; 7 days without contact hides the figures. `Scripts/check-socials-model.swift` (in both gates) checks the model and commands against an in-process stub; `check-ai-control.py` runs every `socials` command against a local fake Worker.
 
 ## 1.7.0 local release
 
@@ -97,7 +101,7 @@ Sources/TemplateCore/     engine, no UI
   Naming.swift            fields, tokens, the shared substitution rule, validation
   FileEngine.swift        template reader, copy plan, copy engine, icon service
   ProjectRename.swift     reviewed exclusive rename and rollback
-  ControlCommands.swift   shared CLI/help/MCP action table (60 commands)
+  ControlCommands.swift   shared CLI/help/MCP action table (72 commands)
   Preview.swift           placeholder rendering that can never become a copy plan
   Catalogue.swift         project discovery, availability, retained export indexing
   Locations.swift         drive and cloud classification, per-format numbering
@@ -123,6 +127,9 @@ Sources/ProjectTemplates/ the app
   ControlServer.swift     socket, request cache, mutation lock, dispatcher
   ControlActions.swift    project, idea and creation commands, shared read-back
   ControlActionsLibrary.swift  boards, settings, formats, templates, sets, locations, discovery, compatibility
+  SocialsModel.swift      Socials state and actions (GUI and socials commands), cache and credential choice
+  SocialsView.swift       Socials page, set-up and connect cards, chart, Accounts sheet
+Sources/SocialsCore/      Socials Worker client, wire types, cache, credential stores, formatting (shared with Companion/)
 Sources/CoreChecks/       assertion suite
 Scripts/build-icon.sh    converts the checked-in stable and alpha PNG artwork to ICNS
 Scripts/notion-backup.py  offline Notion export backup utility with its tests; not part of the app
@@ -169,7 +176,7 @@ Only a notarised Developer ID build may be distributed; ad hoc builds are for th
 
 ## AI control
 
-`creatoros` controls the running GUI through the same main-actor actions the buttons use, so a change made by a command is the change the window shows. Since 1.5.0 every GUI action that carries state has a command and an MCP tool; the audit that lists them against the GUI is `../00 Project State/CLI parity audit 2026-10-21.md`. ContentTool remains an isolated test/audit utility.
+`creatoros` controls the running GUI through the same main-actor actions the buttons use, so a change made by a command is the change the window shows. Since 1.5.0 every GUI action that carries state has a command and an MCP tool (Socials since 1.8.0); the audit that lists them against the GUI is `../00 Project State/CLI parity audit 2026-10-21.md`. ContentTool remains an isolated test/audit utility.
 
 Commands do not activate CreatorOS or Finder unless `--show` is given. `status` works while stopped and returns `running: false` without launching. If CreatorOS is closed, other commands start the bundled app headless (`open -g -n … --background --headless`; a test instance with a data directory, or `CREATOROS_AGENT_SCREEN=1`, starts the executable directly with `--agent-screen` and keeps the environment) and wait up to 10 seconds, checking the socket every 20 ms. A headless copy has no window, no Dock icon, no menu bar and no update prompt; its main window exists but stays transparent and off screen. It becomes the ordinary app, with its window in front, when a command passes `--show`, when you open CreatorOS from the Dock, Spotlight or Finder, or when anything activates it, and it quits by itself after 10 minutes without a command while nothing is running. The bundle is an agent (`LSUIElement`) that turns itself into the ordinary app on any launch that is neither headless nor isolated, so a headless launch never shows a Dock tile, not even briefly. `status` reports `headless`. `python3 Scripts/check-headless.py <app>` checks this, sampling the screen every 5 ms through `Scripts/watch-headless.swift`, and checks that `--show` promotes an `--agent-screen` copy without a window, Dock tile or focus. When the GUI is already open, commands go to it as before. A response times out after 30 seconds, or 600 seconds for long actions (create, rename, relocate, find-moved, icons, add-files, import, scans, find-missing, tag-folders, compat). Exit codes are 0 success, 1 action or transport failure, 2 usage. `--json` prints one result or error JSON line; successful output is concise JSON either way. `creatoros --version` prints the version; the MCP shim reports the same one.
 
@@ -249,6 +256,18 @@ Commands do not activate CreatorOS or Finder unless `--show` is given. `status` 
 | `location scan` | `location_scan` | Scan a folder or saved location for projects; --dry-run lists them, --only registers a subset | `creatoros location scan --path /Volumes/Drive/Projects --dry-run` |
 | `location remove` | `location_remove` | Forget a saved scan location (registered projects stay) | `creatoros location remove Projects --dry-run` |
 | `compat check` | `compat_check` | Check names for LucidLink; --copy-to makes a corrected copy (--dry-run returns the rename proposal) | `creatoros compat check --project 001 --format Short --copy-to /Volumes/Drive/Out` |
+| `socials status` | `socials_status` | Socials set-up and YouTube connection state, last contact and read coverage (works before set-up) | `creatoros socials status` |
+| `socials summary` | `socials_summary` | YouTube figures as the API returns them, with read times; falls back to the cache when the server is unreachable (`reachable: false`), refuses with `data_expired` after 7 days without contact | `creatoros socials summary` |
+| `socials history` | `socials_history` | Daily views, watch time, subscribers gained and lost for 7, 28 or 90 days; also sets the range the GUI shows | `creatoros socials history --days 28` |
+| `socials refresh` | `socials_refresh` | Ask the server to read YouTube now (at most once a minute, else `rate_limited`) | `creatoros socials refresh` |
+| `socials setup` | `socials_setup` | Enrol this Mac with the server address (https only) and its one-time or pairing code | `creatoros socials setup --url https://social-stats.example.workers.dev --code 123456` |
+| `socials connect` | `socials_connect` | Return the Google consent address; `--open` opens it in the browser | `creatoros socials connect --open` |
+| `socials disconnect` | `socials_disconnect` | Disconnect YouTube and delete its data on the server (needs --confirm) | `creatoros socials disconnect --confirm` |
+| `socials devices` | `socials_devices` | List enrolled devices | `creatoros socials devices` |
+| `socials pair` | `socials_pair` | Make a 10-minute pairing code for another device; the Accounts sheet shows it too | `creatoros socials pair` |
+| `socials revoke` | `socials_revoke` | Revoke one device (needs --confirm); revoking this Mac clears it here | `creatoros socials revoke phone-1 --confirm` |
+| `socials clear-local` | `socials_clear_local` | Forget Socials on this Mac (cache and credential), revoking it on the server when reachable (needs --confirm) | `creatoros socials clear-local --confirm` |
+| `socials delete-all` | `socials_delete_all` | Delete every platform's tokens and data on the server; devices stay enrolled (needs --confirm) | `creatoros socials delete-all --confirm` |
 | `app cancel` | `app_cancel` | Cancel the running long operation, only if this request id started it | `creatoros app cancel --request-id create-1` |
 
 References: a project or idea is a UUID, its exact folder name or its number (`--format` disambiguates; ideas use their name). A set, template, field or saved location is a UUID or its exact name. Most commands take the reference as a bare word or as `--project`, `--set`, `--template`, `--field`, `--location`, `--key`.
@@ -267,6 +286,7 @@ References: a project or idea is a UUID, its exact folder name or its number (`-
 - Export indexing is retired: nothing in the app read the export lists, so discovery and Add Existing Project no longer scan for movies. The optional `exports`, `exportFolders`, `finalExportPath(s)`, `lastIndexed` and `scanNotes` fields stay in the schema so older libraries decode and save unchanged.
 - In the icon view, left and right move within a row and up and down move by the number of columns on screen (worked out from the window width); Return opens.
 - Template deletion saves the library before it finishes; if the save fails the files are put back from the Bin, or the error names their exact place in the Bin.
+- `socials` commands never touch the library, so they do not take the library writer slot and work even when the library is unusable. Socials has its own one-action slot: a second Socials change while one runs gets `busy`; reads never wait. Their own error codes are `not_configured`, `already_set_up`, `unauthorized` (the device was revoked; this Mac's Socials data is already wiped), `rate_limited`, `server_error`, `unreachable` and `data_expired`.
 - No token savings have been measured.
 
 The Unix socket is `<data root>/control.sock` (directory 0700, socket 0600, same-user peers only), with newline JSON requests `{"id":"1","action":"status","params":{}}` and `{"id":"1","ok":true,"result":{...}}` or `{"id":"1","ok":false,"error":{"code":"...","message":"..."}}`. Unknown params and requests over 65,536 bytes are refused. Only stale socket files are removed at launch. This is local control, with no authentication beyond OS ownership/peer identity and no remote listener. Error codes you may see include `busy`, `form_in_use`, `not_found`, `ambiguous_*`, `invalid_params`, `invalid_stage`, `location_hidden`, `not_allowed`, `workspace_review`, `confirmation_required`, `cancelled`, `store_unavailable`, `unavailable`, `tags_disabled` and `action_failed`.

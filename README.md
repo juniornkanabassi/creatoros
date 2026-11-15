@@ -16,6 +16,8 @@ Projects lists everything you have made across your drives and cloud folders, wi
 
 The Pipeline has two boards, one for recordings and one for live streams, with your own stages and colours. Each card holds the campaign, series, editor, notes and a Notion link. Ideas without a folder sit in the first column until you start them as a project. Changing a stage can also write a matching Finder tag on the folder. The board fills the window, with card details in an inspector. You can move between cards with the arrow keys and open their details with Return or Space. Undo can restore a removed project record or reverse a stage change. Removing a project from the list leaves its folder intact.
 
+Socials, which is optional and off until you set it up, shows your YouTube channel's figures exactly as YouTube reports them: the subscriber count, daily views, watch time, and subscribers gained and lost as separate figures, plus your newest video. Your own small server (the `social-stats` Cloudflare Worker in `Worker/`) holds the YouTube sign-in and reads the channel every 15 minutes; CreatorOS only keeps a device credential and a cache of the last figures. Days YouTube has not reported yet are marked as such, and nothing is added up or projected.
+
 For LucidLink, which refuses folder icon files, New Project has a Plain folders switch, and you can remove a project's folder icons before uploading and put them back afterwards.
 
 ## What you need
@@ -34,7 +36,7 @@ Releases signed with my Developer ID check for updates once a day and show you t
 
 ## Privacy
 
-CreatorOS works offline. It has no accounts, no analytics and no uploads. The only things it fetches are the update check from juniornkanabassi.com and the updates themselves from GitHub. Your library is stored in `~/Library/Application Support/Project Templates/` (the app's earlier name), and every schema upgrade keeps a backup of the old file. Removing a project from the list never touches its folder, and templates and idea workspaces that CreatorOS deletes go to the Bin. Removing an idea takes it off the list for good.
+CreatorOS works offline. It has no accounts, no analytics and no uploads. The only things it fetches are the update check from juniornkanabassi.com and the updates themselves from GitHub. Your library is stored in `~/Library/Application Support/Project Templates/` (the app's earlier name), and every schema upgrade keeps a backup of the old file. Removing a project from the list never touches its folder, and templates and idea workspaces that CreatorOS deletes go to the Bin. Removing an idea takes it off the list for good. Socials is the one exception to working offline: once you set it up, it talks only to your own Socials server, keeps its cache in its own file beside the library (never in it), hides figures after 7 days without contact and deletes them after 30. It uses YouTube API Services ([YouTube Terms of Service](https://www.youtube.com/t/terms), [Google Privacy Policy](https://policies.google.com/privacy)); Accounts in Socials disconnects YouTube, revokes devices and deletes all Socials data.
 
 ## Command line and AI assistants
 
@@ -47,6 +49,7 @@ CREATOROS="/Applications/CreatorOS.app/Contents/MacOS/creatoros"
 "$CREATOROS" project list --format Short --limit 10
 "$CREATOROS" project create --format Short --title Example --dry-run
 "$CREATOROS" project set-stage 001 --format Short --stage Editing
+"$CREATOROS" socials summary
 ```
 
 To connect the MCP server to Claude Code:
@@ -63,7 +66,7 @@ command = "node"
 args = ["/Applications/CreatorOS.app/Contents/Resources/mcp/creatoros-mcp.mjs"]
 ```
 
-Change the paths if you installed the app somewhere else. The control socket only accepts connections from your own user account on the same Mac. The full list of about sixty commands and the rules they follow are in [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md#ai-control).
+Change the paths if you installed the app somewhere else. The control socket only accepts connections from your own user account on the same Mac. The full list of about seventy commands and the rules they follow are in [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md#ai-control).
 
 ## Building from source
 

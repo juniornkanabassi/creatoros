@@ -63,6 +63,8 @@ import TemplateCore
     @Published var workspaceCleanup: ProjectRecord?
     @Published var renamePrompt: ProjectRecord?
     var controlServer: ControlServer?
+    /// Optional Socials (YouTube figures from the social-stats Worker). Its own cache and credential; never the library.
+    lazy var socials = SocialsModel(root: runtime.root, isolated: runtime.isIsolated, defaults: defaults)
     /// Supplied by the active window; CLI actions never register user undo steps.
     weak var undoManager: UndoManager?
     @Published var pendingUndos: [PendingUndo] = []

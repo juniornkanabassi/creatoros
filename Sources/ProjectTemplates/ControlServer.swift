@@ -172,6 +172,8 @@ extension AppModel {
     }
     func controlActionHolding(_ action: String, _ params: [String: Any], adobeApps: (() -> [String])? = nil) async throws -> [String: Any] {
         if action == "status" { return ["app": AppInfo.name, "version": AppInfo.version, "channel": AppInfo.channel, "pid": getpid(), "headless": Headless.shared.active, "dataRoot": runtime.root.path, "isolated": runtime.isIsolated, "storeUsable": storeUsable, "busy": busy || writer != nil, "statusText": status, "page": page.rawValue, "selectedProject": selectedRecord.map { ["id": $0.id.uuidString, "name": $0.name] } as Any? ?? NSNull(), "newProjectSheetOpen": newProjectPresented, "renameSheetOpen": renamePrompt != nil, "socket": runtime.root.appendingPathComponent("control.sock").path] }
+        // Socials does not depend on the library, so it answers even when the library cannot be used.
+        if action.hasPrefix("socials.") { return try await controlSocials(action, params) }
         guard storeUsable else { throw ControlFailure(code: "store_unavailable", message: "Resolve the library error in the GUI first.") }
         let visible = library.projects.filter { !controlHidden($0) }
         if action == "library.stats" { return ["schema": Library.currentSchema, "projects": visible.filter { !$0.isPlanned }.count, "ideas": visible.filter(\.isPlanned).count, "byFormat": Dictionary(grouping: visible, by: \.format).mapValues(\.count), "byStage": Dictionary(grouping: visible, by: { effectiveStage($0) }).mapValues(\.count), "templates": library.templates.count, "sets": library.sets.count, "locations": distinctLocations.count, "hiddenLocations": hiddenLocations.sorted()] }

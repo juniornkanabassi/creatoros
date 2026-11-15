@@ -37,6 +37,7 @@ step 'SwiftPM offscreen regression' swift test --scratch-path "$build" --skip-bu
 step 'CoreChecks' "$bin/CoreChecks"
 step 'Durable save and native providers' zsh Scripts/check-durable-save.sh "$objects"
 step 'Undo and recovery' env CONTENT_TEMPLATE_CHECK_SOURCE=Scripts/check-undo.swift zsh Scripts/check-durable-save.sh "$objects"
+step 'Socials model and commands' env CONTENT_TEMPLATE_CHECK_SOURCE=Scripts/check-socials-model.swift zsh Scripts/check-durable-save.sh "$objects"
 step 'Council interface behaviour' env CONTENT_TEMPLATE_CHECK_SOURCE=Scripts/check-council-ui.swift zsh Scripts/check-durable-save.sh "$objects"
 if (( source_only )); then
     step 'AppModel and control actions' env CONTENT_TEMPLATE_CHECK_SOURCE=Scripts/check-control-model.swift zsh Scripts/check-durable-save.sh "$objects"

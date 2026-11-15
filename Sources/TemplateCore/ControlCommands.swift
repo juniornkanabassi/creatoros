@@ -121,6 +121,20 @@ public struct ControlCommand {
         .init(action: "location.scan", description: "Scan a folder or saved location for projects; --dry-run lists them, --only registers a subset", example: "creatoros location scan --path /Volumes/Drive/Projects --dry-run", strings: ["path", "location"], booleans: ["dryRun"], arrays: ["only"], mutates: true, slow: true, anyOf: [["path"], ["location"]]),
         .init(action: "location.remove", description: "Forget a saved scan location (registered projects stay)", example: "creatoros location remove Projects --dry-run", strings: ["location"], booleans: ["dryRun"], required: ["location"], positional: "location", mutates: true),
         .init(action: "compat.check", description: "Check names for LucidLink; --copy-to makes a corrected copy (--dry-run returns the rename proposal)", example: "creatoros compat check --project 001 --format Short --copy-to /Volumes/Drive/Out", strings: ["project", "format", "path", "copyTo", "requestId"], booleans: ["dryRun"], positional: "project", slow: true, anyOf: [["project"], ["path"]]),
+        // Socials (optional, YouTube only for now). These never touch the library, so none takes the library writer slot;
+        // Socials keeps its own one-action slot. Destructive ones need --confirm.
+        .init(action: "socials.status", description: "Socials set-up and YouTube connection state, last contact and read coverage (works before set-up)", example: "creatoros socials status"),
+        .init(action: "socials.summary", description: "YouTube figures as the API returns them: subscribers, last 28 days reported, newest video, with read times", example: "creatoros socials summary"),
+        .init(action: "socials.history", description: "Daily YouTube views, watch time and subscribers gained and lost for 7, 28 or 90 days", example: "creatoros socials history --days 28", integers: ["days"]),
+        .init(action: "socials.refresh", description: "Ask the Socials server to read YouTube now (at most once a minute), then return the summary", example: "creatoros socials refresh"),
+        .init(action: "socials.setup", description: "Set Socials up on this Mac with the server address and its one-time code", example: "creatoros socials setup --url https://social-stats.example.workers.dev --code 123456", strings: ["url", "code"], required: ["url", "code"]),
+        .init(action: "socials.connect", description: "Get the Google consent address to connect YouTube; --open also opens it in the browser", example: "creatoros socials connect --open", booleans: ["open"]),
+        .init(action: "socials.disconnect", description: "Disconnect YouTube and delete its data on the server (needs --confirm)", example: "creatoros socials disconnect --confirm", booleans: ["confirm"]),
+        .init(action: "socials.devices", description: "List the devices enrolled with the Socials server", example: "creatoros socials devices"),
+        .init(action: "socials.pair", description: "Make a 10-minute pairing code to set up another device, such as the iPhone", example: "creatoros socials pair"),
+        .init(action: "socials.revoke", description: "Stop one enrolled device reading Socials (needs --confirm); revoking this Mac also clears it here", example: "creatoros socials revoke --device ID --confirm", strings: ["device"], booleans: ["confirm"], required: ["device"], positional: "device"),
+        .init(action: "socials.clear-local", description: "Forget Socials on this Mac: its cache and device credential (needs --confirm)", example: "creatoros socials clear-local --confirm", booleans: ["confirm"]),
+        .init(action: "socials.delete-all", description: "Delete every platform's tokens and data on the Socials server; devices stay enrolled (needs --confirm)", example: "creatoros socials delete-all --confirm", booleans: ["confirm"]),
         .init(action: "app.cancel", description: "Cancel the running long operation, only if this request id started it", example: "creatoros app cancel --request-id create-1", strings: ["requestId"], required: ["requestId"])
     ]
 }
