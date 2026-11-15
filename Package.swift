@@ -12,13 +12,15 @@ let package = Package(
         .package(url: "https://github.com/sparkle-project/Sparkle", exact: "2.10.0")
     ],
     targets: [.target(name: "TemplateCore"),
-              .executableTarget(name: "ProjectTemplates", dependencies: ["TemplateCore", .product(name: "Sparkle", package: "Sparkle")],
+              // Socials: Worker client, wire types, cache and formatting. Shared with the iPhone companion (Companion/).
+              .target(name: "SocialsCore"),
+              .executableTarget(name: "ProjectTemplates", dependencies: ["TemplateCore", "SocialsCore", .product(name: "Sparkle", package: "Sparkle")],
                                 // build.sh embeds Sparkle.framework in Contents/Frameworks; a bare SwiftPM binary finds it beside itself.
                                 linkerSettings: [.unsafeFlags(["-Xlinker", "-rpath", "-Xlinker", "@executable_path/../Frameworks",
                                                                     "-Xlinker", "-rpath", "-Xlinker", "@executable_path"])]),
               // Keeps every test window invisible and stops tests activating the process (see TestOffscreen.m).
               .target(name: "TestOffscreen", path: "Tests/TestOffscreen"),
-              .executableTarget(name: "CoreChecks", dependencies: ["TemplateCore", "TestOffscreen"]),
+              .executableTarget(name: "CoreChecks", dependencies: ["TemplateCore", "SocialsCore", "TestOffscreen"]),
               .executableTarget(name: "creatoros", dependencies: ["TemplateCore"]),
               .executableTarget(name: "ContentTool", dependencies: ["TemplateCore"]),
               .testTarget(name: "CreatorOSTests", dependencies: ["TestOffscreen"], path: "Tests/CreatorOSTests")],
